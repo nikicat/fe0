@@ -1,0 +1,10 @@
+use ingot::{Counter, CounterMsg}
+
+#[test]
+fn spec_example_counter() uses (evm: mut Evm) {
+    let c = evm.create2<Counter>(value: Wei::zero(), args: (), salt: 0)
+    evm.call(addr: c, gas: 100000, value: Wei::zero(), message: CounterMsg::Increment {})
+    evm.call(addr: c, gas: 100000, value: Wei::zero(), message: CounterMsg::Increment {})
+    let n: u256 = evm.call(addr: c, gas: 100000, value: Wei::zero(), message: CounterMsg::Get {})
+    assert!(n == 2)
+}

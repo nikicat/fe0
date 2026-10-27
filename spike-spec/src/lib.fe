@@ -1,0 +1,23 @@
+msg CounterMsg {
+    #[selector = 0xd09de08a]
+    Increment {},
+    #[selector = 0x6d4ce63c]
+    Get -> u256,
+}
+
+contract Counter {
+    mut count: u256,
+
+    init() uses (mut count) {
+        count = 0
+    }
+
+    recv CounterMsg {
+        Increment {} uses (mut count) {
+            count += 1
+        }
+        Get {} -> u256 uses (count) {
+            count
+        }
+    }
+}

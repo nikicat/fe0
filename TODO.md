@@ -53,8 +53,10 @@ unknowns, declared as pre-existing. See [PLAN.md](PLAN.md).
 
 ## 2. Freeze the Fe0 specification
 
-- [ ] Grammar (EBNF)
-- [ ] Semantics: overflow, evaluation order, storage slot assignment, effects
+- [x] Grammar (EBNF): [SPEC.md](SPEC.md) draft 0. The example compiles and passes under the
+      official compiler (`spike-spec/`)
+- [x] Semantics: overflow, evaluation order, storage slot assignment, effects. Drafted; open
+      points are marked [V] in SPEC.md, with §9 listing the open questions
 - [ ] Check every rule against the official compiler (ties into §1)
 - [ ] Keep it small and explicit, Lean-formalizable (as the Fe team asked)
 
