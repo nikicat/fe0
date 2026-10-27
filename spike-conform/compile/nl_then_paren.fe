@@ -1,0 +1,6 @@
+fn g(_ x: u256) -> u256 { x }
+fn f() -> u256 {
+    let a = 1
+    let x = a
+    (a)
+}

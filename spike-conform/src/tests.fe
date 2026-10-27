@@ -1,0 +1,94 @@
+use ingot::K
+use std::evm::Call
+
+fn word(_ v: mut MemVec<u8>, _ w: u256) {
+    var i: u256 = 0
+    while i < 32 {
+        v.push(((w >> (248 - i * 8)) & 0xff).downcast_truncate())
+        i += 1
+    }
+}
+
+fn sel(_ s: u8) -> MemVec<u8> {
+    var v: MemVec<u8> = MemVec::new()
+    v.push(0)
+    v.push(0)
+    v.push(0)
+    v.push(s)
+    v
+}
+
+// Report via the test's own revert: Panic(code) with
+// code = success<<100 | len<<64 | first4bytes<<32 | (word at 4 or 0, low 32 bits)
+fn report(_ cd: own MemVec<u8>, _ value: Wei) uses (evm: mut Evm) {
+    let k = evm.create2<K>(value: Wei::zero(), args: (), salt: 0)
+    let out = evm.try_call_raw(addr: k, gas: 1000000, value, args: cd.into_array().span())
+    let len = out.returndata_len() as u256
+    let s: u256 = if out.success() { 1 } else { 0 }
+    var head: u256 = 0
+    var tail: u256 = 0
+    if len >= 4 {
+        head = out.returndata().read_word(0) >> 224
+    }
+    if len >= 36 {
+        tail = out.returndata().read_word(4) & 0xffffffff
+    } else if len >= 32 {
+        tail = out.returndata().read_word(0) & 0xffffffff
+    }
+    core::panic_code((s << 100) | (len << 64) | (head << 32) | tail)
+}
+
+fn two(_ s: u8, _ a: u256, _ b: u256) uses (evm: mut Evm) {
+    var v = sel(s)
+    word(mut v, a)
+    word(mut v, b)
+    report(v, Wei::zero())
+}
+
+const MAX: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+#[test]
+fn r_mul_overflow() uses (evm: mut Evm) { two(1, MAX, 2) }
+#[test]
+fn r_mod_zero() uses (evm: mut Evm) { two(2, 5, 0) }
+#[test]
+fn r_shl_256() uses (evm: mut Evm) { two(3, 1, 256) }
+#[test]
+fn r_shl_255() uses (evm: mut Evm) { two(3, 3, 255) }
+#[test]
+fn r_shr_300() uses (evm: mut Evm) { two(4, MAX, 300) }
+#[test]
+fn r_order_bin() uses (evm: mut Evm) { two(5, 0, 0) }
+#[test]
+fn r_order_args() uses (evm: mut Evm) { two(6, 0, 0) }
+#[test]
+fn d_bool_2() uses (evm: mut Evm) { two(7, 2, 0) }
+#[test]
+fn d_bool_1() uses (evm: mut Evm) { two(7, 1, 0) }
+#[test]
+fn d_addr_highbits() uses (evm: mut Evm) { two(8, (1 << 200) | 0xcc, 0) }
+#[test]
+fn d_short_args() uses (evm: mut Evm) {
+    var v = sel(10)
+    word(mut v, 1)
+    report(v, Wei::zero())
+}
+#[test]
+fn d_extra_bytes() uses (evm: mut Evm) {
+    var v = sel(10)
+    word(mut v, 1)
+    word(mut v, 2)
+    v.push(0x99)
+    report(v, Wei::zero())
+}
+#[test]
+fn d_tiny_calldata() uses (evm: mut Evm) {
+    var v: MemVec<u8> = MemVec::new()
+    v.push(0)
+    v.push(9)
+    report(v, Wei::zero())
+}
+#[test]
+fn d_noret() uses (evm: mut Evm) { report(sel(9), Wei::zero()) }
+#[test(balance = 1000)]
+fn d_value_nonpayable() uses (evm: mut Evm) { report(sel(9), std::evm::wei(5)) }

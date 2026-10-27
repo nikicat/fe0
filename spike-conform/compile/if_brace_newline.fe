@@ -1,0 +1,7 @@
+fn f(_ c: bool) -> u256 {
+    if c
+    {
+        return 1
+    }
+    0
+}

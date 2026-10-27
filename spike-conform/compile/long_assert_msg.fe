@@ -1,0 +1,1 @@
+fn f(_ c: bool) { assert!(c, "this message is definitely longer than thirty-one bytes") }

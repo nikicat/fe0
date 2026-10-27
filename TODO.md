@@ -57,7 +57,14 @@ unknowns, declared as pre-existing. See [PLAN.md](PLAN.md).
       official compiler (`spike-spec/`)
 - [x] Semantics: overflow, evaluation order, storage slot assignment, effects. Drafted; open
       points are marked [V] in SPEC.md, with §9 listing the open questions
-- [ ] Check every rule against the official compiler (ties into §1)
+- [x] Check every rule against the official compiler (ties into §1)
+      Done in `spike-conform/`: 23 compile-time probes in `compile/*.fe` (checked with
+      `fe check --standalone`) and 15 run-time probes in `src/tests.fe`.
+      - SPEC.md now has 34 [✓] marks and 3 open [V] items: the newline rule, `init` with bad
+        arguments, and `Address` storage alignment.
+      - Where Fe turned out more permissive (forward const references, `{` on the next line,
+        locals shadowing fields, duplicate `uses`, `init`/`recv` as names), Fe0 stays strict,
+        which the subset rule allows.
 - [ ] Keep it small and explicit, Lean-formalizable (as the Fe team asked)
 
 ## 3. Pick the test corpus

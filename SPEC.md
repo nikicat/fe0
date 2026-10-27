@@ -29,10 +29,10 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 | Identifier | `[a-zA-Z_][a-zA-Z0-9_]*`, excluding keywords and a lone `_` | |
 | Decimal integer | `[0-9]+(_[0-9]+)*` | The value must fit in 256 bits |
 | Hex integer | `0[xX][0-9a-fA-F]+` | No `_` separators. Must fit in 256 bits |
-| String | `"` … `"` with escapes `\" \\ \n \r \t` | Only allowed as the message of `assert!`, and at most 31 bytes after decoding **[V]** |
+| String | `"` … `"` with escapes `\" \\ \n \r \t` | Only allowed as the message of `assert!`, and at most 31 bytes after decoding. Fe accepts longer messages **[✓]**; Fe0 v1 restricts them so `Error(string)` stays one data word |
 | Punctuation | `( ) { } [ ] : , -> # . ;` | |
 | Operators | `+ - * / % ~ ! ^ & \| && \|\| < > = == !=` | |
-| Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside **[V]** |
+| Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside, and rejects spaced forms. That is safe under the subset rule |
 
 - **No block comments.** Fe's compiler lexer has none, even though the tree-sitter grammar does.
 - **Binary (`0b`) and octal (`0o`) literals** are left out of Fe0. They are valid Fe, so they
@@ -135,8 +135,8 @@ tightest:
 `||` < `&&` < comparisons < `|` < `^` < `&` < `<<` `>>` < `+` `-` < `*` `/` `%` < unary < call
 
 - All binary operators associate to the left.
-- Comparisons do not chain: `a < b < c` is rejected. **[V]** Fe probably rejects it as a type
-  error, since `bool < u256` is ill-typed.
+- Comparisons do not chain: `a < b < c` is rejected. Fe rejects it too **[✓]**, with `8-0016`,
+  because `bool` has no `Ord`.
 - Assignment is a statement in Fe0, not an expression.
 
 ### 3.3 Left out of Fe0 (all valid Fe)
@@ -155,27 +155,37 @@ A statement ends at `;` or at a newline. Fe0 adopts a deliberately **strict** ru
   Otherwise the program is a syntax error.
 
 So an expression may span lines only inside parentheses. Fe's automatic semicolon rule is more
-permissive, for example a line may start with `||`, so this is a valid subset. **[V]** that Fe
-reads every Fe0-accepted line break the same way.
+permissive, for example a line may start with `||`, so this is a valid subset.
+
+Probed **[✓]**:
+- Fe accepts a parenthesised expression spread over several lines.
+- Fe also reads `let x = a` followed by `(a)` on the next line as two statements, not as the
+  call `a(a)`, just as Fe0 does.
+- Fe accepts the `{` of an `if` or `while` on the next line. **Fe0 requires it on the same line.**
+
+Still **[V]**: a systematic check that Fe reads every Fe0-accepted line break the same way.
+This becomes a parser differential test over the corpus.
 
 ## 4. Expression semantics
 
 **Evaluation order.**
-- Operands and call arguments are evaluated left to right, each exactly once **[V]**.
+- Operands and call arguments are evaluated left to right, each exactly once **[✓]**. With
+  `z = 0`, both `1 / z + (z - 1)` and `pair(1 / z, z - 1)` revert with `Panic(0x12)` (the left
+  operand), not `0x11`.
 - `&&` and `||` short-circuit.
 
 **Arithmetic on `u256`** is checked. Probed failure behaviour:
 
 | Operation | On failure |
 |---|---|
-| `+` overflow, `-` underflow, `*` overflow | Revert with `Panic(0x11)` **[✓ for + and −]**, **[V for \*]** |
-| `/` or `%` by zero | Revert with `Panic(0x12)` **[✓ for /]**, **[V for %]** |
+| `+` overflow, `-` underflow, `*` overflow | Revert with `Panic(0x11)` **[✓]** |
+| `/` or `%` by zero | Revert with `Panic(0x12)` **[✓]** |
 | `&` `\|` `^` `~` | Never fail |
-| `<<`, `>>` by 256 or more | **[V]** Is the result 0 (EVM `SHL`/`SHR`), or does it panic? Must be probed before shifts are allowed |
+| `<<`, `>>` | Never fail. Bits shifted out are discarded (`3 << 255` = 2²⁵⁵), and a shift by 256 or more gives 0, as with the EVM's `SHL`/`SHR` **[✓]** |
 
 - `Panic(c)` means the revert data `0x4e487b71 ‖ uint256(c)`, Solidity's encoding.
-- Compound assignment `x op= e` means `x = x op e`, with the same checks. **[V]** that `x` is
-  evaluated once.
+- Compound assignment `x op= e` means `x = x op e`, with the same checks. The target is always
+  an identifier, so the question of evaluating it once does not arise in Fe0.
 
 **Comparisons** are unsigned on `u256`. On `Address`, only equality is allowed.
 
@@ -197,22 +207,26 @@ ABI-encoded string.
    order. Duplicates are an error.
 2. **Locals.**
    - `let` declares an immutable local and `var` a mutable one. Assigning to a `let` local is an
-     error.
-   - Shadowing with a new `let`/`var` is allowed **[V]**.
+     error, as in Fe (`8-0018`) **[✓]**.
+   - Shadowing with a new `let`/`var` is allowed **[✓]**.
    - A local's scope runs from after its declaration to the end of its block.
-3. **Constants** are evaluated at compile time with the §4 semantics. Overflow or division by
-   zero is a compile-time error **[V]**. A constant may refer only to earlier constants and
-   literals. **[V]** whether Fe also allows later ones; if so, keeping the restriction is still a
-   valid subset.
+   - A local may not take the name of a storage field. Fe accepts this **[✓]**, but Fe0 rejects
+     it, so a name never silently stops referring to storage.
+3. **Constants** are evaluated at compile time with the §4 semantics. Overflow is a compile-time
+   error (`3-0034`), and so is division by zero (`3-0025`) **[✓]**.
+   - A constant may refer only to earlier constants and literals.
+   - Fe accepts forward references **[✓]**; Fe0 keeps the restriction, which is safe under the
+     subset rule.
 4. **Function calls.**
    - A parameter written `_ x: T` is positional: call it as `f(e)`.
    - A parameter written `x: T` is labelled: call it as `f(x: e)`, or as `f(x)` when the argument
-     is the identifier `x` itself **[V]**.
-   - Arguments must follow the parameter order.
+     is the identifier `x` itself **[✓]**. Leaving out a required label is `8-0024` **[✓]**.
+   - Arguments must follow the parameter order. Swapped labels are `8-0024` **[✓]**.
    - Recursion is allowed. Fe0 adds no limit beyond EVM gas and stack depth.
 5. **Free functions are pure.** They have no `uses` clause and cannot touch storage.
 6. **Return paths.** A function with `-> T` must produce a `T` on every path, either through its
-   final expression or through `return`. Otherwise it is an error.
+   final expression or through `return`. Otherwise it is an error (`8-0000`, type mismatch)
+   **[✓]**.
 
 ## 6. Contracts and effects
 
@@ -247,18 +261,21 @@ contract Counter {
   per field with no packing **[✓]**.
 - `bool` is stored as 0 or 1 **[✓]**. `Address` is stored right-aligned with the high bits zero
   **[V]**.
-- A field declared without `mut` is read-only after `init` **[V]**. Fe0 may simply require `mut`
-  on every field in v1.
+- A field declared without `mut` is read-only after `init` **[✓]**:
+  - `init` may still write it, with `uses (mut v)`;
+  - an arm that declares `mut v` on it is rejected (`8-0085`).
 
 **Effects (`uses`).** Every `init` and arm body is checked:
-- Reading field `f` requires `f` or `mut f` in its `uses`.
-- Assigning to `f` requires `mut f`.
-- Listing a field the contract doesn't have is an error.
-- Naming a binding or local the same as a field in `uses` is an error. Fe reports this ("a name
+- Reading field `f` requires `f` or `mut f` in its `uses`. Otherwise it is an error, as in Fe
+  (`8-0116`) **[✓]**.
+- Assigning to `f` requires `mut f` (`8-0018`) **[✓]**.
+- Listing a field the contract doesn't have is an error (`8-0051`) **[✓]**.
+- An arm binding with the same name as a field in `uses` is an error. Fe reports this ("a name
   that an effect binds and that a parameter … also binds").
+- Fe accepts *unused* `uses` entries **[✓]**, so Fe0 reports them only as warnings.
+- Fe also accepts *duplicate* entries (`uses (v, v)`) **[✓]**; Fe0 rejects them.
 
-This check is the point of Fe0. **[V]** whether Fe also rejects *unused* `uses` entries. If it
-doesn't, Fe0 reports them as warnings only.
+This check is the point of Fe0.
 
 **Messages and dispatch.**
 - A `recv M` block must have exactly one arm per variant of `M` **[✓]** (the "missing variants"
@@ -271,21 +288,25 @@ doesn't, Fe0 reports them as warnings only.
 
 The runtime dispatcher matches the official one (`mir/src/runtime/synthetic.rs:745`):
 
-1. If `calldatasize < 4`, revert with empty data.
+1. If `calldatasize < 4`, revert with empty data **[✓]**.
 2. Compute `selector = calldataload(0) >> 224` and jump to the matching arm.
 3. If no arm matches, revert with empty data **[✓]**.
-4. Arguments are decoded as static ABI words in field order, starting at calldata offset 4:
-   - **[V]** short calldata;
-   - **[V]** a `bool` word that is neither 0 nor 1;
-   - **[V]** an `Address` word with high bits set;
-   - **[V]** a call carrying `msg.value > 0`, since arms are non-payable.
-   Each of these gets a differential test first, and Fe0 copies Fe's behaviour exactly.
-5. On success, a `u256`, `bool` or `Address` return value comes back as one ABI word **[✓ for
-   bool]**. An arm without a return type returns empty data **[V]**.
+4. Arguments are decoded as static ABI words in field order, starting at calldata offset 4.
+   Probed **[✓]**:
+   - **Short calldata** (fewer argument words than fields): revert with empty data.
+   - **Extra bytes** after the last argument: ignored, and the call succeeds.
+   - **A `bool` word other than 0 or 1:** revert with empty data.
+   - **An `Address` word with any of its upper 96 bits set:** revert with empty data.
+   - **A call carrying `msg.value > 0`:** revert with empty data, because arms are non-payable.
+5. On success, a `u256`, `bool` or `Address` return value comes back as one ABI word **[✓]**. An
+   arm without a return type returns empty data **[✓]**.
 
 **Deployment.**
-- The initcode runs `init` with its static ABI arguments, which are appended to the initcode
-  **[V]**, then returns the runtime code.
+- The initcode runs `init` with its static ABI arguments, which are appended to the initcode,
+  then returns the runtime code.
+  - This layout is documented in the 26.5.0 changelog: `init_code_hash` hashes "the embedded
+    creation code of `C` followed by its ABI-encoded constructor arguments".
+  - **[V]** by probe: how the official initcode reacts to missing or malformed arguments.
 - A contract without `init` gets a no-op one.
 - An ingot holds one contract.
 
@@ -305,10 +326,11 @@ data, revert data and storage reads. PLAN.md §5 describes the harness.
 
 ## 9. Open questions
 
-1. Shifts by 256 or more: do they panic or produce 0? (§4)
-2. Whether `x op= e` evaluates `x` once (only matters if places other than locals and fields are
-   ever added).
-3. Whether `uses` lists in Fe are order- or duplicate-sensitive.
-4. Does `init` with arguments use the standard Solidity layout (arguments appended to the
-   initcode)?
-5. Are calldata bytes beyond the expected arguments ignored or rejected?
+Answered by the probes in `spike-conform/` (Oct 28): shifts by 256 or more, left-to-right
+evaluation order, `uses` duplicates and unused entries, and extra calldata bytes. Still open:
+
+1. The **newline rule** (§3.4): does Fe read every Fe0-accepted line break the same way? Plan:
+   run a parser differential test over the whole corpus.
+2. **`init` with missing or malformed arguments:** what does the official initcode do?
+3. **`Address` in storage:** confirm it is right-aligned with the upper bits zero. Probably moot,
+   since decoding already rejects dirty upper bits.

@@ -1,0 +1,42 @@
+// Runtime [V] probes for SPEC.md. Selectors are small literals; tests send raw calldata.
+
+pub msg P {
+    #[selector = 0x01]
+    Mul { a: u256, b: u256 } -> u256,
+    #[selector = 0x02]
+    Mod { a: u256, b: u256 } -> u256,
+    #[selector = 0x03]
+    Shl { a: u256, s: u256 } -> u256,
+    #[selector = 0x04]
+    Shr { a: u256, s: u256 } -> u256,
+    #[selector = 0x05]
+    OrderBin { z: u256 } -> u256,
+    #[selector = 0x06]
+    OrderArgs { z: u256 } -> u256,
+    #[selector = 0x07]
+    TakeBool { b: bool } -> u256,
+    #[selector = 0x08]
+    TakeAddr { a: Address } -> Address,
+    #[selector = 0x09]
+    NoRet {},
+    #[selector = 0x0a]
+    Two { a: u256, b: u256 } -> u256,
+}
+
+fn pair(_ x: u256, _ y: u256) -> u256 { x + y }
+
+pub contract K {
+    recv P {
+        Mul { a, b } -> u256 { a * b }
+        Mod { a, b } -> u256 { a % b }
+        Shl { a, s } -> u256 { a << s }
+        Shr { a, s } -> u256 { a >> s }
+        // left div-by-zero (0x12) vs right underflow (0x11): which fires first?
+        OrderBin { z } -> u256 { 1 / z + (z - 1) }
+        OrderArgs { z } -> u256 { pair(1 / z, z - 1) }
+        TakeBool { b } -> u256 { if b { 1 } else { 0 } }
+        TakeAddr { a } -> Address { a }
+        NoRet {} {}
+        Two { a, b } -> u256 { a + b }
+    }
+}

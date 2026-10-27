@@ -1,0 +1,8 @@
+msg M {
+    #[selector = 0x01]
+    Get {} -> u256,
+}
+contract K {
+    mut v: u256,
+    recv M { Get {} -> u256 uses (q) { 1 } }
+}

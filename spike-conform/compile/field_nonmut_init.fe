@@ -1,0 +1,9 @@
+msg M {
+    #[selector = 0x01]
+    Get {} -> u256,
+}
+contract K {
+    v: u256,
+    init() uses (mut v) { v = 7 }
+    recv M { Get {} -> u256 uses (v) { v } }
+}

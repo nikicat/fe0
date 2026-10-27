@@ -1,0 +1,2 @@
+const BIG: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff + 1
+fn f() -> u256 { BIG }
