@@ -69,9 +69,20 @@ unknowns, declared as pre-existing. See [PLAN.md](PLAN.md).
 
 ## 3. Pick the test corpus
 
-- [ ] Go through `crates/fe/tests/fixtures/fe_test/` (270 programs) and
+- [x] Go through `crates/fe/tests/fixtures/fe_test/` (270 programs) and
       `crates/codegen/tests/fixtures/` (117 programs)
-- [ ] List the programs that are Fe0-compatible as they are or with small edits
+      Master now has 526 files. `tools/corpus_scan.py` → [corpus/SCAN.md](corpus/SCAN.md)
+- [x] List the programs that are Fe0-compatible as they are or with small edits
+      **Verdict: the official corpus is almost useless as a Fe0 differential suite.**
+      - After a manual check, only 4 files fit: `code_backed_scalar_field.fe`,
+        `immutable_contract_field_init_set.fe`, `bitnot.fe`, `bool_literal.fe`.
+      - Even the two contracts use non-`mut` fields, which Fe0 v1 excludes; see the next point.
+      - The official tests exercise exactly what Fe0 leaves out: structs and traits (365 files),
+        method calls (332), arrays (143), generics (109), `u8`–`u64` types.
+      - **Side finding:** non-`mut` contract fields are code-backed immutables, not storage.
+        SPEC.md §6 is updated and Fe0 v1 requires `mut` on every field.
+      - **Consequence:** we write the corpus ourselves, and a **random Fe0 program generator**
+        moves from stretch goal to core (PLAN.md §5).
 
 ## 4. Setup (outward-facing steps need the user's go-ahead)
 

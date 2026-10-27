@@ -83,7 +83,7 @@ fields      = field { "," field } [ "," ] ;
 field       = IDENT ":" type ;
 
 contract    = "contract" IDENT "{" { cfield } [ init ] { recv } "}" ;
-cfield      = [ "mut" ] IDENT ":" type [ "," ] ;
+cfield      = "mut" IDENT ":" type [ "," ] ;         (* v1: mut only, see §6 *)
 init        = "init" "(" [ params ] ")" [ uses ] block ;
 recv        = "recv" IDENT "{" { arm } "}" ;
 arm         = IDENT "{" [ binds ] "}" [ "->" type ] [ uses ] block ;
@@ -257,13 +257,20 @@ contract Counter {
 ```
 
 **Storage.**
-- Field *i* (counting from 0, in declaration order) lives in storage slot *i*, one 32-byte slot
-  per field with no packing **[✓]**.
+- **Fe0 v1 requires every contract field to be `mut`.**
+  - Fe keeps non-`mut` fields out of storage entirely **[✓]**. Their values are written into the
+    deployed runtime code during `init` and read with `CODECOPY`, like Solidity immutables
+    (`spike-layout/src/immut.fe`).
+  - Supporting them means appending values to the runtime code at deploy time, which is a
+    stretch goal.
+- The *i*-th `mut` field (counting from 0, in declaration order, **non-`mut` fields not
+  counted**) lives in storage slot *i*, one 32-byte slot per field with no packing **[✓]**. With
+  fields `a, mut b, c, mut d`, `b` is in slot 0 and `d` in slot 1.
 - `bool` is stored as 0 or 1 **[✓]**. `Address` is stored right-aligned with the high bits zero
   **[V]**.
-- A field declared without `mut` is read-only after `init` **[✓]**:
-  - `init` may still write it, with `uses (mut v)`;
-  - an arm that declares `mut v` on it is rejected (`8-0085`).
+- For when immutables are added: a field declared without `mut` is read-only after `init` **[✓]**.
+  - `init` may still write it, with `uses (mut v)`.
+  - An arm that declares `mut v` on it is rejected (`8-0085`).
 
 **Effects (`uses`).** Every `init` and arm body is checked:
 - Reading field `f` requires `f` or `mut f` in its `uses`. Otherwise it is an error, as in Fe

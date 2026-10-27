@@ -137,8 +137,10 @@ source ──Read effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec<N
 3. **Corpus:**
    - About 40 Fe0 programs written for this project (arithmetic, control flow, storage,
      effects, ABI).
-   - Plus Fe0-compatible files adapted from `crates/fe/tests/fixtures/fe_test/` and
-     `crates/codegen/tests/fixtures/` (`bit_ops`, `aug_assign`, ...).
+   - The official fixtures contribute only 4 files (`bitnot`, `bool_literal`, and two
+     immutable-field contracts for when immutables are supported). See corpus/SCAN.md.
+   - The probes in `spike-conform/` (arithmetic edge cases, malformed calldata) seed the
+     hand-written set.
 4. **Negative tests:** programs that must be rejected (effect violations, type errors), with
    the expected error code and position.
 5. **Native round trip:** `fefe < P.fe` produces hex, which is compared byte for byte with the
@@ -146,8 +148,15 @@ source ──Read effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec<N
 6. **Gas and size report:** gas to compile each corpus program on the EVM, and bytecode size
    compared with the official compiler's output.
 7. **CI:** the starter's workflow (`fe fmt --check`, `fe test`) plus a native build step.
-8. **Stretch:** a random generator of Fe0 programs feeding the differential test, i.e. fuzzing,
-   which the official repo has none of.
+8. **Core, no longer a stretch goal: a random generator of Fe0 programs** feeding the
+   differential test, i.e. fuzzing, which the official repo has none of. The official corpus
+   yields only 4 Fe0-compatible files (corpus/SCAN.md), so hand-written programs plus generated
+   ones are the whole suite.
+   - Generated programs cover expression trees over `u256`/`bool` with checked operators,
+     `if`/`while`, locals, storage fields with `uses`, and multiple arms.
+   - The oracle is the official compiler: identical status, return data and revert data.
+   - The generator can be a Python supporting tool. A Fe version using the `Rng` effect would be
+     a nice extra.
 
 ## 6. Schedule
 
@@ -157,7 +166,7 @@ source ──Read effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec<N
 | Nov 3–5 | Lexer and parser into the arena AST, with unit tests. **Measure the size of each phase**, which decides how to split the contracts |
 | Nov 6–9 | Resolver, type checker, effect checker, negative tests |
 | Nov 10–14 | Code generation, assembler, dispatcher, first differential tests passing. **Register by Nov 17 at the latest; aim for Nov 10** |
-| Nov 15–18 | Corpus up to 40+ programs, fixing differential failures, native CLI |
+| Nov 15–18 | Corpus up to 40+ programs, **random program generator** in the differential loop, fixing failures, native CLI |
 | Nov 19–21 | On-chain contract split, Sepolia deployment, demo script (compile, deploy, call) |
 | Nov 22–24 | README (approach, architecture, limitations, Fe0 spec), declaration of AI use and pre-existing work, buffer. Submit by Nov 24 23:59 UTC |
 

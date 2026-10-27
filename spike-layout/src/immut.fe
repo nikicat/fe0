@@ -1,0 +1,32 @@
+// Where do non-`mut` fields live, and do they shift the slots of `mut` fields?
+pub msg ImMsg {
+    #[selector = 0x01]
+    Set { v: u256 } -> u256,
+}
+
+pub contract Im {
+    a: u256,
+    mut b: u256,
+    c: u256,
+    mut d: u256,
+
+    init(x: u256) uses (mut a, mut c) {
+        a = x
+        c = x + 1
+    }
+
+    recv ImMsg {
+        Set { v } -> u256 uses (a, mut b, c, mut d) {
+            b = v
+            d = v + 1
+            a + c
+        }
+    }
+}
+
+#[test]
+fn immut_layout() uses (evm: mut Evm) {
+    let im = evm.create2<Im>(value: Wei::zero(), args: (0xa0,), salt: 0)
+    let r: u256 = evm.call(addr: im, gas: 200000, value: Wei::zero(), message: ImMsg::Set { v: 0xb0 })
+    assert!(r == 0x141)
+}
