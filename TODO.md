@@ -5,8 +5,14 @@ unknowns, declared as pre-existing. See [PLAN.md](PLAN.md).
 
 ## 1. Check the unknowns (throwaway experiments, under 1h each)
 
-- [ ] Can `fe test` deploy hand-written bytecode with `create_raw` and call it? Try a contract
+- [x] Can `fe test` deploy hand-written bytecode with `create_raw` and call it? Try a contract
       that just returns 42. Every differential test depends on this
+      **Yes, on 26.5.0 and master** (`spike-lexer/src/create_raw.fe`):
+      - Hand-assembled initcode deploys, and a raw call returns the 32-byte word 42.
+      - A typed `evm.call` through a `msg` decodes 42 from the same contract.
+      - Invalid initcode gives address 0 without reverting, so a test can detect a failed deploy.
+      - Bytecode is built as `MemVec<u8>` → `.into_array().span()` (MemVec has no `span()`).
+        A `MemArray<u8>` is byte-packed.
 - [ ] Official compiler's storage slots for plain fields, its return data and revert data, and
       its overflow panic codes. Fe0's output must match them exactly
 - [ ] Passing `Bytes` from one contract to another and back, and supplying `Read` from calldata.
