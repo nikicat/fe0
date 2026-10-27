@@ -266,8 +266,9 @@ contract Counter {
 - The *i*-th `mut` field (counting from 0, in declaration order, **non-`mut` fields not
   counted**) lives in storage slot *i*, one 32-byte slot per field with no packing **[✓]**. With
   fields `a, mut b, c, mut d`, `b` is in slot 0 and `d` in slot 1.
-- `bool` is stored as 0 or 1 **[✓]**. `Address` is stored right-aligned with the high bits zero
-  **[V]**.
+- `bool` is stored as 0 or 1 **[✓]**.
+- `Address` is stored right-aligned with the high bits zero **[✓]**: the address `0xcc` is
+  stored as the word `0xcc`.
 - For when immutables are added: a field declared without `mut` is read-only after `init` **[✓]**.
   - `init` may still write it, with `uses (mut v)`.
   - An arm that declares `mut v` on it is rejected (`8-0085`).
@@ -313,7 +314,12 @@ The runtime dispatcher matches the official one (`mir/src/runtime/synthetic.rs:7
   then returns the runtime code.
   - This layout is documented in the 26.5.0 changelog: `init_code_hash` hashes "the embedded
     creation code of `C` followed by its ABI-encoded constructor arguments".
-  - **[V]** by probe: how the official initcode reacts to missing or malformed arguments.
+  - Probed **[✓]** (`spike-conform/src/init_args.fe`): the initcode handles arguments the same
+    way the dispatcher handles calldata.
+    - Missing arguments, too few argument words, a `bool` word other than 0 or 1, or an
+      `Address` word with upper bits set: the creation reverts, so CREATE returns address 0.
+    - Extra trailing bytes are ignored.
+    - Deploying with `value > 0` fails, because `init` is non-payable.
 - A contract without `init` gets a no-op one.
 - An ingot holds one contract.
 
@@ -337,7 +343,7 @@ Answered by the probes in `spike-conform/` (Oct 28): shifts by 256 or more, left
 evaluation order, `uses` duplicates and unused entries, and extra calldata bytes. Still open:
 
 1. The **newline rule** (§3.4): does Fe read every Fe0-accepted line break the same way? Plan:
-   run a parser differential test over the whole corpus.
-2. **`init` with missing or malformed arguments:** what does the official initcode do?
-3. **`Address` in storage:** confirm it is right-aligned with the upper bits zero. Probably moot,
-   since decoding already rejects dirty upper bits.
+   run a parser differential test over the whole corpus, including generated programs.
+
+Also answered (Oct 28): `init` with missing or malformed arguments, and `Address` storage
+alignment.

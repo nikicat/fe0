@@ -1,0 +1,51 @@
+// [V] probes: how official initcode handles missing/malformed constructor args,
+// and how an Address field is laid out in storage (read SSTOREs via --trace-evm).
+use std::evm::{Contract, RawOps}
+
+pub contract WithInit {
+    mut a: u256,
+    mut b: bool,
+    mut c: Address,
+
+    init(x: u256, y: bool, z: Address) uses (mut a, mut b, mut c) {
+        a = x
+        b = y
+        c = z
+    }
+}
+
+// Deploy WithInit's official initcode followed by `n` raw argument words (+ `extra` bytes).
+// Reports Panic(1) if the deployment succeeded, Panic(0) if CREATE returned address 0.
+fn deploy_with(_ w0: u256, _ w1: u256, _ w2: u256, _ n: u256, _ extra: u256) uses (evm: mut Evm) {
+    deploy_value(w0, w1, w2, n, extra, Wei::zero())
+}
+
+fn deploy_value(_ w0: u256, _ w1: u256, _ w2: u256, _ n: u256, _ extra: u256, _ value: Wei) uses (evm: mut Evm) {
+    let init_len = WithInit::init_code_len()
+    let total = init_len + n * 32 + extra
+    var buf = MemBuffer::alloc(total as usize)
+    evm.codecopy(dest: mut buf, dest_offset: 0, src_offset: WithInit::init_code_offset(), len: init_len)
+    let words: [u256; 3] = [w0, w1, w2]
+    var i: u256 = 0
+    while i < n {
+        buf.span().write_word(offset: (init_len + i * 32) as usize, value: words[i as usize])
+        i += 1
+    }
+    let addr = evm.create_raw(value, init_code: buf.span())
+    core::panic_code(if addr.word() == 0 { 0 } else { 1 })
+}
+
+#[test]
+fn init_valid() uses (evm: mut Evm) { deploy_with(0xaa, 1, 0xcc, 3, 0) }
+#[test]
+fn init_no_args() uses (evm: mut Evm) { deploy_with(0, 0, 0, 0, 0) }
+#[test]
+fn init_short_args() uses (evm: mut Evm) { deploy_with(0xaa, 1, 0, 2, 0) }
+#[test]
+fn init_bool_2() uses (evm: mut Evm) { deploy_with(0xaa, 2, 0xcc, 3, 0) }
+#[test]
+fn init_addr_dirty() uses (evm: mut Evm) { deploy_with(0xaa, 1, (1 << 200) | 0xcc, 3, 0) }
+#[test]
+fn init_extra_bytes() uses (evm: mut Evm) { deploy_with(0xaa, 1, 0xcc, 3, 7) }
+#[test(balance = 1000)]
+fn init_with_value() uses (evm: mut Evm) { deploy_value(0xaa, 1, 0xcc, 3, 0, std::evm::wei(5)) }

@@ -99,3 +99,14 @@ unknowns, declared as pre-existing. See [PLAN.md](PLAN.md).
 - [ ] Check for the native-pipeline merge every couple of days, then rebuild
       (`cargo build --release -p fe --features cranelift` in `~/src/fe`) and rerun the spike
 - [ ] On Nov 3, freeze the toolchain on the newest release
+- Open upstream PRs to watch (as of Oct 28), all by sbillig:
+  - **#1883 "Native portability, panics and tests"**: probably the native work the Fe team
+    mentioned. Native `usize` becomes 64-bit, so check the spike's `usize` arithmetic after it
+    lands. `keccak_words` sits in its list of fixtures excluded from native runs, so native
+    keccak stays unsupported.
+  - **#1882 "Resolve arithmetic mode at the operator"**: could change checked-arithmetic
+    semantics. Rerun the `spike-conform` run-time probes after it lands.
+  - **#1845 "Match fieldless msg variants by path without `{}`"**: Fe0 always writes `Name {}`,
+    which should stay valid. Recheck the spec example after it lands.
+  - **#1878 "Per-function code sizes with `--emit sizes`"**: useful for the 24 KB measurement
+    on Nov 3–5.
