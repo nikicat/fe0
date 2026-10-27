@@ -86,7 +86,11 @@ unknowns, declared as pre-existing. See [PLAN.md](PLAN.md).
 
 ## 4. Setup (outward-facing steps need the user's go-ahead)
 
-- [ ] Private GitHub repository from the starter, with CI pinned to Fe 26.5.0
+- [x] Private GitHub repository: <https://github.com/nikicat/fe-contest>, created Oct 28 and
+      pushed. It must be made public at submission (an OSI license is required by then).
+- [ ] CI, pinned to the frozen Fe release. Add it on Nov 3 with the real project: today's spikes
+      have tests that fail on purpose (`lex_gas`, the probes in `spike-conform`), so CI on them
+      would always be red
 - [ ] Register early with a vague title (e.g. "Fe developer tooling"). Deadline Nov 17
 - [ ] Optional: office hours, Thursday Oct 30 at 16:00 UTC. Don't mention the idea
 
