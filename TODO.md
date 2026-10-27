@@ -25,10 +25,31 @@ unknowns, declared as pre-existing. See [PLAN.md](PLAN.md).
       - **`assert!(false, "nope")`:** Solidity `Error(string)` (`0x08c379a0` + ABI string).
       - **Unknown selector:** revert with empty data.
       - All of this matches Solidity's conventions, so Fe0 codegen can emit exactly these payloads.
-- [ ] Passing `Bytes` from one contract to another and back, and supplying `Read` from calldata.
+- [x] Passing `Bytes` from one contract to another and back, and supplying `Read` from calldata.
       Needed for splitting the on-chain compiler across contracts (24 KB limit)
-- [ ] Is keccak available natively (for `sol("...")` selectors)? Do byte or string literals
+      **Yes** (`spike-lexer/src/split.fe`):
+      - A `Front` contract takes `Lex { src: Bytes } -> Bytes` and feeds the calldata `Bytes`
+        through a `BytesReader: Read` into the unchanged lexer.
+      - A `Facade` contract (`uses (call: mut Call)`) forwards to `Front` and returns its `Bytes`.
+        Both a direct call and a call through the facade pass.
+      - Build values with `Bytes::from_payload(source: memvec.into_array().span())`, and read
+        them with `.len()` and `.byte_at(i)`.
+- [x] Is keccak available natively (for `sol("...")` selectors)? Do byte or string literals
       exist that can be indexed (for keyword matching in the lexer)?
+      **Keccak: only on the EVM, or when the input is a compile-time constant.**
+      - `core::keccak` (an intrinsic) and `std::evm::keccak256(MemSpan)` both fail to lower
+        natively ("target does not support EvmKeccak256").
+      - A first native probe seemed to work only because the input was constant and the hash was
+        computed at compile time (`spike-native/probe_keccak.fe`).
+      - **Consequence for Fe0:** make hashing an effect (`uses (h: Hasher)`). The EVM provider
+        uses the KECCAK256 opcode; the native provider is a software keccak-f[1600] in Fe (about
+        150 lines), differential-tested against the opcode under `fe test`.
+      - Fallback: Fe0 v1 accepts only literal `#[selector = 0x...]`, with `sol("...")` as stretch.
+      **Literals:** there are no byte or char literals (`b'a'` is a parse error).
+      - A typed string works: `let s: String<2> = "fn"`, then `s.as_bytes()[i]` (a
+        `PackedBytes`) indexes at run time natively.
+      - An *untyped* `"fn".as_bytes()` becomes `Bytes`, which has no `Index`; use `.byte_at(i)`
+        instead. Keyword tables can be typed `String<N>` constants.
 
 ## 2. Freeze the Fe0 specification
 

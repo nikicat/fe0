@@ -80,7 +80,10 @@ Fe0 must be a strict subset of Fe: every Fe0 program is also a valid Fe program 
 
 - **Types:** `u256`, `bool`, `Address`.
 - **Items:** `fn` (no generics), `const`, one `contract` with plain storage fields, a `msg`
-  with `#[selector = 0x...]` (and `sol("...")` if keccak is cheap natively), `init`, and `recv`.
+  with `#[selector = 0x...]`, `init`, and `recv`.
+  - `sol("...")` needs keccak at Fe0's own run time, which the native backend lacks.
+  - Plan: a `Hasher` effect, with the opcode on the EVM and a software keccak-f[1600] written in
+    Fe natively. It's a stretch goal after literal selectors work (see TODO §1).
 - **Statements and expressions:**
   - `let`, `var`, `=`, `+=` and friends, `if`/`else`, `while`, `return`, calls;
   - arithmetic, comparison, bitwise and logical operators, checked overflow (panics like Fe);

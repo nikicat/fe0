@@ -1,0 +1,94 @@
+// TODO §1 check: can contracts pass `Bytes` to each other (needed to split the
+// on-chain compiler under 24 KB), and can `Read` be fed from calldata `Bytes`?
+
+use ingot::lex_all
+use std::abi::{Bytes, sol}
+use std::evm::Call
+use std::io::Read
+
+pub struct BytesReader {
+    data: Bytes,
+    pos: usize,
+}
+
+impl Read for BytesReader {
+    fn read_char(mut self) -> i32 {
+        if self.pos >= self.data.len() {
+            return -1
+        }
+        let c = self.data.byte_at(self.pos)
+        self.pos += 1
+        c as i32
+    }
+}
+
+pub msg FrontMsg {
+    // Lex `src`; return one byte per token: its kind code.
+    #[selector = sol("lex(bytes)")]
+    Lex { src: Bytes } -> Bytes,
+}
+
+pub contract Front {
+    recv FrontMsg {
+        Lex { src } -> Bytes {
+            with (Read = BytesReader { data: src, pos: 0 }) {
+                let tokens = lex_all()
+                var kinds: MemVec<u8> = MemVec::new()
+                for ref t in tokens {
+                    kinds.push(t.kind.code())
+                }
+                Bytes::from_payload(source: kinds.into_array().span())
+            }
+        }
+    }
+}
+
+pub msg FacadeMsg {
+    #[selector = sol("compile(bytes,address)")]
+    Compile { src: Bytes, front: Address } -> Bytes,
+}
+
+// Stand-in for the facade that chains front end → back end.
+pub contract Facade uses (call: mut Call) {
+    recv FacadeMsg {
+        Compile { src, front } -> Bytes uses (mut call) {
+            call.call(addr: front, gas: 10000000, value: Wei::zero(), message: FrontMsg::Lex { src })
+        }
+    }
+}
+
+fn source() -> Bytes {
+    // "fn f(x) -> u8 { x == 42 }"
+    let src: [u8; 25] = [
+        102, 110, 32, 102, 40, 120, 41, 32, 45, 62, 32, 117, 56, 32, 123, 32, 120, 32,
+        61, 61, 32, 52, 50, 32, 125,
+    ]
+    var v: MemVec<u8> = MemVec::new()
+    for b in src {
+        v.push(b)
+    }
+    Bytes::from_payload(source: v.into_array().span())
+}
+
+fn check_kinds(_ kinds: Bytes) {
+    // fn f ( x ) -> u8 { x == 42 } EOF
+    assert!(kinds.len() == 13)
+    assert!(kinds.byte_at(0) == 1)
+    assert!(kinds.byte_at(10) == 2)
+    assert!(kinds.byte_at(12) == 4)
+}
+
+#[test]
+fn bytes_through_one_contract() uses (evm: mut Evm) {
+    let front = evm.create2<Front>(value: Wei::zero(), args: (), salt: 0)
+    let kinds: Bytes = evm.call(addr: front, gas: 10000000, value: Wei::zero(), message: FrontMsg::Lex { src: source() })
+    check_kinds(kinds)
+}
+
+#[test]
+fn bytes_through_facade() uses (evm: mut Evm) {
+    let front = evm.create2<Front>(value: Wei::zero(), args: (), salt: 0)
+    let facade = evm.create2<Facade>(value: Wei::zero(), args: (), salt: 0)
+    let kinds: Bytes = evm.call(addr: facade, gas: 20000000, value: Wei::zero(), message: FacadeMsg::Compile { src: source(), front })
+    check_kinds(kinds)
+}

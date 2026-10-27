@@ -1,0 +1,23 @@
+use std::io::{Write, host, write_char}
+
+fn hex(_ w: u256) uses (o: mut Write) {
+    var i: u256 = 0
+    while i < 64 {
+        let n: u256 = (w >> (252 - i * 4)) & 0xf
+        let c: u256 = if n < 10 { 48 + n } else { 87 + n }
+        write_char(c.downcast_truncate())
+        i += 1
+    }
+    write_char(10)
+}
+
+pub fn main(argc: i32, argv: **u8) -> i32 {
+    let _ = argv
+    with (Write = host()) {
+        // keccak("answer()") on a fixed-size byte array, at run time.
+        var sig: [u8; 8] = [97, 110, 115, 119, 101, 114, 40, 41]
+        sig[0] = (96 + argc).downcast_truncate()
+        hex(core::keccak(sig))
+    }
+    0
+}
