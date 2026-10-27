@@ -1,0 +1,61 @@
+use ingot::{Probe, ProbeMsg}
+use std::evm::Call
+
+fn deploy() -> Address uses (evm: mut Evm) {
+    evm.create2<Probe>(value: Wei::zero(), args: (), salt: 0)
+}
+
+#[test]
+fn layout_set() uses (evm: mut Evm) {
+    let p = deploy()
+    evm.call(addr: p, gas: 200000, value: Wei::zero(),
+        message: ProbeMsg::Set { a: 0xaa, b: true, c: Address::from_word_truncate(0xcc), d: 0xdd })
+    let a: u256 = evm.call(addr: p, gas: 100000, value: Wei::zero(), message: ProbeMsg::A {})
+    assert!(a == 0xaa)
+}
+
+// Each test below fails on purpose so the runner prints the callee's revert data.
+#[test]
+fn returndata_bool() uses (evm: mut Evm) {
+    let p = deploy()
+    evm.call(addr: p, gas: 200000, value: Wei::zero(),
+        message: ProbeMsg::Set { a: 1, b: true, c: Address::from_word_truncate(0xcc), d: 2 })
+    let out = evm.try_call(addr: p, gas: 100000, value: Wei::zero(), message: ProbeMsg::B {})
+    core::panic_code(out.returndata_len() as u256 * 0x1000 + out.returndata().read_word(0))
+}
+
+#[test]
+fn rev_overflow() uses (evm: mut Evm) {
+    let _: u256 = evm.call(addr: deploy(), gas: 100000, value: Wei::zero(), message: ProbeMsg::Overflow { x: 1 })
+}
+
+#[test]
+fn rev_underflow() uses (evm: mut Evm) {
+    let _: u256 = evm.call(addr: deploy(), gas: 100000, value: Wei::zero(), message: ProbeMsg::Underflow { x: 1 })
+}
+
+#[test]
+fn rev_divzero() uses (evm: mut Evm) {
+    let _: u256 = evm.call(addr: deploy(), gas: 100000, value: Wei::zero(), message: ProbeMsg::DivZero { x: 1 })
+}
+
+#[test]
+fn rev_assert() uses (evm: mut Evm) {
+    evm.call(addr: deploy(), gas: 100000, value: Wei::zero(), message: ProbeMsg::Fail {})
+}
+
+#[test]
+fn rev_assert_msg() uses (evm: mut Evm) {
+    evm.call(addr: deploy(), gas: 100000, value: Wei::zero(), message: ProbeMsg::FailMsg {})
+}
+
+#[test]
+fn rev_unknown_selector() uses (evm: mut Evm) {
+    var v: MemVec<u8> = MemVec::new()
+    v.push(0xde)
+    v.push(0xad)
+    v.push(0xbe)
+    v.push(0xef)
+    let out = evm.try_call_raw(addr: deploy(), gas: 100000, value: Wei::zero(), args: v.into_array().span())
+    core::panic_code(if out.success() { 1 } else { 0x100 + out.returndata_len() as u256 })
+}

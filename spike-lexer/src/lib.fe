@@ -1,0 +1,186 @@
+// Spike: a lexer for a Fe subset that pulls source bytes through the `Read`
+// effect, so the same code lexes stdin natively and a byte array under `fe test`.
+
+use std::io::{Read, Write, read_char, write_char}
+
+pub enum Kind {
+    Ident,
+    Keyword,
+    Int,
+    Punct,
+    Eof,
+    Error,
+}
+
+impl Kind {
+    pub fn code(self) -> u8 {
+        match self {
+            Kind::Ident => 0,
+            Kind::Keyword => 1,
+            Kind::Int => 2,
+            Kind::Punct => 3,
+            Kind::Eof => 4,
+            Kind::Error => 5,
+        }
+    }
+}
+
+pub struct Token {
+    pub kind: Kind,
+    pub start: usize,
+    pub len: usize,
+}
+
+pub struct Lexer {
+    pub src: MemVec<u8>,
+    peeked: i32,
+}
+
+fn is_alpha(_ c: i32) -> bool {
+    (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95
+}
+
+fn is_digit(_ c: i32) -> bool {
+    c >= 48 && c <= 57
+}
+
+fn is_space(_ c: i32) -> bool {
+    c == 32 || c == 9 || c == 10 || c == 13
+}
+
+impl Lexer {
+    pub fn new() -> Self uses (r: mut Read) {
+        Lexer { src: MemVec::new(), peeked: read_char() }
+    }
+
+    // Consume the peeked byte into `src` and read the next one.
+    fn bump(mut self) uses (r: mut Read) {
+        self.src.push(self.peeked.downcast_truncate())
+        self.peeked = read_char()
+    }
+
+    fn span_is<const N: usize>(self, _ start: usize, _ len: usize, _ word: [u8; N]) -> bool {
+        if len != N {
+            return false
+        }
+        var i: usize = 0
+        while i < N {
+            if self.src[start + i] != word[i] {
+                return false
+            }
+            i += 1
+        }
+        true
+    }
+
+    fn is_keyword(self, _ start: usize, _ len: usize) -> bool {
+        // fn, let, var, if, else, while, return, msg, recv, contract, uses, mut
+        self.span_is(start, len, [102, 110])
+            || self.span_is(start, len, [108, 101, 116])
+            || self.span_is(start, len, [118, 97, 114])
+            || self.span_is(start, len, [105, 102])
+            || self.span_is(start, len, [101, 108, 115, 101])
+            || self.span_is(start, len, [119, 104, 105, 108, 101])
+            || self.span_is(start, len, [114, 101, 116, 117, 114, 110])
+            || self.span_is(start, len, [109, 115, 103])
+            || self.span_is(start, len, [114, 101, 99, 118])
+            || self.span_is(start, len, [99, 111, 110, 116, 114, 97, 99, 116])
+            || self.span_is(start, len, [117, 115, 101, 115])
+            || self.span_is(start, len, [109, 117, 116])
+    }
+
+    pub fn next(mut self) -> Token uses (r: mut Read) {
+        while is_space(self.peeked) {
+            self.bump()
+        }
+        let start = self.src.len()
+        let c = self.peeked
+        if c < 0 {
+            return Token { kind: Kind::Eof, start, len: 0 }
+        }
+        if is_alpha(c) {
+            while is_alpha(self.peeked) || is_digit(self.peeked) {
+                self.bump()
+            }
+            let len = self.src.len() - start
+            let kind = if self.is_keyword(start, len) { Kind::Keyword } else { Kind::Ident }
+            return Token { kind, start, len }
+        }
+        if is_digit(c) {
+            while is_digit(self.peeked) || self.peeked == 95 {
+                self.bump()
+            }
+            return Token { kind: Kind::Int, start, len: self.src.len() - start }
+        }
+        self.bump()
+        // Two-byte operators: -> == != <= >= && ||
+        let n = self.peeked
+        if (c == 45 && n == 62) || (n == 61 && (c == 61 || c == 33 || c == 60 || c == 62))
+            || (c == 38 && n == 38) || (c == 124 && n == 124) {
+            self.bump()
+        }
+        let len = self.src.len() - start
+        if c > 126 {
+            return Token { kind: Kind::Error, start, len }
+        }
+        Token { kind: Kind::Punct, start, len }
+    }
+}
+
+pub fn lex_all() -> MemVec<Token> uses (r: mut Read) {
+    var lexer = Lexer::new()
+    var tokens: MemVec<Token> = MemVec::new()
+    while true {
+        let tok = lexer.next()
+        let done = tok.kind.code() == 4
+        tokens.push(tok)
+        if done {
+            break
+        }
+    }
+    tokens
+}
+
+fn write_usize(_ n: usize) uses (w: mut Write) {
+    if n >= 10 {
+        write_usize(n / 10)
+    }
+    write_char((48 + n % 10).downcast_truncate())
+}
+
+// Native entry point: `fe build --backend native`, then pipe Fe source to stdin.
+// Prints one `kind start len` line per token.
+pub fn main() -> i32 {
+    with (Read = std::io::host(), Write = std::io::host()) {
+        let tokens = lex_all()
+        var i: usize = 0
+        while i < tokens.len() {
+            let t = ref tokens[i]
+            write_usize(t.kind.code() as usize)
+            write_char(32)
+            write_usize(t.start)
+            write_char(32)
+            write_usize(t.len)
+            write_char(10)
+            i += 1
+        }
+    }
+    0
+}
+
+msg LexMsg {
+    #[selector = sol("count()")]
+    Count -> u256,
+}
+
+// Probe contract to measure the lexer's deployed bytecode size.
+pub contract LexProbe {
+    recv LexMsg {
+        Count -> u256 {
+            let src: [u8; 4] = [102, 110, 32, 120]
+            with (std::io::Read = tests::ArrayReader { bytes: src, pos: 0 }) {
+                lex_all().len() as u256
+            }
+        }
+    }
+}

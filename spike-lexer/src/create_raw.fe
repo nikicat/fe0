@@ -1,0 +1,49 @@
+// TODO §1 check: can a `fe test` deploy hand-assembled bytecode with
+// `create_raw` and call it, both raw and through a typed `msg`?
+
+use std::abi::sol
+use std::evm::{Call, Create}
+
+msg Answer {
+    #[selector = sol("answer()")]
+    Get -> u256,
+}
+
+// initcode: CODECOPY the 10-byte runtime from offset 12 and RETURN it.
+// runtime:  PUSH1 42 PUSH1 0 MSTORE PUSH1 32 PUSH1 0 RETURN
+fn answer_initcode() -> MemVec<u8> {
+    let code: [u8; 22] = [
+        0x60, 0x0a, 0x60, 0x0c, 0x60, 0x00, 0x39, 0x60, 0x0a, 0x60, 0x00, 0xf3,
+        0x60, 0x2a, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3,
+    ]
+    var v: MemVec<u8> = MemVec::new()
+    for b in code {
+        v.push(b)
+    }
+    v
+}
+
+#[test]
+fn create_raw_then_call() uses (evm: mut Evm) {
+    let initcode = answer_initcode().into_array()
+    let addr = evm.create_raw(value: Wei::zero(), init_code: initcode.span())
+    assert!(addr.word() != 0)
+
+    // Raw call: the whole returndata is the 32-byte word 42.
+    let raw = evm.try_call_raw(addr, gas: 100000, value: Wei::zero(), args: MemSpan::empty())
+    assert!(raw.success())
+    assert!(raw.returndata_len() == 32)
+
+    // Typed call: the harness can drive hand-assembled code through a `msg`.
+    let v: u256 = evm.call(addr: addr, gas: 100000, value: Wei::zero(), message: Answer::Get {})
+    assert!(v == 42)
+}
+
+#[test]
+fn create_raw_bad_initcode_gives_zero_address() uses (evm: mut Evm) {
+    // INVALID (0xfe) as initcode: CREATE must fail and return address 0.
+    var v: MemVec<u8> = MemVec::new()
+    v.push(0xfe)
+    let addr = evm.create_raw(value: Wei::zero(), init_code: v.into_array().span())
+    assert!(addr.word() == 0)
+}

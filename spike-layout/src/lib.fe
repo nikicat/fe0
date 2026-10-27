@@ -1,0 +1,50 @@
+// TODO §1 check: what the official compiler does for plain storage fields,
+// return data, and failures (overflow, assert, div by zero, unknown selector).
+// Run `fe test --trace-evm` and read SSTOREs; failing tests print revert data.
+
+use std::abi::sol
+
+pub msg ProbeMsg {
+    #[selector = sol("set(uint256,bool,address,uint256)")]
+    Set { a: u256, b: bool, c: Address, d: u256 },
+    #[selector = sol("a()")]
+    A -> u256,
+    #[selector = sol("b()")]
+    B -> bool,
+    #[selector = sol("c()")]
+    C -> Address,
+    #[selector = sol("overflow(uint256)")]
+    Overflow { x: u256 } -> u256,
+    #[selector = sol("underflow(uint256)")]
+    Underflow { x: u256 } -> u256,
+    #[selector = sol("divzero(uint256)")]
+    DivZero { x: u256 } -> u256,
+    #[selector = sol("fail()")]
+    Fail,
+    #[selector = sol("failmsg()")]
+    FailMsg,
+}
+
+pub contract Probe {
+    mut a: u256,
+    mut b: bool,
+    mut c: Address,
+    mut d: u256,
+
+    recv ProbeMsg {
+        Set { a: x, b: y, c: z, d: w } uses (mut a, mut b, mut c, mut d) {
+            a = x
+            b = y
+            c = z
+            d = w
+        }
+        A -> u256 uses (a) { a }
+        B -> bool uses (b) { b }
+        C -> Address uses (c) { c }
+        Overflow { x } -> u256 { x + 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff }
+        Underflow { x } -> u256 { 0 - x }
+        DivZero { x } -> u256 { x / 0 }
+        Fail {} { assert!(false) }
+        FailMsg {} { assert!(false, "nope") }
+    }
+}

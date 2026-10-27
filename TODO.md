@@ -13,8 +13,18 @@ unknowns, declared as pre-existing. See [PLAN.md](PLAN.md).
       - Invalid initcode gives address 0 without reverting, so a test can detect a failed deploy.
       - Bytecode is built as `MemVec<u8>` → `.into_array().span()` (MemVec has no `span()`).
         A `MemArray<u8>` is byte-packed.
-- [ ] Official compiler's storage slots for plain fields, its return data and revert data, and
+- [x] Official compiler's storage slots for plain fields, its return data and revert data, and
       its overflow panic codes. Fe0's output must match them exactly
+      **Results** (`spike-layout/`, master `d217a51bf`, from `fe test --trace-evm` and revert payloads):
+      - **Storage:** one 32-byte slot per plain field, in declaration order, starting at 0, with
+        **no packing**. Fields `u256 a, bool b, Address c, u256 d` → slots 0, 1, 2, 3; `true`
+        is stored as 1.
+      - **Return data:** standard ABI, one 32-byte word (`bool` true → 32 bytes holding `1`).
+      - **Overflow and underflow:** `Panic(0x11)`, i.e. `0x4e487b71` followed by the code word.
+        **Division by zero:** `Panic(0x12)`. **`assert!(false)`:** `Panic(0x01)`.
+      - **`assert!(false, "nope")`:** Solidity `Error(string)` (`0x08c379a0` + ABI string).
+      - **Unknown selector:** revert with empty data.
+      - All of this matches Solidity's conventions, so Fe0 codegen can emit exactly these payloads.
 - [ ] Passing `Bytes` from one contract to another and back, and supplying `Read` from calldata.
       Needed for splitting the on-chain compiler across contracts (24 KB limit)
 - [ ] Is keccak available natively (for `sol("...")` selectors)? Do byte or string literals

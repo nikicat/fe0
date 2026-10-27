@@ -1,0 +1,39 @@
+use ingot::{lex_all, Kind}
+use std::io::Read
+
+// Feeds a fixed byte array through the `Read` effect.
+pub struct ArrayReader<const N: usize> {
+    pub bytes: [u8; N],
+    pub pos: usize,
+}
+
+impl<const N: usize> Read for ArrayReader<N> {
+    fn read_char(mut self) -> i32 {
+        if self.pos >= N {
+            return -1
+        }
+        let c = self.bytes[self.pos]
+        self.pos += 1
+        c as i32
+    }
+}
+
+#[test]
+fn lexes_a_small_function() {
+    // "fn f(x) -> u8 { x == 42 }"
+    let src: [u8; 25] = [
+        102, 110, 32, 102, 40, 120, 41, 32, 45, 62, 32, 117, 56, 32, 123, 32, 120, 32,
+        61, 61, 32, 52, 50, 32, 125,
+    ]
+    with (Read = ArrayReader { bytes: src, pos: 0 }) {
+        let tokens = lex_all()
+        // fn f ( x ) -> u8 { x == 42 } EOF
+        assert!(tokens.len() == 13)
+        assert!(tokens[0].kind.code() == 1)
+        assert!(tokens[1].kind.code() == 0)
+        assert!(tokens[5].len == 2)
+        assert!(tokens[9].len == 2)
+        assert!(tokens[10].kind.code() == 2)
+        assert!(tokens[12].kind.code() == 4)
+    }
+}
