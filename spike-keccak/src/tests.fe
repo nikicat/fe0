@@ -1,0 +1,17 @@
+use ingot::{digest, input, round}
+
+#[test]
+fn keccak_round_evm() {
+    // Reports the digest so it can be compared with the native run and the Python reference.
+    core::panic_code(digest(round(input(), 0x8000000080008081)) as u256)
+}
+
+#[test]
+fn keccak_round_gas() uses (evm: mut Evm) {
+    let s = input()
+    let g0 = evm.gas()
+    let r = round(s, 0x8000000080008081)
+    let used = g0 - evm.gas()
+    assert!(digest(r) != 0)
+    core::panic_code(used)
+}

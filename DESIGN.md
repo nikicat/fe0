@@ -313,8 +313,45 @@ counts), which keeps the subset rule honest.
   (short data, `bool = 2`, dirty `Address`).
 - **Oracle:** the official compiler, through the harness in §10. A mismatch prints the seed.
   Shrinking is a stretch goal (delete statements and re-test).
+- **Batching** (measured Oct 28, 8 cores, 200 small 3-arm contracts):
 
-## 12. Testing per phase
+  | Layout | Time for 200 |
+  |---|---|
+  | One ingot | 35.4 s (~175 ms each) |
+  | 200 standalone files, `--jobs 0` | 39.7 s |
+  | Same, `--jobs 1` | 96 s |
+  | **8 ingots × 25, `--jobs 0`** | **18.4 s** |
+
+  - Standalone files can't depend on the `fe0` ingot, so the harness uses **batch ingots of
+    about 25 programs**, each depending on `fe0` by path, all run in one
+    `fe test --jobs 0 batch*` invocation.
+  - **A program that fails to compile fails only its batch** (`batchN::compile`, while the other
+    batches still run). The runner then re-runs that batch split in halves to find the
+    culprit.
+  - Expected throughput is about 10 programs per second before Fe0's own in-EVM compile is
+    added, so a 1,000-program round takes a few minutes.
+  - Note: master still accepts out-of-range literals (`let x: u8 = 300` silently gives 44);
+    open PR #1883 makes that an error. This doesn't affect Fe0, which only has `u256`.
+
+## 12. Hashing (`sol("…")` selectors, a stretch goal)
+
+- Hashing is an effect, `uses (h: mut Hasher)`:
+  - the EVM provider calls the `KECCAK256` opcode;
+  - the native provider is a software keccak-f[1600] in Fe, since native lowering of
+    `EvmKeccak256` is missing (argotorg/fe#1886).
+- **Feasibility checked Oct 28** (`spike-keccak/`): one full round (theta, rho, pi, chi, iota)
+  over `[u64; 25]` gives the same digest on EVM, native and a Python reference
+  (`01ac8e14a6e6ea79`).
+  - `u64` shifts discard overflowing bits, like `u256`, so `rotl` is `(x << n) | (x >> (64 - n))`.
+  - Fe idioms: the shift amount must be the same type as the value (`u64`), and `usize → u64`
+    is not a lossless cast (use a separate `u64` counter).
+- **Cost:** about 28k gas per round on the EVM (-O1 and -O2), so about 680k per permutation.
+  That's why the EVM provider must use the opcode, while the software version runs natively
+  only.
+- Remaining work for the window: padding (`0x01 … 0x80`, rate 136 bytes), absorbing input,
+  and testing against known vectors (`keccak("answer()") = 0x85bb7d69…`).
+
+## 13. Testing per phase
 
 | Phase | Unit tests (`fe test`) |
 |---|---|
