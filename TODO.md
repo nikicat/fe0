@@ -97,7 +97,12 @@ unknowns, declared as pre-existing. See [PLAN.md](PLAN.md).
 ## 5. Watch Fe master
 
 - [ ] Check for the native-pipeline merge every couple of days, then rebuild
-      (`cargo build --release -p fe --features cranelift` in `~/src/fe`) and rerun the spike
+      (`cargo build --release -p fe --features cranelift` in `~/src/fe`) and rerun
+      **`tools/spikes.sh [fe-binary]`**. It re-checks all 54 recorded spike and probe values
+      and prints only the differences; gas is compared within ±5%.
+      - Oct 28: master `f4046d212` (PR #1877, native frame-scoped objects, plus a Sonatina
+        update) and release 26.5.0 both reproduce everything. Lexer gas went from 802,865 to
+        803,236.
 - [ ] On Nov 3, freeze the toolchain on the newest release
 - Open upstream PRs to watch (as of Oct 28), all by sbillig:
   - **#1883 "Native portability, panics and tests"**: probably the native work the Fe team
