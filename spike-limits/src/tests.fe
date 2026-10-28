@@ -1,0 +1,61 @@
+use ingot::{Lim, LimMsg}
+use std::evm::Call
+
+fn lim() -> Address uses (evm: mut Evm) {
+    evm.create2<Lim>(value: Wei::zero(), args: (), salt: 0)
+}
+
+fn g1(_ l: Address, _ n: u256) -> u256 uses (evm: mut Evm) {
+    evm.call(addr: l, gas: 30000000, value: Wei::zero(), message: LimMsg::PushGas { n })
+}
+
+fn g3(_ l: Address, _ n: u256) -> u256 uses (evm: mut Evm) {
+    evm.call(addr: l, gas: 30000000, value: Wei::zero(), message: LimMsg::Push3Gas { n })
+}
+
+// Reports gas for n = 1k, 4k, 16k packed as 3 x 80-bit fields.
+#[test]
+fn memvec_bytes_scaling() uses (evm: mut Evm) {
+    let l = lim()
+    core::panic_code((g1(l, 1000) << 160) | (g1(l, 4000) << 80) | g1(l, 16000))
+}
+
+#[test]
+fn memvec_three_vectors_scaling() uses (evm: mut Evm) {
+    let l = lim()
+    core::panic_code((g3(l, 1000) << 160) | (g3(l, 4000) << 80) | g3(l, 16000))
+}
+
+// Largest recursion depth that succeeds, by binary search over [0, 2^20].
+#[test]
+fn recursion_depth() uses (evm: mut Evm) {
+    let l = lim()
+    var lo: u256 = 0
+    var hi: u256 = 100000
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2
+        let out = evm.try_call(addr: l, gas: 30000000, value: Wei::zero(), message: LimMsg::Depth { n: mid })
+        if out.success() { lo = mid } else { hi = mid - 1 }
+    }
+    core::panic_code(lo)
+}
+
+// initcode `PUSH2 len PUSH1 0 RETURN` deploys `len` zero bytes of runtime code.
+fn deploy_size(_ len: u256) -> u256 uses (evm: mut Evm) {
+    var v: MemVec<u8> = MemVec::new()
+    v.push(0x61)
+    v.push((len >> 8).downcast_truncate())
+    v.push((len & 0xff).downcast_truncate())
+    v.push(0x60)
+    v.push(0)
+    v.push(0xf3)
+    let addr = evm.create_raw(value: Wei::zero(), init_code: v.into_array().span())
+    if addr.word() == 0 { 0 } else { 1 }
+}
+
+// Reports (deploy 24576 ok?, deploy 24577 ok?, deploy 49152 ok?)
+#[test]
+fn contract_size_limit() uses (evm: mut Evm) {
+    core::panic_code((deploy_size(24576) << 8) | (deploy_size(24577) << 4) | deploy_size(49152))
+}
+

@@ -1,0 +1,13 @@
+use ingot::{a, b}
+
+#[test]
+fn same_name_contracts_and_path_dep() uses (evm: mut Evm) {
+    let ca = evm.create2<a::C>(value: Wei::zero(), args: (), salt: 0)
+    let cb = evm.create2<b::D>(value: Wei::zero(), args: (), salt: 0)
+    assert!(ca != cb)
+    let x: u256 = evm.call(addr: ca, gas: 100000, value: Wei::zero(), message: a::M::Get {})
+    let y: u256 = evm.call(addr: cb, gas: 100000, value: Wei::zero(), message: b::M::Get {})
+    assert!(x == 42)
+    assert!(y == 7)
+    assert!(lib0::twice(5) == 10)
+}

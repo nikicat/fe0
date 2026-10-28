@@ -1,0 +1,5 @@
+#[test]
+fn deploy_both() uses (evm: mut Evm) {
+    let x = evm.create2<ingot::a::C>(value: Wei::zero(), args: (), salt: 0)
+    assert!(x != Address::zero())
+}

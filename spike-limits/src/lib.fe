@@ -1,0 +1,49 @@
+// Pre-window limit probes: MemVec growth cost, recursion depth, contract size limit.
+use std::evm::Ctx
+
+pub msg LimMsg {
+    #[selector = 0x01]
+    PushGas { n: u256 } -> u256,
+    #[selector = 0x02]
+    Depth { n: u256 } -> u256,
+    #[selector = 0x03]
+    Push3Gas { n: u256 } -> u256,
+}
+
+struct Node { kind: u8, a: u32, b: u32, c: u32, pos: u32 }
+
+fn depth(_ n: u256) -> u256 {
+    if n == 0 { 0 } else { 1 + depth(n - 1) }
+}
+
+pub contract Lim uses (ctx: Ctx) {
+    recv LimMsg {
+        // Gas to push n bytes into one MemVec<u8>.
+        PushGas { n } -> u256 uses (ctx) {
+            let g0 = ctx.gas()
+            var v: MemVec<u8> = MemVec::new()
+            var i: u256 = 0
+            while i < n {
+                v.push((i & 0xff).downcast_truncate())
+                i += 1
+            }
+            g0 - ctx.gas()
+        }
+        // Gas to grow three interleaved vectors (bytes, AST-like nodes, u32 lists).
+        Push3Gas { n } -> u256 uses (ctx) {
+            let g0 = ctx.gas()
+            var src: MemVec<u8> = MemVec::new()
+            var nodes: MemVec<Node> = MemVec::new()
+            var lists: MemVec<u32> = MemVec::new()
+            var i: u256 = 0
+            while i < n {
+                src.push(1)
+                nodes.push(Node { kind: 1, a: 2, b: 3, c: 4, pos: 5 })
+                lists.push(7)
+                i += 1
+            }
+            g0 - ctx.gas()
+        }
+        Depth { n } -> u256 { depth(n) }
+    }
+}

@@ -1,0 +1,2 @@
+// Stand-in for the `fe0` library ingot.
+pub fn twice(_ x: u256) -> u256 { x * 2 }

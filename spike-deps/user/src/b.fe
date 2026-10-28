@@ -1,0 +1,10 @@
+pub msg M {
+    #[selector = 0x01]
+    Get {} -> u256,
+}
+
+pub contract D {
+    recv M {
+        Get {} -> u256 { 7 }
+    }
+}
