@@ -161,9 +161,21 @@ source ──Source effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec
 
 ## 6. Schedule
 
-The schedule lives in `.tasks/` as tasks with due dates and dependencies: parser (Nov 5),
-checker (Nov 9), codegen (Nov 14), harness, generator and native CLI (Nov 18), on-chain demo
-(Nov 21), submission (Nov 24). Registered as project FE-001 on Oct 28.
+Registered as project FE-001 on Oct 28. Work items live in `.tasks/`, with due dates and
+dependencies. A milestone is reached when its "done means" holds, checked by CI where it can be.
+
+| Due | Milestone | Tasks | Done means |
+|---|---|---|---|
+| Nov 5 | **M1 Parser** | T0002 ✓, T0003 | Every SPEC §3 rule and every `P` code has a test, passing in CI. The bytecode size of the lexer and parser is measured, and the on-chain split (DESIGN §8) is decided from it. |
+| Nov 9 | **M2 Checker** | T0016, T0004 | Every SPEC §5–6 rule has an accept test and a reject test with its error code and position. Constants evaluate with checked arithmetic. A `uses` violation is rejected with an `E` code. |
+| Nov 14 | **M3 Codegen** | T0005 | The SPEC §6 Counter compiles with Fe0 running on the EVM, deploys with `create_raw`, and returns the same data and storage as the official build. Panic payloads and the dispatcher's empty reverts match too. |
+| Nov 18 | **M4 Proof** | T0006, T0007, T0008 | 40+ hand-written programs and the `corpus/reject/` set pass the differential harness in CI. Generated programs from a fixed seed range pass too. `fe0-cli` prints the same bytes as the on-chain compile. |
+| Nov 21 | **M5 On chain** | T0009 | The Front/Back/Compiler contracts stay under 24 KB on anvil and are deployed to Sepolia. A script compiles a program by transaction, deploys the result and calls it. A recorded demo exists. |
+| Nov 22 | **M6 Spec** | T0015 | SPEC.md has no open [V] item, or each one left is listed as a known gap. The Lean-formalizable subset is described in the README. |
+| Nov 24 | **M7 Submitted** | T0010 | The repo is public, with a README, license, pinned Fe version, build and test instructions, demo and disclosures. The form is submitted with the exact commit. |
+
+M3 is the critical point: M4 and M5 both depend on it. If M3 slips past Nov 16, cut the
+generator (T0007) to a smoke run and keep the hand corpus and the on-chain demo.
 
 ## 7. Risks
 
