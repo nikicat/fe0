@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Frozen for the contest on Nov 3 (PLAN.md risk 1).
+  FE_VERSION: v26.5.1
+  FE_SHA256: 2d48fd56e45f56a775bea73a3180ffcab73ad440887d0a985be2050fb5993916
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Fe
+        run: |
+          bin="$HOME/.fe/bin"
+          mkdir -p "$bin"
+          curl -fsSL -o "$bin/fe" "https://github.com/argotorg/fe/releases/download/$FE_VERSION/fe_linux_amd64"
+          echo "$FE_SHA256  $bin/fe" | sha256sum -c -
+          chmod +x "$bin/fe"
+          echo "$bin" >> "$GITHUB_PATH"
+      - run: fe --version
+      # CI tests only fe0. tools/spikes.sh checks the spike-*/ probes, because
+      # several of their tests fail on purpose to report values.
+      - name: fe0
+        working-directory: fe0
+        run: |
+          fe fmt --check
+          fe test

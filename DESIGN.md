@@ -20,7 +20,7 @@ fe0/            ingot: the compiler as a library; no I/O, target-agnostic
   src/codegen.fe AST → EVM ops with labels
   src/asm.fe    label resolution, initcode/runtime layout
   src/diag.fe   error codes and positions
-  src/io.fe     Read adapters (ArrayReader, BytesReader)
+  src/io.fe     the `Source` effect and its adapter, BytesReader (`text` and `bytes`)
 fe0-cli/        ingot: native `main`, stdin → hex on stdout
 fe0-chain/      ingot: Front / Back / Compiler contracts (on-chain split, §8)
 corpus/         Fe0 programs (*.fe) + call scripts (*.calls); generated ones under corpus/gen/
@@ -32,11 +32,11 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
 
 ## 2. Lexer
 
-- **Input:** pulled byte by byte through `uses (r: mut Read)`, with one byte of lookahead.
-  Bytes are appended to a `MemVec<u8>` source buffer as they are read. This is the design the
-  lexer spike already uses.
-- **Token:** `{ kind: Tok, start: u32, len: u32 }`. The text is never copied; a token is a span
-  of the source buffer.
+- **Input:** the lexer pulls bytes one at a time through `uses (input: mut Source)` and keeps one
+  byte of lookahead. It appends each byte to a `MemVec<u8>` source buffer as it reads it.
+  `Source` is fe0's own effect, and WORKAROUNDS.md says why it is not std I/O.
+- **Tokens** are spans of the source buffer, so the lexer never copies the text. `Token` is
+  declared in `fe0/src/lexer.fe`.
 - **Keywords:** compared against `String<N>` constants (`s.as_bytes()[i]`, see TODO §1).
 - **Newline tokens** are kept. Inside parentheses the lexer drops them, since it already tracks
   paren depth; anywhere else the parser decides whether a newline ends a statement (SPEC §3.4).
@@ -83,7 +83,7 @@ The checker makes one pass over items to collect names, then one pass over bodie
 - **Scopes:** a stack of `Local { sym, ty, mutable, frame_slot }` plus a stack of scope marks.
   Lookup scans from the top. A local named like a storage field is an error (SPEC §5.2).
 - **Constants:** evaluated during checking with the same checked arithmetic as runtime. Overflow
-  gives `C0034` and division by zero `C0025`, mirroring Fe's `3-0034`/`3-0025`. Only earlier
+  gives `C034` and division by zero `C025`, mirroring Fe's `3-0034`/`3-0025`. Only earlier
   constants may be referenced.
 - **Effects:** each `init`/arm gets two `u256` bitmasks over the contract's fields, `may_read`
   and `may_write`, built from its `uses` (one bit per field, at most 256 fields).
@@ -252,16 +252,17 @@ Measured Oct 28 on master `d217a51bf` (`spike-limits/`, 30M gas per call):
 
 ## 9. Diagnostics
 
-`Diag { code: u16, pos: u32 }`. The message comes from a table indexed by code.
+Every phase reports an error as a `Diag`. `fe0/src/diag.fe` declares it and defines how codes
+are numbered and printed. The message comes from a table indexed by code.
 
-| Prefix | Phase | Examples |
-|---|---|---|
-| `L` | Lexer | bad character, unterminated string, literal over 256 bits |
-| `P` | Parser | expected token, end of statement |
-| `N` | Names | unknown name, duplicate item, local shadows a field |
-| `T` | Types | mismatch, missing return path, chained comparison |
-| `E` | Effects | field not in `uses`, write without `mut`, unknown field, duplicate entry |
-| `C` | Constants | overflow (`C0034`), division by zero (`C0025`) |
+| Phase | Examples |
+|---|---|
+| Lexer | bad character, unterminated string, literal over 256 bits |
+| Parser | expected token, end of statement |
+| Names | unknown name, duplicate item, local shadows a field |
+| Types | mismatch, missing return path, chained comparison |
+| Effects | field not in `uses`, write without `mut`, unknown field, duplicate entry |
+| Constants | overflow (`C034`), division by zero (`C025`) |
 
 The CLI prints `file:line:col: CODE message`. On chain, the message is the code, the line and
 the column.
@@ -283,17 +284,15 @@ the column.
       49,152 bytes, because the test EVM enforces neither (§8a).
 
 **Contract names must be unique across the whole test ingot.** Two modules that each define
-`contract C` crash the official compiler: `fe test` fails with `InvalidCodeRegion`, and
-`fe build` with "duplicate root object `C` across ingot modules", on 26.5.0 and master
-(`spike-deps/dupname`). `embed.py` therefore renames each program's contract to `C_<file>`,
-and the generator emits unique names. Path dependencies between ingots work (`spike-deps/user`).
-Embedding sources as large `const [u8; N]` arrays is fine too: 32 KB compiles and runs, with
-about 3 s to build three such files (`spike-harness/`).
+`contract C` crash the official compiler (WORKAROUNDS.md). `embed.py` therefore renames each
+program's contract to `C_<file>`, and the generator emits unique names. Path dependencies
+between ingots work (`spike-deps/user`). Embedding sources as large `const [u8; N]` arrays is
+fine too: 32 KB compiles and runs, with about 3 s to build three such files (`spike-harness/`).
 
 **Call scripts** list one call per line: selector, argument words, and optionally a value. They
 are hand-written for the hand corpus and emitted by the generator for generated programs.
 
-**Negative tests:** `corpus/reject/*.fe` carry a header such as `// expect: E0116 12:9`. The test
+**Negative tests:** `corpus/reject/*.fe` carry a header such as `// expect: E116 12:9`. The test
 runs Fe0 and checks the diagnostic. Separately, `fe check` must also reject the file (any error
 counts), which keeps the subset rule honest.
 
@@ -337,14 +336,12 @@ counts), which keeps the subset rule honest.
 
 - Hashing is an effect, `uses (h: mut Hasher)`:
   - the EVM provider calls the `KECCAK256` opcode;
-  - the native provider is a software keccak-f[1600] in Fe, since native lowering of
-    `EvmKeccak256` is missing (argotorg/fe#1886).
+  - the native provider is a software keccak-f[1600] in Fe, because 26.5.1 cannot lower
+    `EvmKeccak256` natively (WORKAROUNDS.md).
 - **Feasibility checked Oct 28** (`spike-keccak/`): one full round (theta, rho, pi, chi, iota)
   over `[u64; 25]` gives the same digest on EVM, native and a Python reference
   (`01ac8e14a6e6ea79`).
   - `u64` shifts discard overflowing bits, like `u256`, so `rotl` is `(x << n) | (x >> (64 - n))`.
-  - Fe idioms: the shift amount must be the same type as the value (`u64`), and `usize → u64`
-    is not a lossless cast (use a separate `u64` counter).
 - **Cost:** about 28k gas per round on the EVM (-O1 and -O2), so about 680k per permutation.
   That's why the EVM provider must use the opcode, while the software version runs natively
   only.

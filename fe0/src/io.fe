@@ -1,0 +1,32 @@
+// The compiler core reads its input only through the `Source` effect. The adapters here decide
+// where the bytes come from. WORKAROUNDS.md says why the core does not use std I/O.
+
+use std::abi::{Bytes, DynString}
+
+pub trait Source {
+    // The next byte, or -1 at the end of the input.
+    fn next_byte(mut self) -> i32
+}
+
+// Returns a `Source` over the bytes of `s`, such as a test source.
+pub fn text(_ s: DynString) -> BytesReader {
+    bytes(s.as_bytes())
+}
+
+// Returns a `Source` over `data`, such as source passed in calldata.
+pub fn bytes(_ data: Bytes) -> BytesReader {
+    BytesReader { data, pos: 0 }
+}
+
+pub struct BytesReader { data: Bytes, pos: usize }
+
+impl Source for BytesReader {
+    fn next_byte(mut self) -> i32 {
+        if self.pos >= self.data.len() {
+            return -1
+        }
+        let c = self.data.byte_at(self.pos)
+        self.pos += 1
+        c as i32
+    }
+}

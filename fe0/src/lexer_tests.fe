@@ -1,0 +1,242 @@
+use ingot::diag::{
+    Diag,
+    L_BAD_ESCAPE,
+    L_BAD_INT,
+    L_INT_TOO_LARGE,
+    L_NON_ASCII,
+    L_RESERVED_WORD,
+    L_UNEXPECTED_CHAR,
+    L_UNSUPPORTED_LITERAL,
+    L_UNTERMINATED_STRING,
+}
+use ingot::io::{Source, text}
+use ingot::lexer::*
+use std::abi::DynString
+
+fn lex_text(_ s: DynString) -> Lexed {
+    with (Source = text(s)) {
+        let l = lex()
+        assert!(l.err.is_none())
+        l
+    }
+}
+
+fn lex_err(_ s: DynString) -> Diag {
+    with (Source = text(s)) {
+        let l = lex()
+        l.err.unwrap()
+    }
+}
+
+fn kinds(_ l: Lexed) -> MemVec<Tok> {
+    var v: MemVec<Tok> = MemVec::new()
+    for ref t in l.toks {
+        v.push(t.kind)
+    }
+    v
+}
+
+fn expect<const N: usize>(_ s: DynString, _ want: [Tok; N]) {
+    let k = kinds(lex_text(s))
+    assert!(k.len() == N)
+    var i: usize = 0
+    while i < N {
+        assert!(k[i] == want[i])
+        i += 1
+    }
+}
+
+#[test]
+fn keywords_and_idents() {
+    expect(
+        "fn let var if else while return break continue",
+        [K_FN, K_LET, K_VAR, K_IF, K_ELSE, K_WHILE, K_RETURN, K_BREAK, K_CONTINUE, T_EOF],
+    )
+    expect(
+        "msg contract init recv uses mut const pub true false assert",
+        [
+            K_MSG,
+            K_CONTRACT,
+            K_INIT,
+            K_RECV,
+            K_USES,
+            K_MUT,
+            K_CONST,
+            K_PUB,
+            K_TRUE,
+            K_FALSE,
+            K_ASSERT,
+            T_EOF,
+        ],
+    )
+    expect(
+        "x _y u256 Address fnord _",
+        [T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_UNDERSCORE, T_EOF],
+    )
+}
+
+#[test]
+fn reserved_words_are_errors() {
+    assert!(lex_err("let for = 1").code == L_RESERVED_WORD)
+    assert!(lex_err("let x = with").pos == 8)
+    assert!(lex_err("struct").code == L_RESERVED_WORD)
+}
+
+#[test]
+fn punctuation_and_operators() {
+    expect(
+        "( ) { } [ ] : , -> # . ;",
+        [
+            P_LPAREN,
+            P_RPAREN,
+            P_LBRACE,
+            P_RBRACE,
+            P_LBRACKET,
+            P_RBRACKET,
+            P_COLON,
+            P_COMMA,
+            P_ARROW,
+            P_HASH,
+            P_DOT,
+            P_SEMI,
+            T_EOF,
+        ],
+    )
+    expect(
+        "+ - * / % ~ ! ^ & | && || < > = == != <= >= << >>",
+        [
+            O_PLUS,
+            O_MINUS,
+            O_STAR,
+            O_SLASH,
+            O_PERCENT,
+            O_TILDE,
+            O_BANG,
+            O_CARET,
+            O_AMP,
+            O_PIPE,
+            O_ANDAND,
+            O_OROR,
+            O_LT,
+            O_GT,
+            O_ASSIGN,
+            O_EQ,
+            O_NE,
+            O_LE,
+            O_GE,
+            O_SHL,
+            O_SHR,
+            T_EOF,
+        ],
+    )
+    expect(
+        "+= -= *= /= %= ^= &= |= <<= >>=",
+        [A_PLUS, A_MINUS, A_STAR, A_SLASH, A_PERCENT, A_CARET, A_AMP, A_PIPE, A_SHL, A_SHR, T_EOF],
+    )
+    // Compound operators must be written without spaces inside (SPEC §1).
+    expect("a < = b", [T_IDENT, O_LT, O_ASSIGN, T_IDENT, T_EOF])
+}
+
+#[test]
+fn newlines_collapse_and_vanish_inside_parens() {
+    expect("a\n\n  \n b", [T_IDENT, T_NEWLINE, T_IDENT, T_EOF])
+    expect(
+        "f(a,\n b)\nc",
+        [T_IDENT, P_LPAREN, T_IDENT, P_COMMA, T_IDENT, P_RPAREN, T_NEWLINE, T_IDENT, T_EOF],
+    )
+    expect("{\n}", [P_LBRACE, T_NEWLINE, P_RBRACE, T_EOF])
+    expect("a // note\nb", [T_IDENT, T_NEWLINE, T_IDENT, T_EOF])
+    // A newline before `/` is emitted before the `/` it had to read past.
+    expect("a\n/ b", [T_IDENT, T_NEWLINE, O_SLASH, T_IDENT, T_EOF])
+    expect("a\r\nb", [T_IDENT, T_NEWLINE, T_IDENT, T_EOF])
+}
+
+#[test]
+fn integers() {
+    let l = lex_text("0 42 1_000_000 0xff")
+    assert!(l.int_value(l.toks[0]) == 0)
+    assert!(l.int_value(l.toks[1]) == 42)
+    assert!(l.int_value(l.toks[2]) == 1000000)
+    assert!(l.int_value(l.toks[3]) == 255)
+    assert!(lex_err("0XDEAD_").code == L_BAD_INT)
+    let m = lex_text(
+        "115792089237316195423570985008687907853269984665640564039457584007913129639935 0x00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    )
+    assert!(
+        m.int_value(m.toks[0])
+            == 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+    )
+    assert!(
+        m.int_value(m.toks[1])
+            == 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+    )
+    assert!(
+        lex_err(
+                "115792089237316195423570985008687907853269984665640564039457584007913129639936",
+            )
+                .code
+            == L_INT_TOO_LARGE,
+    )
+    assert!(
+        lex_err(
+                "0x1ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            ).code
+            == L_INT_TOO_LARGE,
+    )
+    assert!(lex_err("1__0").code == L_BAD_INT)
+    assert!(lex_err("12ab").code == L_BAD_INT)
+    assert!(lex_err("0x").code == L_BAD_INT)
+    assert!(lex_err("0b101").code == L_UNSUPPORTED_LITERAL)
+    assert!(lex_err("0o17").code == L_UNSUPPORTED_LITERAL)
+}
+
+#[test]
+fn strings() {
+    let l = lex_text("assert!(x, \"a \\\"b\\\" \\n\")")
+    // assert ! ( x , "a \"b\" \n" ) EOF: the string token spans 12 source bytes.
+    assert!(l.toks[5].kind == T_STR)
+    assert!(l.toks[5].len == 12)
+    assert!(lex_err("\"abc").code == L_UNTERMINATED_STRING)
+    assert!(lex_err("\"ab\ncd\"").code == L_UNTERMINATED_STRING)
+    assert!(lex_err("\"\\q\"").code == L_BAD_ESCAPE)
+    let u = lex_text("assert!(x, \"é\")")
+    assert!(u.toks[5].kind == T_STR)
+    assert!(u.toks[5].len == 4)
+}
+
+#[test]
+fn bad_characters() {
+    let d = lex_err("let x = 1\nlet y = $")
+    assert!(d.code == L_UNEXPECTED_CHAR)
+    assert!(d.pos == 18)
+    assert!(lex_err("a é").code == L_NON_ASCII)
+    assert!(lex_err("a é").pos == 2)
+    // The source holds a raw DEL byte (127), which is ASCII but no token.
+    assert!(lex_err("a ").code == L_UNEXPECTED_CHAR)
+    assert!(lex_err("x ? y").code == L_UNEXPECTED_CHAR)
+    assert!(lex_err("a @ b").code == L_UNEXPECTED_CHAR)
+}
+
+#[test]
+fn token_spans() {
+    let l = lex_text("let total = a1 + 0x10")
+    assert!(l.toks[1].start == 4)
+    assert!(l.toks[1].len == 5)
+    assert!(l.toks[5].start == 17)
+    assert!(l.toks[5].len == 4)
+    assert!(l.toks[6].kind == T_EOF)
+    assert!(l.toks[6].start == 21)
+}
+
+#[test]
+fn line_col() {
+    let l = lex_text("let x = 1\nlet y = 2")
+    assert!(l.line_col(18).line == 2)
+    assert!(l.line_col(18).col == 9)
+    let cr = lex_text("a\rb")
+    assert!(cr.line_col(2).line == 2)
+    assert!(cr.line_col(2).col == 1)
+    let crlf = lex_text("a\r\nb")
+    assert!(crlf.line_col(3).line == 2)
+    assert!(crlf.line_col(3).col == 1)
+}

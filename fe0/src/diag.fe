@@ -1,0 +1,58 @@
+// Error codes and the `Diag` that every phase reports.
+
+// An error code. It is `phase * 1000 + n` and prints as the phase letter and three digits, so
+// 6034 is `C034`. The phases, from 1 to 6, are lexer, parser, names, types, effects and
+// constants. A phase's letter is the first letter of its name. Codes are made only here, so
+// every code has a known phase.
+pub struct DiagCode { raw: u16 }
+
+impl Copy for DiagCode {}
+
+impl core::ops::Eq for DiagCode {
+    fn eq(self, _ other: Self) -> bool {
+        self.raw == other.raw
+    }
+}
+
+const PHASE_LETTERS: String<6> = "LPNTEC"
+
+impl DiagCode {
+    // Returns the ASCII phase letter, such as `C` for 6034.
+    pub fn letter(self) -> u8 {
+        PHASE_LETTERS.as_bytes()[(self.raw / 1000 - 1) as usize]
+    }
+
+    // Returns the number within the phase, such as 34 for 6034. It prints as three digits.
+    pub fn number(self) -> u16 {
+        self.raw % 1000
+    }
+}
+
+pub struct Diag { pub code: DiagCode, pub pos: usize }
+
+impl Copy for Diag {}
+
+// Lexer
+pub const L_UNEXPECTED_CHAR: DiagCode = DiagCode { raw: 1001 }
+pub const L_UNTERMINATED_STRING: DiagCode = DiagCode { raw: 1002 }
+pub const L_BAD_ESCAPE: DiagCode = DiagCode { raw: 1003 }
+pub const L_INT_TOO_LARGE: DiagCode = DiagCode { raw: 1004 }
+pub const L_RESERVED_WORD: DiagCode = DiagCode { raw: 1005 }
+pub const L_UNSUPPORTED_LITERAL: DiagCode = DiagCode { raw: 1006 }
+pub const L_NON_ASCII: DiagCode = DiagCode { raw: 1007 }
+pub const L_BAD_INT: DiagCode = DiagCode { raw: 1008 }
+
+pub fn diag(_ code: DiagCode, _ pos: usize) -> Diag {
+    Diag { code, pos }
+}
+
+#[test]
+fn code_letter_and_number() {
+    let lexer: String<1> = "L"
+    let constants: String<1> = "C"
+    assert!(L_INT_TOO_LARGE.letter() == lexer.as_bytes()[0])
+    assert!(L_INT_TOO_LARGE.number() == 4)
+    let c = DiagCode { raw: 6034 }
+    assert!(c.letter() == constants.as_bytes()[0])
+    assert!(c.number() == 34)
+}

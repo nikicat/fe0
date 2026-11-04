@@ -1,0 +1,708 @@
+// Turns Fe0 source text into tokens. The rules are in SPEC.md §1, and the design is in
+// DESIGN.md §2.
+
+use ingot::diag::{
+    Diag,
+    DiagCode,
+    diag,
+    L_BAD_ESCAPE,
+    L_BAD_INT,
+    L_INT_TOO_LARGE,
+    L_NON_ASCII,
+    L_RESERVED_WORD,
+    L_UNEXPECTED_CHAR,
+    L_UNSUPPORTED_LITERAL,
+    L_UNTERMINATED_STRING,
+}
+use ingot::io::Source
+
+// Kind of a token. The constants below are its only values.
+pub struct Tok { code: u8 }
+
+impl Copy for Tok {}
+
+impl core::ops::Eq for Tok {
+    fn eq(self, _ other: Tok) -> bool {
+        self.code == other.code
+    }
+}
+
+impl Tok {
+    // Returns the assignment form of this operator, such as A_PLUS for O_PLUS.
+    const fn assign_form(self) -> Tok {
+        // O_ kinds span 60-80, so A_ kinds take 90-110.
+        Tok { code: self.code + 30 }
+    }
+}
+
+// Token kinds.
+pub const T_EOF: Tok = Tok { code: 0 }
+pub const T_NEWLINE: Tok = Tok { code: 1 }
+pub const T_IDENT: Tok = Tok { code: 2 }
+pub const T_INT: Tok = Tok { code: 3 }
+pub const T_STR: Tok = Tok { code: 4 }
+pub const T_UNDERSCORE: Tok = Tok { code: 5 }
+
+// Fe0 keywords and reserved words: SPEC.md §1.
+pub const K_FN: Tok = Tok { code: 10 }
+pub const K_LET: Tok = Tok { code: 11 }
+pub const K_VAR: Tok = Tok { code: 12 }
+pub const K_IF: Tok = Tok { code: 13 }
+pub const K_ELSE: Tok = Tok { code: 14 }
+pub const K_WHILE: Tok = Tok { code: 15 }
+pub const K_RETURN: Tok = Tok { code: 16 }
+pub const K_BREAK: Tok = Tok { code: 17 }
+pub const K_CONTINUE: Tok = Tok { code: 18 }
+pub const K_MSG: Tok = Tok { code: 19 }
+pub const K_CONTRACT: Tok = Tok { code: 20 }
+pub const K_INIT: Tok = Tok { code: 21 }
+pub const K_RECV: Tok = Tok { code: 22 }
+pub const K_USES: Tok = Tok { code: 23 }
+pub const K_MUT: Tok = Tok { code: 24 }
+pub const K_CONST: Tok = Tok { code: 25 }
+pub const K_PUB: Tok = Tok { code: 26 }
+pub const K_TRUE: Tok = Tok { code: 27 }
+pub const K_FALSE: Tok = Tok { code: 28 }
+pub const K_ASSERT: Tok = Tok { code: 29 }
+
+// Punctuation.
+pub const P_LPAREN: Tok = Tok { code: 40 }
+pub const P_RPAREN: Tok = Tok { code: 41 }
+pub const P_LBRACE: Tok = Tok { code: 42 }
+pub const P_RBRACE: Tok = Tok { code: 43 }
+pub const P_LBRACKET: Tok = Tok { code: 44 }
+pub const P_RBRACKET: Tok = Tok { code: 45 }
+pub const P_COLON: Tok = Tok { code: 46 }
+pub const P_COMMA: Tok = Tok { code: 47 }
+pub const P_ARROW: Tok = Tok { code: 48 }
+pub const P_HASH: Tok = Tok { code: 49 }
+pub const P_DOT: Tok = Tok { code: 50 }
+pub const P_SEMI: Tok = Tok { code: 51 }
+
+// Operators.
+pub const O_PLUS: Tok = Tok { code: 60 }
+pub const O_MINUS: Tok = Tok { code: 61 }
+pub const O_STAR: Tok = Tok { code: 62 }
+pub const O_SLASH: Tok = Tok { code: 63 }
+pub const O_PERCENT: Tok = Tok { code: 64 }
+pub const O_TILDE: Tok = Tok { code: 65 }
+pub const O_BANG: Tok = Tok { code: 66 }
+pub const O_CARET: Tok = Tok { code: 67 }
+pub const O_AMP: Tok = Tok { code: 68 }
+pub const O_PIPE: Tok = Tok { code: 69 }
+pub const O_ANDAND: Tok = Tok { code: 70 }
+pub const O_OROR: Tok = Tok { code: 71 }
+pub const O_LT: Tok = Tok { code: 72 }
+pub const O_GT: Tok = Tok { code: 73 }
+pub const O_ASSIGN: Tok = Tok { code: 74 }
+pub const O_EQ: Tok = Tok { code: 75 }
+pub const O_NE: Tok = Tok { code: 76 }
+pub const O_LE: Tok = Tok { code: 77 }
+pub const O_GE: Tok = Tok { code: 78 }
+pub const O_SHL: Tok = Tok { code: 79 }
+pub const O_SHR: Tok = Tok { code: 80 }
+
+// Assignment operators: the `op=` form of each binary operator.
+pub const A_PLUS: Tok = O_PLUS.assign_form()
+pub const A_MINUS: Tok = O_MINUS.assign_form()
+pub const A_STAR: Tok = O_STAR.assign_form()
+pub const A_SLASH: Tok = O_SLASH.assign_form()
+pub const A_PERCENT: Tok = O_PERCENT.assign_form()
+pub const A_CARET: Tok = O_CARET.assign_form()
+pub const A_AMP: Tok = O_AMP.assign_form()
+pub const A_PIPE: Tok = O_PIPE.assign_form()
+pub const A_SHL: Tok = O_SHL.assign_form()
+pub const A_SHR: Tok = O_SHR.assign_form()
+
+pub struct Token { pub kind: Tok, pub start: usize, pub len: usize }
+
+impl Copy for Token {}
+
+// The lexed source. On error, `toks` holds the tokens before it. This is not a `Result`
+// because extracting it from one hits a compiler bug. WORKAROUNDS.md has the details.
+pub struct Lexed { pub src: MemVec<u8>, pub toks: MemVec<Token>, pub err: Option<Diag> }
+
+// A 1-based position in the source text.
+pub struct LineCol { pub line: usize, pub col: usize }
+
+impl Copy for LineCol {}
+
+impl Lexed {
+    // Value of an integer token that `lex` accepted.
+    pub fn int_value(self, _ t: Token) -> u256 {
+        decode_int(self.src, t).unwrap()
+    }
+
+    // Line and column of byte offset `pos`. LF, CR and CRLF each end one line.
+    pub fn line_col(self, _ pos: usize) -> LineCol {
+        var at = LineCol { line: 1, col: 1 }
+        var i: usize = 0
+        while i < pos && i < self.src.len() {
+            let c = self.src[i] as i32
+            i += 1
+            let crlf = c == C_CR && i < self.src.len() && self.src[i] as i32 == C_LF
+            if is_newline(c) && !crlf {
+                at.line += 1
+                at.col = 1
+            } else {
+                at.col += 1
+            }
+        }
+        at
+    }
+}
+
+const U256_MAX: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+// ASCII codes of the bytes the lexer tests. They are i32 like `Lexer.peeked`.
+const C_TAB: i32 = 9
+const C_LF: i32 = 10
+const C_CR: i32 = 13
+const C_SPACE: i32 = 32
+const C_BANG: i32 = 33
+const C_QUOTE: i32 = 34
+const C_HASH: i32 = 35
+const C_PERCENT: i32 = 37
+const C_AMP: i32 = 38
+const C_LPAREN: i32 = 40
+const C_RPAREN: i32 = 41
+const C_STAR: i32 = 42
+const C_PLUS: i32 = 43
+const C_COMMA: i32 = 44
+const C_MINUS: i32 = 45
+const C_DOT: i32 = 46
+const C_SLASH: i32 = 47
+const C_ZERO: i32 = 48
+const C_NINE: i32 = 57
+const C_COLON: i32 = 58
+const C_SEMI: i32 = 59
+const C_LT: i32 = 60
+const C_EQ: i32 = 61
+const C_GT: i32 = 62
+const C_UPPER_A: i32 = 65
+const C_UPPER_B: i32 = 66
+const C_UPPER_F: i32 = 70
+const C_UPPER_O: i32 = 79
+const C_UPPER_X: i32 = 88
+const C_UPPER_Z: i32 = 90
+const C_LBRACKET: i32 = 91
+const C_BACKSLASH: i32 = 92
+const C_RBRACKET: i32 = 93
+const C_CARET: i32 = 94
+const C_UNDERSCORE: i32 = 95
+const C_LOWER_A: i32 = 97
+const C_LOWER_B: i32 = 98
+const C_LOWER_F: i32 = 102
+const C_LOWER_N: i32 = 110
+const C_LOWER_O: i32 = 111
+const C_LOWER_R: i32 = 114
+const C_LOWER_T: i32 = 116
+const C_LOWER_X: i32 = 120
+const C_LOWER_Z: i32 = 122
+const C_LBRACE: i32 = 123
+const C_PIPE: i32 = 124
+const C_RBRACE: i32 = 125
+const C_TILDE: i32 = 126
+const C_DEL: i32 = 127
+
+fn is_ascii(_ c: i32) -> bool {
+    c >= 0 && c <= C_DEL
+}
+
+fn is_newline(_ c: i32) -> bool {
+    c == C_LF || c == C_CR
+}
+
+fn is_ident_start(_ c: i32) -> bool {
+    (c >= C_LOWER_A && c <= C_LOWER_Z) || (c >= C_UPPER_A && c <= C_UPPER_Z) || c == C_UNDERSCORE
+}
+
+fn is_digit(_ c: i32) -> bool {
+    c >= C_ZERO && c <= C_NINE
+}
+
+fn is_hex_digit(_ c: i32) -> bool {
+    is_digit(c) || (c >= C_LOWER_A && c <= C_LOWER_F) || (c >= C_UPPER_A && c <= C_UPPER_F)
+}
+
+// The `x` of a `0x` prefix.
+fn is_hex_marker(_ c: i32) -> bool {
+    c == C_LOWER_X || c == C_UPPER_X
+}
+
+// The `b` or `o` of a `0b` or `0o` prefix, which Fe0 leaves out.
+fn is_unsupported_radix(_ c: i32) -> bool {
+    c == C_LOWER_B || c == C_UPPER_B || c == C_LOWER_O || c == C_UPPER_O
+}
+
+// A byte that may follow `\` in a string escape.
+fn is_escape(_ c: i32) -> bool {
+    c == C_QUOTE || c == C_BACKSLASH || c == C_LOWER_N || c == C_LOWER_R || c == C_LOWER_T
+}
+
+// Value of a hex digit.
+fn digit_value(_ c: i32) -> u256 {
+    let v = if is_digit(c) {
+        c - C_ZERO
+    } else if c >= C_LOWER_A {
+        c - C_LOWER_A + 10
+    } else {
+        c - C_UPPER_A + 10
+    }
+    v.downcast_truncate()
+}
+
+// Value of an integer literal that `Lexer::number` scanned, or none if it exceeds 2^256 - 1.
+fn decode_int(_ src: MemVec<u8>, _ t: Token) -> Option<u256> {
+    var base: u256 = 10
+    var i = t.start
+    if t.len > 2 && is_hex_marker(src[i + 1] as i32) {
+        base = 16
+        i += 2
+    }
+    var v: u256 = 0
+    while i < t.start + t.len {
+        let c = src[i] as i32
+        if c != C_UNDERSCORE {
+            let d = digit_value(c)
+            if v > (U256_MAX - d) / base {
+                return Option::None
+            }
+            v = v * base + d
+        }
+        i += 1
+    }
+    Option::Some(v)
+}
+
+struct Lexer {
+    src: MemVec<u8>,
+    peeked: i32,
+    paren_depth: usize,
+    // Offset in `src` where the token being read starts.
+    start: usize,
+    // A `/` token read while skipping trivia, returned after the newline before it.
+    queued: Option<Token>,
+}
+
+impl Lexer {
+    fn new() -> Self uses (input: mut Source) {
+        Lexer {
+            src: MemVec::new(),
+            peeked: input.next_byte(),
+            paren_depth: 0,
+            start: 0,
+            queued: Option::None,
+        }
+    }
+
+    // Consume the peeked byte into `src`.
+    fn bump(mut self) uses (input: mut Source) {
+        self.src.push(self.peeked.downcast_truncate())
+        self.peeked = input.next_byte()
+    }
+
+    fn eat(mut self, _ c: i32) -> bool uses (input: mut Source) {
+        if self.peeked == c {
+            self.bump()
+            return true
+        }
+        false
+    }
+
+    // Whether the token read so far is `w`.
+    fn word<const N: usize>(self, _ w: String<N>) -> bool {
+        if self.src.len() - self.start != N {
+            return false
+        }
+        let b = w.as_bytes()
+        var i: usize = 0
+        while i < N {
+            if self.src[self.start + i] != b[i] {
+                return false
+            }
+            i += 1
+        }
+        true
+    }
+
+    // Keyword kind of the token read so far, or T_IDENT.
+    fn keyword(self) -> Tok {
+        if self.word("fn") {
+            return K_FN
+        }
+        if self.word("let") {
+            return K_LET
+        }
+        if self.word("var") {
+            return K_VAR
+        }
+        if self.word("if") {
+            return K_IF
+        }
+        if self.word("else") {
+            return K_ELSE
+        }
+        if self.word("while") {
+            return K_WHILE
+        }
+        if self.word("return") {
+            return K_RETURN
+        }
+        if self.word("break") {
+            return K_BREAK
+        }
+        if self.word("continue") {
+            return K_CONTINUE
+        }
+        if self.word("msg") {
+            return K_MSG
+        }
+        if self.word("contract") {
+            return K_CONTRACT
+        }
+        if self.word("init") {
+            return K_INIT
+        }
+        if self.word("recv") {
+            return K_RECV
+        }
+        if self.word("uses") {
+            return K_USES
+        }
+        if self.word("mut") {
+            return K_MUT
+        }
+        if self.word("const") {
+            return K_CONST
+        }
+        if self.word("pub") {
+            return K_PUB
+        }
+        if self.word("true") {
+            return K_TRUE
+        }
+        if self.word("false") {
+            return K_FALSE
+        }
+        if self.word("assert") {
+            return K_ASSERT
+        }
+        T_IDENT
+    }
+
+    // Whether the token read so far is a reserved word that Fe0 has no token for.
+    fn is_reserved(self) -> bool {
+        self.word("as")
+            || self.word("mod")
+            || self.word("static_assert")
+            || self.word("match")
+            || self.word("for")
+            || self.word("in")
+            || self.word("where")
+            || self.word("yield")
+            || self.word("self")
+            || self.word("Self")
+            || self.word("struct")
+            || self.word("enum")
+            || self.word("trait")
+            || self.word("impl")
+            || self.word("type")
+            || self.word("ref")
+            || self.word("own")
+            || self.word("use")
+            || self.word("extern")
+            || self.word("unsafe")
+            || self.word("ingot")
+            || self.word("super")
+            || self.word("with")
+    }
+
+    fn into_src(own self) -> MemVec<u8> {
+        self.src
+    }
+
+    fn tok(self, _ kind: Tok) -> Token {
+        Token { kind, start: self.start, len: self.src.len() - self.start }
+    }
+
+    fn err(self, _ code: DiagCode) -> Result<Diag, Token> {
+        Result::Err(diag(code, self.start))
+    }
+
+    fn next(mut self) -> Result<Diag, Token> uses (input: mut Source) {
+        if self.queued.is_none() {
+            match self.skip_trivia() {
+                Option::Some(pos) => {
+                    if self.paren_depth == 0 {
+                        return Result::Ok(Token { kind: T_NEWLINE, start: pos, len: 1 })
+                    }
+                },
+                Option::None => {},
+            }
+        }
+        match self.queued.take() {
+            Option::Some(t) => {
+                return Result::Ok(t)
+            },
+            Option::None => {},
+        }
+        self.start = self.src.len()
+        let c = self.peeked
+        if c < 0 {
+            return Result::Ok(self.tok(T_EOF))
+        }
+        if !is_ascii(c) {
+            return self.err(L_NON_ASCII)
+        }
+        if is_ident_start(c) {
+            return self.ident()
+        }
+        if is_digit(c) {
+            return self.number()
+        }
+        if c == C_QUOTE {
+            return self.string()
+        }
+        match self.punct() {
+            Option::Some(kind) => Result::Ok(self.tok(kind)),
+            Option::None => self.err(L_UNEXPECTED_CHAR),
+        }
+    }
+
+    // Skips blanks and comments, and returns the offset of the first line break among them.
+    // A `/` operator that ends the run is read and queued.
+    fn skip_trivia(mut self) -> Option<usize> uses (input: mut Source) {
+        var newline: Option<usize> = Option::None
+        while true {
+            let c = self.peeked
+            if is_newline(c) && newline.is_none() {
+                newline = Option::Some(self.src.len())
+            }
+            if c == C_SPACE || c == C_TAB || is_newline(c) {
+                self.bump()
+            } else if c == C_SLASH {
+                self.start = self.src.len()
+                self.bump()
+                if self.peeked != C_SLASH {
+                    let kind = self.op_or_assign(O_SLASH)
+                    self.queued = Option::Some(self.tok(kind))
+                    break
+                }
+                while self.peeked >= 0 && !is_newline(self.peeked) {
+                    self.bump()
+                }
+            } else {
+                break
+            }
+        }
+        newline
+    }
+
+    // An identifier, `_` or a keyword.
+    fn ident(mut self) -> Result<Diag, Token> uses (input: mut Source) {
+        while is_ident_start(self.peeked) || is_digit(self.peeked) {
+            self.bump()
+        }
+        if self.word("_") {
+            return Result::Ok(self.tok(T_UNDERSCORE))
+        }
+        if self.is_reserved() {
+            return self.err(L_RESERVED_WORD)
+        }
+        Result::Ok(self.tok(self.keyword()))
+    }
+
+    // Kind of the punctuation or operator at the peeked byte, or none if no token starts with it.
+    fn punct(mut self) -> Option<Tok> uses (input: mut Source) {
+        let c = self.peeked
+        self.bump()
+        if c == C_LPAREN {
+            self.paren_depth += 1
+            return Option::Some(P_LPAREN)
+        }
+        if c == C_RPAREN {
+            if self.paren_depth > 0 {
+                self.paren_depth -= 1
+            }
+            return Option::Some(P_RPAREN)
+        }
+        if c == C_LBRACE {
+            return Option::Some(P_LBRACE)
+        }
+        if c == C_RBRACE {
+            return Option::Some(P_RBRACE)
+        }
+        if c == C_LBRACKET {
+            return Option::Some(P_LBRACKET)
+        }
+        if c == C_RBRACKET {
+            return Option::Some(P_RBRACKET)
+        }
+        if c == C_COLON {
+            return Option::Some(P_COLON)
+        }
+        if c == C_COMMA {
+            return Option::Some(P_COMMA)
+        }
+        if c == C_HASH {
+            return Option::Some(P_HASH)
+        }
+        if c == C_DOT {
+            return Option::Some(P_DOT)
+        }
+        if c == C_SEMI {
+            return Option::Some(P_SEMI)
+        }
+        if c == C_TILDE {
+            return Option::Some(O_TILDE)
+        }
+        if c == C_PLUS {
+            return Option::Some(self.op_or_assign(O_PLUS))
+        }
+        if c == C_STAR {
+            return Option::Some(self.op_or_assign(O_STAR))
+        }
+        if c == C_PERCENT {
+            return Option::Some(self.op_or_assign(O_PERCENT))
+        }
+        if c == C_CARET {
+            return Option::Some(self.op_or_assign(O_CARET))
+        }
+        if c == C_MINUS {
+            if self.eat(C_GT) {
+                return Option::Some(P_ARROW)
+            }
+            return Option::Some(self.op_or_assign(O_MINUS))
+        }
+        if c == C_AMP {
+            if self.eat(C_AMP) {
+                return Option::Some(O_ANDAND)
+            }
+            return Option::Some(self.op_or_assign(O_AMP))
+        }
+        if c == C_PIPE {
+            if self.eat(C_PIPE) {
+                return Option::Some(O_OROR)
+            }
+            return Option::Some(self.op_or_assign(O_PIPE))
+        }
+        if c == C_BANG {
+            if self.eat(C_EQ) {
+                return Option::Some(O_NE)
+            }
+            return Option::Some(O_BANG)
+        }
+        if c == C_EQ {
+            if self.eat(C_EQ) {
+                return Option::Some(O_EQ)
+            }
+            return Option::Some(O_ASSIGN)
+        }
+        if c == C_LT {
+            if self.eat(C_LT) {
+                return Option::Some(self.op_or_assign(O_SHL))
+            }
+            if self.eat(C_EQ) {
+                return Option::Some(O_LE)
+            }
+            return Option::Some(O_LT)
+        }
+        if c == C_GT {
+            if self.eat(C_GT) {
+                return Option::Some(self.op_or_assign(O_SHR))
+            }
+            if self.eat(C_EQ) {
+                return Option::Some(O_GE)
+            }
+            return Option::Some(O_GT)
+        }
+        Option::None
+    }
+
+    // Kind `one`, or its assignment form when `=` follows.
+    fn op_or_assign(mut self, _ one: Tok) -> Tok uses (input: mut Source) {
+        if self.eat(C_EQ) {
+            return one.assign_form()
+        }
+        one
+    }
+
+    // Reads an integer literal. SPEC.md §1 gives its syntax.
+    fn number(mut self) -> Result<Diag, Token> uses (input: mut Source) {
+        let first = self.peeked
+        self.bump()
+        if first == C_ZERO && is_hex_marker(self.peeked) {
+            self.bump()
+            if !is_hex_digit(self.peeked) {
+                return self.err(L_BAD_INT)
+            }
+            while is_hex_digit(self.peeked) {
+                self.bump()
+            }
+        } else if first == C_ZERO && is_unsupported_radix(self.peeked) {
+            return self.err(L_UNSUPPORTED_LITERAL)
+        } else {
+            var last_underscore = false
+            while is_digit(self.peeked) || self.peeked == C_UNDERSCORE {
+                let underscore = self.peeked == C_UNDERSCORE
+                if underscore && last_underscore {
+                    return self.err(L_BAD_INT)
+                }
+                last_underscore = underscore
+                self.bump()
+            }
+            if last_underscore {
+                return self.err(L_BAD_INT)
+            }
+        }
+        if is_ident_start(self.peeked) {
+            return self.err(L_BAD_INT)
+        }
+        let t = self.tok(T_INT)
+        if decode_int(self.src, t).is_none() {
+            return self.err(L_INT_TOO_LARGE)
+        }
+        Result::Ok(t)
+    }
+
+    // Reads a string literal. SPEC.md §1 gives its syntax. It may not span lines.
+    fn string(mut self) -> Result<Diag, Token> uses (input: mut Source) {
+        self.bump()
+        while true {
+            let c = self.peeked
+            if c < 0 || is_newline(c) {
+                return self.err(L_UNTERMINATED_STRING)
+            }
+            self.bump()
+            if c == C_QUOTE { break }
+            if c == C_BACKSLASH {
+                if !is_escape(self.peeked) {
+                    return Result::Err(diag(L_BAD_ESCAPE, self.src.len() - 1))
+                }
+                self.bump()
+            }
+        }
+        Result::Ok(self.tok(T_STR))
+    }
+}
+
+// Lex everything `Source` provides. Stops at the first error.
+pub fn lex() -> Lexed uses (input: mut Source) {
+    var lx = Lexer::new()
+    var toks: MemVec<Token> = MemVec::new()
+    var err: Option<Diag> = Option::None
+    while true {
+        match lx.next() {
+            Result::Ok(t) => {
+                toks.push(t)
+                if t.kind == T_EOF { break }
+            },
+            Result::Err(d) => {
+                err = Option::Some(d)
+                break
+            },
+        }
+    }
+    Lexed { src: lx.into_src(), toks, err }
+}

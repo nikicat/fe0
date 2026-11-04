@@ -103,7 +103,12 @@ unknowns, declared as pre-existing. See [PLAN.md](PLAN.md).
       - Oct 28: master `f4046d212` (PR #1877, native frame-scoped objects, plus a Sonatina
         update) and release 26.5.0 both reproduce everything. Lexer gas went from 802,865 to
         803,236.
-- [ ] On Nov 3, freeze the toolchain on the newest release
+- [x] On Nov 3, freeze the toolchain on the newest release
+      **Frozen on Fe 26.5.1** (released Oct 28; it only fixes a parser hang). `tools/spikes.sh`
+      reproduces all 54 recorded values on it.
+      - CI (`.github/workflows/ci.yml`) downloads exactly that release.
+      - Master has since fixed both of our issues: #1887 via #1890, and #1886 via #1909, which
+        adds native keccak. Neither blocks us, so we don't upgrade mid-window (PLAN risk 2).
 - Open upstream PRs to watch (as of Oct 28), all by sbillig:
   - **#1883 "Native portability, panics and tests"**: probably the native work the Fe team
     mentioned. Native `usize` becomes 64-bit, so check the spike's `usize` arithmetic after it
@@ -115,3 +120,15 @@ unknowns, declared as pre-existing. See [PLAN.md](PLAN.md).
     which should stay valid. Recheck the spec example after it lands.
   - **#1878 "Per-function code sizes with `--emit sizes`"**: useful for the 24 KB measurement
     on Nov 3–5.
+
+## Planned by unsmell run 20261104-190143
+
+- [ ] **End of input is the byte value -1** (`fe0/src/io.fe` `Source::next_byte -> i32`,
+      `fe0/src/lexer.fe` `Lexer.peeked: i32`, compared as `< 0` at several sites).
+      A `-1` could be pushed into the source buffer as byte 255 if a caller forgets the check.
+      - Fix: `next_byte() -> Option<u8>` and `peeked: Option<u8>`, so the end of input is not
+        a byte value at all.
+      - First measure the cost: the lexer runs at about 800 gas per source byte on the EVM, and
+        an `Option` on every byte may add a noticeable share. Measure with `spike-lexer`'s
+        `lex_gas` pattern (DESIGN.md §8a), then decide.
+      - Findings b1-21, b2-6, x-3 in `.git/unsmell/20261104-190143/`.

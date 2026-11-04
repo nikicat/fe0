@@ -98,17 +98,18 @@ Fe0 must be a strict subset of Fe: every Fe0 program is also a valid Fe program 
 ## 4. Architecture
 
 ```
-source ──Read effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec<Node>, u32 ids)
+source ──Source effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec<Node>, u32 ids)
        ─▶ resolve + typecheck + effect check ─▶ codegen (AST → EVM ops, labels)
        ─▶ assembler (jump fixups, PUSH sizing) ─▶ initcode + runtime ─▶ Write effect / Bytes
 ```
 
-- **Input and output are effects.**
+- **Input and output are effects.** DESIGN.md §2 describes the `Source` input effect.
   - Natively, source comes from stdin (`host()`) and bytecode goes to stdout as hex.
-  - On chain, `Read` is a reader over calldata `Bytes` and the output is a `MemVec<u8>`.
-  - Under `fe test`, `ArrayReader`.
+  - On chain, `io::bytes` gives a `Source` over calldata `Bytes`. The output is a `MemVec<u8>`.
+  - Under `fe test`, `io::text` gives a `Source` over a string.
   - The compiler core has no idea which one it is running under.
-- **Errors:** report the first error with a position (no recovery), as a `Result` per phase.
+- **Errors:** report the first error with a position (no recovery). The lexer reports its error
+  in `Lexed.err`.
 - **Code generation:** emit EVM opcodes directly from the AST as a stack machine, with no IR.
   - Locals live in memory at fixed offsets per frame.
   - Function calls push a return label and jump; there is no recursion depth check, which is
@@ -125,7 +126,7 @@ source ──Read effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec<N
 
 ## 5. Testing strategy (30% of the score is technical quality)
 
-1. **Unit tests per phase** with `fe test` and `ArrayReader`: tokens, AST shape, type and
+1. **Unit tests per phase** with `fe test` and `io::text` sources: tokens, AST shape, type and
    effect errors, assembler fixups.
 2. **Differential testing against the official compiler**, entirely inside `fe test`:
    - Each corpus program `P.fe` is compiled normally (`evm.create2<P>`). A script also embeds
@@ -176,7 +177,7 @@ Likelihood and impact are rated H, M or L.
 
 | # | Risk | L | I | Mitigation |
 |---|---|---|---|---|
-| 1 | **Toolchain drift between master and the release.** We experiment on master (as the Fe team advises), but the submission must pin a *release* of 26.5.0 or later. Features or fixes we rely on might exist only on master | H | H | Freeze the toolchain on Nov 3: the newest release out by then. CI runs on the pinned release, plus a non-blocking job on master. Never depend on a feature that is master-only |
+| 1 | **Toolchain drift between master and the release.** We experiment on master (as the Fe team advises), but the submission must pin a *release* of 26.5.0 or later. Features or fixes we rely on might exist only on master | H | H | Freeze the toolchain on Nov 3: the newest release out by then. CI runs on the pinned release only. After each upstream merge, master is checked by hand: rebuild Fe, then run `tools/spikes.sh` and the fe0 tests. A CI job on master would build Fe from source on every push. Never depend on a feature that is master-only |
 | 2 | **Language churn mid-window.** Fe changes fast; 26.5 alone changed reference semantics. A release during Nov 3–24 could break our code or invite a costly upgrade | M | M | Do not upgrade mid-window unless a blocking bug fix requires it. Note the reason in the README if we do |
 | 3 | **Compiler bugs, especially in the native backend.** The Fe team expects us to hit some ("as I suspect you will"). The native backend is experimental | H | M | Keep the core target-agnostic, so the EVM path under `fe test` is always the primary oracle and the native build is a bonus. Reduce each bug to a minimal example and file it; fix it upstream if it's cheap (welcome, and good for usefulness); keep `WORKAROUNDS.md` |
 | 4 | **Experts on the jury.** Two judges are Fe core developers with a personal interest in Fe-in-Fe and a Lean-formalizable subset. Claims of correctness or "strict subset" will be scrutinised | M | H | Claim only what the tests show. Write a precise Fe0 spec (grammar and semantics) and a frank limitations section. Every difference from Fe found by testing is either fixed or documented |
