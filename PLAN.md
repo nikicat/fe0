@@ -161,15 +161,9 @@ source ──Source effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec
 
 ## 6. Schedule
 
-| When | Deliverable |
-|---|---|
-| Oct 28 – Nov 2 | Zulip scope question; freeze the Fe0 grammar (EBNF in the README); set up the test-harness script. No product code, since only in-window work is judged |
-| Nov 3–5 | Lexer and parser into the arena AST, with unit tests. **Measure the size of each phase**, which decides how to split the contracts |
-| Nov 6–9 | Resolver, type checker, effect checker, negative tests |
-| Nov 10–14 | Code generation, assembler, dispatcher, first differential tests passing. **Register by Nov 17 at the latest; aim for Nov 10** |
-| Nov 15–18 | Corpus up to 40+ programs, **random program generator** in the differential loop, fixing failures, native CLI |
-| Nov 19–21 | On-chain contract split, Sepolia deployment, demo script (compile, deploy, call) |
-| Nov 22–24 | README (approach, architecture, limitations, Fe0 spec), declaration of AI use and pre-existing work, buffer. Submit by Nov 24 23:59 UTC |
+The schedule lives in `.tasks/` as tasks with due dates and dependencies: parser (Nov 5),
+checker (Nov 9), codegen (Nov 14), harness, generator and native CLI (Nov 18), on-chain demo
+(Nov 21), submission (Nov 24). Registration closes Nov 17 (task T0001).
 
 ## 7. Risks
 
