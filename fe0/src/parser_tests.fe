@@ -77,7 +77,7 @@ fn item_is(_ src: DynString, _ want: DynString) {
 fn tail_is(_ src: DynString, _ want: DynString) {
     let ast = parse_text(src)
     let f = ast.nodes[ast.list_at(ast.items, 0)]
-    let i = ast.nodes[f.c].b
+    let i = ast.nodes[f.body()].value()
     prints(ast, i, want)
 }
 
@@ -271,92 +271,94 @@ impl Printer {
         let k = n.kind
         if k == NODE_CONST {
             self.put("(const ")
-            self.typed(n.a, n.ty)
-            self.opt(n.b)
+            self.typed(n.name(), n.ty())
+            self.opt(n.value())
             self.put(")")
         } else if k == NODE_FN {
             self.put("(fn ")
-            self.sym(n.a)
-            self.list(n.b)
+            self.sym(n.name())
+            self.list(n.list())
             self.put(" ")
-            self.ty(n.ty)
-            self.opt(n.c)
+            self.ty(n.ty())
+            self.opt(n.body())
             self.put(")")
         } else if k == NODE_PARAM {
-            if n.b == 1 { self.put("_") }
-            self.typed(n.a, n.ty)
+            if n.is_positional() {
+                self.put("_")
+            }
+            self.typed(n.name(), n.ty())
         } else if k == NODE_MSG {
             self.put("(msg ")
-            self.sym(n.a)
-            self.list(n.b)
+            self.sym(n.name())
+            self.list(n.list())
             self.put(")")
         } else if k == NODE_VARIANT {
             self.put("(")
-            let v = self.ast.words[n.c]
+            let v = self.ast.words[n.word()]
             self.uint(v)
             self.put(" ")
-            self.sym(n.a)
-            self.list(n.b)
+            self.sym(n.name())
+            self.list(n.list())
             self.put(" ")
-            self.ty(n.ty)
+            self.ty(n.ty())
             self.put(")")
         } else if k == NODE_FIELD {
-            self.typed(n.a, n.ty)
+            self.typed(n.name(), n.ty())
         } else if k == NODE_CONTRACT {
             self.put("(contract ")
-            self.sym(n.a)
-            self.list(n.b)
-            self.opt(n.c)
-            self.list(n.d)
+            self.sym(n.name())
+            self.list(n.list())
+            self.opt(n.init())
+            self.list(n.recvs())
             self.put(")")
         } else if k == NODE_INIT {
             self.put("(init")
-            self.list(n.a)
-            self.list(n.b)
-            self.opt(n.c)
+            self.list(n.list())
+            self.list(n.use_list())
+            self.opt(n.body())
             self.put(")")
         } else if k == NODE_RECV {
             self.put("(recv ")
-            self.sym(n.a)
-            self.list(n.b)
+            self.sym(n.name())
+            self.list(n.list())
             self.put(")")
         } else if k == NODE_ARM {
             self.put("(")
-            self.sym(n.a)
-            self.list(n.b)
+            self.sym(n.name())
+            self.list(n.list())
             self.put(" ")
-            self.ty(n.ty)
-            self.list(n.c)
-            self.opt(n.d)
+            self.ty(n.ty())
+            self.list(n.use_list())
+            self.opt(n.body())
             self.put(")")
         } else if k == NODE_BIND {
-            self.sym(n.a)
-            if n.b != n.a {
+            self.sym(n.name())
+            if n.local() != n.name() {
                 self.put(":")
-                self.sym(n.b)
+                self.sym(n.local())
             }
         } else if k == NODE_USE {
-            if n.b == 1 {
+            if n.is_mut() {
                 self.put("mut ")
             }
-            self.sym(n.a)
+            self.sym(n.name())
         } else if k == NODE_LET {
-            if n.c == 1 {
+            if n.is_var() {
                 self.put("(var ")
             } else {
                 self.put("(let ")
             }
-            self.typed(n.a, n.ty)
-            self.opt(n.b)
+            self.typed(n.name(), n.ty())
+            self.opt(n.value())
             self.put(")")
         } else if k == NODE_WHILE {
             self.put("(while")
-            self.opt(n.a)
-            self.opt(n.b)
+            self.opt(n.cond())
+            self.opt(n.body())
             self.put(")")
         } else if k == NODE_RETURN {
             self.put("(return")
-            self.opt(n.a)
+            self.opt(n.value())
             self.put(")")
         } else if k == NODE_BREAK {
             self.put("break")
@@ -364,70 +366,75 @@ impl Printer {
             self.put("continue")
         } else if k == NODE_ASSIGN {
             self.put("(")
-            self.op(n.op)
+            self.op(n.op())
             self.put(" ")
-            self.sym(n.a)
-            self.opt(n.b)
+            self.sym(n.name())
+            self.opt(n.value())
             self.put(")")
         } else if k == NODE_INT {
-            let v = self.ast.words[n.a]
+            let v = self.ast.words[n.word()]
             self.uint(v)
         } else if k == NODE_BOOL {
-            if n.a == 1 {
+            if n.is_true() {
                 self.put("true")
             } else {
                 self.put("false")
             }
         } else if k == NODE_NAME {
-            self.sym(n.a)
-        } else if k == NODE_BINARY || k == NODE_UNARY {
+            self.sym(n.name())
+        } else if k == NODE_BINARY {
             self.put("(")
-            self.op(n.op)
-            self.opt(n.a)
-            if k == NODE_BINARY {
-                self.opt(n.b)
-            }
+            self.op(n.op())
+            self.opt(n.lhs())
+            self.opt(n.rhs())
+            self.put(")")
+        } else if k == NODE_UNARY {
+            self.put("(")
+            self.op(n.op())
+            self.opt(n.operand())
             self.put(")")
         } else if k == NODE_CALL {
             self.put("(call ")
-            self.sym(n.a)
-            self.list(n.b)
+            self.sym(n.name())
+            self.list(n.list())
             self.put(")")
         } else if k == NODE_ARG {
-            if n.a != 0 {
-                self.sym(n.a)
+            if n.name() != 0 {
+                self.sym(n.name())
                 self.put(":")
             }
-            self.node(n.b)
+            self.node(n.value())
         } else if k == NODE_IF {
             self.put("(if")
-            self.opt(n.a)
-            self.opt(n.b)
-            self.opt(n.c)
+            self.opt(n.cond())
+            self.opt(n.body())
+            self.opt(n.otherwise())
             self.put(")")
         } else if k == NODE_BLOCK {
             self.put("{")
             var i: usize = 0
-            while i < self.ast.list_len(n.a) {
-                self.node(self.ast.list_at(n.a, i))
+            while i < self.ast.list_len(n.list()) {
+                self.node(self.ast.list_at(n.list(), i))
                 self.put("; ")
                 i += 1
             }
-            if n.b != 0 { self.node(n.b) }
+            if n.value() != 0 {
+                self.node(n.value())
+            }
             self.put("}")
         } else if k == NODE_ASSERT {
             self.put("(assert")
-            self.opt(n.a)
-            if n.b != 0 {
+            self.opt(n.cond())
+            if n.message() != 0 {
                 self.put(" ")
-                self.node(n.b)
+                self.node(n.message())
             }
             self.put(")")
         } else if k == NODE_STR {
             self.put("\"")
-            let word = self.ast.words[n.a]
+            let word = self.ast.words[n.word()]
             var i: usize = 0
-            while i < n.b {
+            while i < n.str_len() {
                 self.escaped((word >> ((31 - i) * 8) as u256).downcast_truncate())
                 i += 1
             }

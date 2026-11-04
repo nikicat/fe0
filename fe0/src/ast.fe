@@ -1,11 +1,12 @@
 // The AST: an arena of nodes that refer to each other by index. ADR 0005 says why.
 //
-// Index 0 of `nodes`, `lists` and `syms` is a sentinel, so an index that is 0 means "none". In
-// the table below:
-// - "sym" is an index into `Ast.syms`, an interned identifier.
-// - "list" is an index into `Ast.lists`, read with `Ast.list_len` and `Ast.list_at`. List 0 is
-//   the empty list.
-// - `ty` is the type written in the source, or TY_NONE when none is.
+// Index 0 of `nodes`, `lists` and `syms` is a sentinel, so an index that is 0 means "none". A
+// node is built by one `Node::new_` constructor per kind and read through the accessors after
+// `impl Node`. The comment on each kind below names the accessors that apply to it:
+// - a name is a sym, an index into `Ast.syms` (an interned identifier);
+// - `list()` is an index into `Ast.lists`, read with `Ast.list_len` and `Ast.list_at`. List 0
+//   is the empty list;
+// - `ty()` is the type written in the source, or TY_NONE when none is;
 // - `pos` is the byte offset of the token that diagnostics about the node point at.
 
 use ingot::diag::Diag
@@ -33,65 +34,65 @@ impl Kind {
 pub const NODE_NONE: Kind = Kind { code: 0 }
 
 // Items and their parts.
-// const: ty = type, a = name sym, b = value.
+// const: name, ty, value.
 pub const NODE_CONST: Kind = Kind { code: 1 }
-// fn: ty = return type, a = name sym, b = PARAM list, c = body BLOCK.
+// fn: name, ty (the return type), list of PARAMs, body BLOCK.
 pub const NODE_FN: Kind = Kind { code: 2 }
-// param: ty = type, a = name sym, b = 1 if written `_ name` (positional), else 0.
+// param: name, ty, is_positional (written `_ name`).
 pub const NODE_PARAM: Kind = Kind { code: 3 }
-// msg: a = name sym, b = VARIANT list.
+// msg: name, list of VARIANTs.
 pub const NODE_MSG: Kind = Kind { code: 4 }
-// variant: ty = return type, a = name sym, b = FIELD list, c = selector, an index into `words`.
+// variant: name, ty (the return type), word (the selector), list of FIELDs.
 pub const NODE_VARIANT: Kind = Kind { code: 5 }
-// field of a variant or a contract: ty = type, a = name sym.
+// field of a variant or a contract: name, ty.
 pub const NODE_FIELD: Kind = Kind { code: 6 }
-// contract: a = name sym, b = FIELD list, c = INIT or 0, d = RECV list.
+// contract: name, list of FIELDs, init (INIT or 0), recvs (a list of RECVs).
 pub const NODE_CONTRACT: Kind = Kind { code: 7 }
-// init: a = PARAM list, b = USE list, c = body BLOCK.
+// init: list of PARAMs, use_list (a list of USEs), body BLOCK.
 pub const NODE_INIT: Kind = Kind { code: 8 }
-// recv: a = msg name sym, b = ARM list.
+// recv: name (of the msg), list of ARMs.
 pub const NODE_RECV: Kind = Kind { code: 9 }
-// arm: ty = return type, a = variant name sym, b = BIND list, c = USE list, d = body BLOCK.
+// arm: name (of the variant), ty (the return type), list of BINDs, use_list, body BLOCK.
 pub const NODE_ARM: Kind = Kind { code: 10 }
-// bind: a = field name sym, b = local name sym (the same as `a` when written `{ x }`).
+// bind: name (of the field), local (the same sym as name when written `{ x }`).
 pub const NODE_BIND: Kind = Kind { code: 11 }
-// one entry of `uses (...)`: a = field name sym, b = 1 if written `mut`, else 0.
+// one entry of `uses (...)`: name (of the field), is_mut.
 pub const NODE_USE: Kind = Kind { code: 12 }
-// string literal: a = index into `words` of its bytes as a `StrValue.word`, b = its byte count.
+// string literal: word (its bytes as a `StrValue.word`), str_len.
 pub const NODE_STR: Kind = Kind { code: 13 }
 
 // Statements.
-// let or var: ty = type, a = name sym, b = value, c = 1 for `var`, else 0.
+// let or var: name, ty, value, is_var.
 pub const NODE_LET: Kind = Kind { code: 20 }
-// while: a = condition, b = body BLOCK.
+// while: cond, body BLOCK.
 pub const NODE_WHILE: Kind = Kind { code: 21 }
-// return: a = value or 0.
+// return: value or 0.
 pub const NODE_RETURN: Kind = Kind { code: 22 }
 pub const NODE_BREAK: Kind = Kind { code: 23 }
 pub const NODE_CONTINUE: Kind = Kind { code: 24 }
-// `x = e` or `x op= e`: op = O_ASSIGN or an A_ kind, a = target sym, b = value.
+// `x = e` or `x op= e`: name (the target), op (O_ASSIGN or an A_ kind), value.
 pub const NODE_ASSIGN: Kind = Kind { code: 25 }
 
 // Expressions. Any expression node may also appear in a statement list.
-// integer literal: a = index into `words`.
+// integer literal: word.
 pub const NODE_INT: Kind = Kind { code: 40 }
-// `true` or `false`: a = 1 or 0.
+// `true` or `false`: is_true.
 pub const NODE_BOOL: Kind = Kind { code: 41 }
-// a name of a local, parameter, constant or field: a = sym.
+// a name of a local, parameter, constant or field: name.
 pub const NODE_NAME: Kind = Kind { code: 42 }
-// binary operator: op = its O_ kind, a = left operand, b = right operand.
+// binary operator: op (an O_ kind), lhs, rhs.
 pub const NODE_BINARY: Kind = Kind { code: 43 }
-// `!` or `~`: op = O_BANG or O_TILDE, a = operand.
+// `!` or `~`: op (O_BANG or O_TILDE), operand.
 pub const NODE_UNARY: Kind = Kind { code: 44 }
-// call: a = callee sym, b = ARG list.
+// call: name (of the callee), list of ARGs.
 pub const NODE_CALL: Kind = Kind { code: 45 }
-// argument: a = label sym or 0, b = value.
+// argument: name (the label, or 0), value.
 pub const NODE_ARG: Kind = Kind { code: 46 }
-// if: a = condition, b = then BLOCK, c = else BLOCK, IF or 0.
+// if: cond, body (the then BLOCK), otherwise (the else BLOCK, IF or 0).
 pub const NODE_IF: Kind = Kind { code: 47 }
-// block: a = statement list, b = tail expression or 0.
+// block: list of statements, value (the tail expression, or 0).
 pub const NODE_BLOCK: Kind = Kind { code: 48 }
-// `assert!`: a = condition, b = message STR or 0.
+// `assert!`: cond, message (a STR or 0).
 pub const NODE_ASSERT: Kind = Kind { code: 49 }
 
 // A type written in the source.
@@ -110,23 +111,267 @@ pub const TY_U256: Ty = Ty { code: 1 }
 pub const TY_BOOL: Ty = Ty { code: 2 }
 pub const TY_ADDRESS: Ty = Ty { code: 3 }
 
+// Each accessor reads one fixed slot, and no kind uses two accessors of the same slot. The
+// slots stay private to this file, so only the constructors write them.
 pub struct Node {
     pub kind: Kind,
-    pub op: Tok,
-    pub ty: Ty,
-    pub a: usize,
-    pub b: usize,
-    pub c: usize,
-    pub d: usize,
     pub pos: usize,
+    op: Tok,
+    ty: Ty,
+    // name, cond, lhs or operand
+    a: usize,
+    // value, rhs, word, local, use_list, recvs, otherwise or message
+    b: usize,
+    // list
+    c: usize,
+    // body, init, str_len or a flag
+    d: usize,
 }
 
 impl Copy for Node {}
 
+fn flag(_ b: bool) -> usize {
+    if b { 1 } else { 0 }
+}
+
 impl Node {
-    // Returns a node of `kind` at `pos` with every other field empty.
+    // Returns a node of `kind` at `pos` with every other field empty: the sentinel, `break` and
+    // `continue`.
     pub fn leaf(_ kind: Kind, _ pos: usize) -> Node {
-        Node { kind, op: T_EOF, ty: TY_NONE, a: 0, b: 0, c: 0, d: 0, pos }
+        Node { kind, pos, op: T_EOF, ty: TY_NONE, a: 0, b: 0, c: 0, d: 0 }
+    }
+
+    fn make(_ kind: Kind, _ pos: usize, a: usize, b: usize, c: usize, d: usize) -> Node {
+        Node { kind, pos, op: T_EOF, ty: TY_NONE, a, b, c, d }
+    }
+
+    fn typed(_ kind: Kind, _ pos: usize, ty: Ty, a: usize, b: usize, c: usize, d: usize) -> Node {
+        Node { kind, pos, op: T_EOF, ty, a, b, c, d }
+    }
+
+    pub fn new_const(_ pos: usize, name: usize, ty: Ty, value: usize) -> Node {
+        Node::typed(NODE_CONST, pos, ty, a: name, b: value, c: 0, d: 0)
+    }
+
+    pub fn new_fn(_ pos: usize, name: usize, params: usize, ret: Ty, body: usize) -> Node {
+        Node::typed(NODE_FN, pos, ty: ret, a: name, b: 0, c: params, d: body)
+    }
+
+    pub fn new_param(_ pos: usize, name: usize, ty: Ty, positional: bool) -> Node {
+        Node::typed(
+            NODE_PARAM,
+            pos,
+            ty,
+            a: name,
+            b: 0,
+            c: 0,
+            d: flag(positional),
+        )
+    }
+
+    pub fn new_msg(_ pos: usize, name: usize, variants: usize) -> Node {
+        Node::make(NODE_MSG, pos, a: name, b: 0, c: variants, d: 0)
+    }
+
+    pub fn new_variant(_ pos: usize, name: usize, selector: usize, fields: usize, ret: Ty) -> Node {
+        Node::typed(
+            NODE_VARIANT,
+            pos,
+            ty: ret,
+            a: name,
+            b: selector,
+            c: fields,
+            d: 0,
+        )
+    }
+
+    pub fn new_field(_ pos: usize, name: usize, ty: Ty) -> Node {
+        Node::typed(NODE_FIELD, pos, ty, a: name, b: 0, c: 0, d: 0)
+    }
+
+    pub fn new_contract(
+        _ pos: usize,
+        name: usize,
+        fields: usize,
+        init: usize,
+        recvs: usize,
+    ) -> Node {
+        Node::make(NODE_CONTRACT, pos, a: name, b: recvs, c: fields, d: init)
+    }
+
+    pub fn new_init(_ pos: usize, params: usize, use_list: usize, body: usize) -> Node {
+        Node::make(NODE_INIT, pos, a: 0, b: use_list, c: params, d: body)
+    }
+
+    pub fn new_recv(_ pos: usize, name: usize, arms: usize) -> Node {
+        Node::make(NODE_RECV, pos, a: name, b: 0, c: arms, d: 0)
+    }
+
+    pub fn new_arm(
+        _ pos: usize,
+        variant: usize,
+        binds: usize,
+        ret: Ty,
+        use_list: usize,
+        body: usize,
+    ) -> Node {
+        Node::typed(
+            NODE_ARM,
+            pos,
+            ty: ret,
+            a: variant,
+            b: use_list,
+            c: binds,
+            d: body,
+        )
+    }
+
+    pub fn new_bind(_ pos: usize, field: usize, local: usize) -> Node {
+        Node::make(NODE_BIND, pos, a: field, b: local, c: 0, d: 0)
+    }
+
+    pub fn new_use(_ pos: usize, field: usize, mutable: bool) -> Node {
+        Node::make(NODE_USE, pos, a: field, b: 0, c: 0, d: flag(mutable))
+    }
+
+    pub fn new_str(_ pos: usize, word: usize, len: usize) -> Node {
+        Node::make(NODE_STR, pos, a: 0, b: word, c: 0, d: len)
+    }
+
+    pub fn new_let(_ pos: usize, name: usize, ty: Ty, value: usize, mutable: bool) -> Node {
+        Node::typed(
+            NODE_LET,
+            pos,
+            ty,
+            a: name,
+            b: value,
+            c: 0,
+            d: flag(mutable),
+        )
+    }
+
+    pub fn new_while(_ pos: usize, cond: usize, body: usize) -> Node {
+        Node::make(NODE_WHILE, pos, a: cond, b: 0, c: 0, d: body)
+    }
+
+    pub fn new_return(_ pos: usize, value: usize) -> Node {
+        Node::make(NODE_RETURN, pos, a: 0, b: value, c: 0, d: 0)
+    }
+
+    pub fn new_assign(_ pos: usize, name: usize, op: Tok, value: usize) -> Node {
+        Node { kind: NODE_ASSIGN, pos, op, ty: TY_NONE, a: name, b: value, c: 0, d: 0 }
+    }
+
+    pub fn new_int(_ pos: usize, word: usize) -> Node {
+        Node::make(NODE_INT, pos, a: 0, b: word, c: 0, d: 0)
+    }
+
+    pub fn new_bool(_ pos: usize, value: bool) -> Node {
+        Node::make(NODE_BOOL, pos, a: 0, b: 0, c: 0, d: flag(value))
+    }
+
+    pub fn new_name(_ pos: usize, name: usize) -> Node {
+        Node::make(NODE_NAME, pos, a: name, b: 0, c: 0, d: 0)
+    }
+
+    pub fn new_binary(_ pos: usize, op: Tok, lhs: usize, rhs: usize) -> Node {
+        Node { kind: NODE_BINARY, pos, op, ty: TY_NONE, a: lhs, b: rhs, c: 0, d: 0 }
+    }
+
+    pub fn new_unary(_ pos: usize, op: Tok, operand: usize) -> Node {
+        Node { kind: NODE_UNARY, pos, op, ty: TY_NONE, a: operand, b: 0, c: 0, d: 0 }
+    }
+
+    pub fn new_call(_ pos: usize, name: usize, args: usize) -> Node {
+        Node::make(NODE_CALL, pos, a: name, b: 0, c: args, d: 0)
+    }
+
+    pub fn new_arg(_ pos: usize, label: usize, value: usize) -> Node {
+        Node::make(NODE_ARG, pos, a: label, b: value, c: 0, d: 0)
+    }
+
+    // An IF without its else branch, which `Ast.set_else` adds.
+    pub fn new_if(_ pos: usize, cond: usize, then: usize) -> Node {
+        Node::make(NODE_IF, pos, a: cond, b: 0, c: 0, d: then)
+    }
+
+    pub fn new_block(_ pos: usize, stmts: usize, tail: usize) -> Node {
+        Node::make(NODE_BLOCK, pos, a: 0, b: tail, c: stmts, d: 0)
+    }
+
+    pub fn new_assert(_ pos: usize, cond: usize, message: usize) -> Node {
+        Node::make(NODE_ASSERT, pos, a: cond, b: message, c: 0, d: 0)
+    }
+
+    pub fn op(self) -> Tok {
+        self.op
+    }
+    pub fn ty(self) -> Ty {
+        self.ty
+    }
+
+    pub fn name(self) -> usize {
+        self.a
+    }
+    pub fn cond(self) -> usize {
+        self.a
+    }
+    pub fn lhs(self) -> usize {
+        self.a
+    }
+    pub fn operand(self) -> usize {
+        self.a
+    }
+
+    pub fn value(self) -> usize {
+        self.b
+    }
+    pub fn rhs(self) -> usize {
+        self.b
+    }
+    pub fn word(self) -> usize {
+        self.b
+    }
+    pub fn local(self) -> usize {
+        self.b
+    }
+    pub fn use_list(self) -> usize {
+        self.b
+    }
+    pub fn recvs(self) -> usize {
+        self.b
+    }
+    pub fn otherwise(self) -> usize {
+        self.b
+    }
+    pub fn message(self) -> usize {
+        self.b
+    }
+
+    pub fn list(self) -> usize {
+        self.c
+    }
+
+    pub fn body(self) -> usize {
+        self.d
+    }
+    pub fn init(self) -> usize {
+        self.d
+    }
+    pub fn str_len(self) -> usize {
+        self.d
+    }
+    pub fn is_positional(self) -> bool {
+        self.d == 1
+    }
+    pub fn is_mut(self) -> bool {
+        self.d == 1
+    }
+    pub fn is_var(self) -> bool {
+        self.d == 1
+    }
+    pub fn is_true(self) -> bool {
+        self.d == 1
     }
 }
 
@@ -177,7 +422,7 @@ impl Ast {
     // Sets the else branch of IF node `i`.
     pub fn set_else(mut self, _ i: usize, _ otherwise: usize) {
         var n = self.nodes[i]
-        n.c = otherwise
+        n.b = otherwise
         self.nodes.set(i, n)
     }
 

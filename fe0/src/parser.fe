@@ -245,24 +245,26 @@ impl Parser {
 
     // const = "const" IDENT ":" type "=" expr TERM
     fn const_item(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_CONST, self.bump().span.start)
-        n.a = self.ident()?
+        let pos = self.bump().span.start
+        let name = self.ident()?
         self.expect(P_COLON)?
-        n.ty = self.ty()?
+        let ty = self.ty()?
         self.expect(O_ASSIGN)?
-        n.b = self.expr()?
+        let value = self.expr()?
         self.end_stmt()?
-        Result::Ok(self.ast.add_node(n))
+        Result::Ok(self.ast.add_node(Node::new_const(pos, name, ty, value)))
     }
 
     // function = "fn" IDENT "(" [ params ] ")" [ "->" type ] block
     fn fn_item(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_FN, self.bump().span.start)
-        n.a = self.ident()?
-        n.b = self.params()?
-        n.ty = self.ret_ty()?
-        n.c = self.block()?
-        Result::Ok(self.ast.add_node(n))
+        let pos = self.bump().span.start
+        let name = self.ident()?
+        let params = self.params()?
+        let ret = self.ret_ty()?
+        let body = self.block()?
+        Result::Ok(
+            self.ast.add_node(Node::new_fn(pos, name, params, ret, body)),
+        )
     }
 
     // "(" [ params ] ")", where params = param { "," param } [ "," ]
@@ -273,23 +275,23 @@ impl Parser {
 
     // param = [ "_" ] IDENT ":" type
     fn param(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_PARAM, self.tok().span.start)
-        if self.eat(T_UNDERSCORE) {
-            n.b = 1
-        }
-        n.a = self.ident()?
+        let pos = self.tok().span.start
+        let positional = self.eat(T_UNDERSCORE)
+        let name = self.ident()?
         self.expect(P_COLON)?
-        n.ty = self.ty()?
-        Result::Ok(self.ast.add_node(n))
+        let ty = self.ty()?
+        Result::Ok(
+            self.ast.add_node(Node::new_param(pos, name, ty, positional)),
+        )
     }
 
     // msg = "msg" IDENT "{" [ variants ] "}"
     fn msg_item(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_MSG, self.bump().span.start)
-        n.a = self.ident()?
+        let pos = self.bump().span.start
+        let name = self.ident()?
         self.expect(P_LBRACE)?
-        n.b = self.comma_list(P_RBRACE, NODE_VARIANT)?
-        Result::Ok(self.ast.add_node(n))
+        let variants = self.comma_list(P_RBRACE, NODE_VARIANT)?
+        Result::Ok(self.ast.add_node(Node::new_msg(pos, name, variants)))
     }
 
     // variant = selector IDENT [ "{" [ fields ] "}" ] [ "->" type ]
@@ -306,30 +308,31 @@ impl Parser {
         let sel = self.expect(T_INT)?
         self.expect(P_RBRACKET)?
         self.skip_newlines()
-        var n = Node::leaf(NODE_VARIANT, hash.span.start)
-        n.c = self.ast.add_int(sel)
-        n.a = self.ident()?
+        let selector = self.ast.add_int(sel)
+        let name = self.ident()?
+        var fields: usize = 0
         if self.eat(P_LBRACE) {
-            n.b = self.comma_list(P_RBRACE, NODE_FIELD)?
+            fields = self.comma_list(P_RBRACE, NODE_FIELD)?
         }
-        n.ty = self.ret_ty()?
+        let ret = self.ret_ty()?
+        let n = Node::new_variant(hash.span.start, name, selector, fields, ret)
         Result::Ok(self.ast.add_node(n))
     }
 
     // field = IDENT ":" type
     fn field(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_FIELD, self.tok().span.start)
-        n.a = self.ident()?
+        let pos = self.tok().span.start
+        let name = self.ident()?
         self.expect(P_COLON)?
-        n.ty = self.ty()?
-        Result::Ok(self.ast.add_node(n))
+        let ty = self.ty()?
+        Result::Ok(self.ast.add_node(Node::new_field(pos, name, ty)))
     }
 
     // contract = "contract" IDENT "{" { cfield } [ init ] { recv } "}"
     // cfield = "mut" IDENT ":" type [ "," ]
     fn contract_item(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_CONTRACT, self.bump().span.start)
-        n.a = self.ident()?
+        let pos = self.bump().span.start
+        let name = self.ident()?
         self.expect(P_LBRACE)?
         self.skip_newlines()
         let fields = self.pending.len()
@@ -342,9 +345,10 @@ impl Parser {
             self.eat(P_COMMA)
             self.skip_newlines()
         }
-        n.b = self.ast.add_list(mut self.pending, fields)
+        let field_list = self.ast.add_list(mut self.pending, fields)
+        var init: usize = 0
         if self.peek() == K_INIT {
-            n.c = self.init()?
+            init = self.init()?
             self.skip_newlines()
         }
         let recvs = self.pending.len()
@@ -353,24 +357,31 @@ impl Parser {
             self.pending.push(r)
             self.skip_newlines()
         }
-        n.d = self.ast.add_list(mut self.pending, recvs)
+        let recv_list = self.ast.add_list(mut self.pending, recvs)
         self.expect(P_RBRACE)?
-        Result::Ok(self.ast.add_node(n))
+        Result::Ok(
+            self.ast
+                .add_node(
+                    Node::new_contract(pos, name, fields: field_list, init, recvs: recv_list),
+                ),
+        )
     }
 
     // init = "init" "(" [ params ] ")" [ uses ] block
     fn init(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_INIT, self.bump().span.start)
-        n.a = self.params()?
-        n.b = self.uses_clause()?
-        n.c = self.block()?
-        Result::Ok(self.ast.add_node(n))
+        let pos = self.bump().span.start
+        let params = self.params()?
+        let use_list = self.uses_clause()?
+        let body = self.block()?
+        Result::Ok(
+            self.ast.add_node(Node::new_init(pos, params, use_list, body)),
+        )
     }
 
     // recv = "recv" IDENT "{" { arm } "}"
     fn recv(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_RECV, self.bump().span.start)
-        n.a = self.ident()?
+        let pos = self.bump().span.start
+        let name = self.ident()?
         self.expect(P_LBRACE)?
         self.skip_newlines()
         let mark = self.pending.len()
@@ -379,31 +390,33 @@ impl Parser {
             self.pending.push(arm)
             self.skip_newlines()
         }
-        n.b = self.ast.add_list(mut self.pending, mark)
-        Result::Ok(self.ast.add_node(n))
+        let arms = self.ast.add_list(mut self.pending, mark)
+        Result::Ok(self.ast.add_node(Node::new_recv(pos, name, arms)))
     }
 
     // arm = IDENT "{" [ binds ] "}" [ "->" type ] [ uses ] block
     fn arm(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_ARM, self.tok().span.start)
-        n.a = self.ident()?
+        let pos = self.tok().span.start
+        let variant = self.ident()?
         self.expect(P_LBRACE)?
-        n.b = self.comma_list(P_RBRACE, NODE_BIND)?
-        n.ty = self.ret_ty()?
-        n.c = self.uses_clause()?
-        n.d = self.block()?
-        Result::Ok(self.ast.add_node(n))
+        let binds = self.comma_list(P_RBRACE, NODE_BIND)?
+        let ret = self.ret_ty()?
+        let use_list = self.uses_clause()?
+        let body = self.block()?
+        Result::Ok(
+            self.ast.add_node(Node::new_arm(pos, variant, binds, ret, use_list, body)),
+        )
     }
 
     // bind = IDENT [ ":" IDENT ]
     fn bind(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_BIND, self.tok().span.start)
-        n.a = self.ident()?
-        n.b = n.a
+        let pos = self.tok().span.start
+        let field = self.ident()?
+        var local = field
         if self.eat(P_COLON) {
-            n.b = self.ident()?
+            local = self.ident()?
         }
-        Result::Ok(self.ast.add_node(n))
+        Result::Ok(self.ast.add_node(Node::new_bind(pos, field, local)))
     }
 
     // [ "uses" "(" [ use { "," use } [ "," ] ] ")" ]
@@ -417,16 +430,17 @@ impl Parser {
 
     // use = [ "mut" ] IDENT
     fn use_entry(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_USE, self.tok().span.start)
-        if self.eat(K_MUT) { n.b = 1 }
-        n.a = self.ident()?
-        Result::Ok(self.ast.add_node(n))
+        let pos = self.tok().span.start
+        let mutable = self.eat(K_MUT)
+        let field = self.ident()?
+        Result::Ok(self.ast.add_node(Node::new_use(pos, field, mutable)))
     }
 
     // block = "{" { NL } { stmt { NL } } [ expr { NL } ] "}"
     fn block(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_BLOCK, self.expect(P_LBRACE)?.span.start)
+        let pos = self.expect(P_LBRACE)?.span.start
         self.enter()?
+        var tail: usize = 0
         let mark = self.pending.len()
         self.skip_newlines()
         while !self.eat(P_RBRACE) {
@@ -439,7 +453,7 @@ impl Parser {
                 let newline = self.peek() == T_NEWLINE
                 self.skip_newlines()
                 if self.peek() == P_RBRACE {
-                    n.b = s
+                    tail = s
                 } else if newline {
                     self.pending.push(s)
                 } else {
@@ -448,37 +462,38 @@ impl Parser {
             }
             self.skip_newlines()
         }
-        n.a = self.ast.add_list(mut self.pending, mark)
+        let stmts = self.ast.add_list(mut self.pending, mark)
         self.leave()
-        Result::Ok(self.ast.add_node(n))
+        Result::Ok(self.ast.add_node(Node::new_block(pos, stmts, tail)))
     }
 
     // A statement, or an expression that the caller ends.
     fn stmt(mut self) -> Result<Diag, usize> {
         let k = self.peek()
         if k == K_LET || k == K_VAR {
-            var n = Node::leaf(NODE_LET, self.bump().span.start)
-            if k == K_VAR { n.c = 1 }
-            n.a = self.ident()?
+            let pos = self.bump().span.start
+            let name = self.ident()?
+            var ty = TY_NONE
             if self.eat(P_COLON) {
-                n.ty = self.ty()?
+                ty = self.ty()?
             }
             self.expect(O_ASSIGN)?
-            n.b = self.expr()?
-            return self.finish_stmt(n)
+            let value = self.expr()?
+            return self.finish_stmt(Node::new_let(pos, name, ty, value, mutable: k == K_VAR))
         }
         if k == K_WHILE {
-            var n = Node::leaf(NODE_WHILE, self.bump().span.start)
-            n.a = self.expr()?
-            n.b = self.block()?
-            return self.finish_stmt(n)
+            let pos = self.bump().span.start
+            let cond = self.expr()?
+            let body = self.block()?
+            return self.finish_stmt(Node::new_while(pos, cond, body))
         }
         if k == K_RETURN {
-            var n = Node::leaf(NODE_RETURN, self.bump().span.start)
+            let pos = self.bump().span.start
+            var value: usize = 0
             if !self.at_stmt_end() {
-                n.a = self.expr()?
+                value = self.expr()?
             }
-            return self.finish_stmt(n)
+            return self.finish_stmt(Node::new_return(pos, value))
         }
         if k == K_BREAK {
             return self.finish_stmt(Node::leaf(NODE_BREAK, self.bump().span.start))
@@ -487,11 +502,11 @@ impl Parser {
             return self.finish_stmt(Node::leaf(NODE_CONTINUE, self.bump().span.start))
         }
         if k == T_IDENT && self.peek2().is_assign() {
-            var n = Node::leaf(NODE_ASSIGN, self.tok().span.start)
-            n.a = self.ident()?
-            n.op = self.bump().kind
-            n.b = self.expr()?
-            return self.finish_stmt(n)
+            let pos = self.tok().span.start
+            let name = self.ident()?
+            let op = self.bump().kind
+            let value = self.expr()?
+            return self.finish_stmt(Node::new_assign(pos, name, op, value))
         }
         self.expr()
     }
@@ -514,11 +529,9 @@ impl Parser {
             if power < min || power == 0 {
                 break
             }
-            var n = Node::leaf(NODE_BINARY, self.tok().span.start)
-            n.op = self.bump().kind
-            n.a = lhs
-            n.b = self.binary(power + 1)?
-            lhs = self.ast.add_node(n)
+            let t = self.bump()
+            let rhs = self.binary(power + 1)?
+            lhs = self.ast.add_node(Node::new_binary(t.span.start, op: t.kind, lhs, rhs))
             if power == CMP_POWER && binding_power(self.peek()) == CMP_POWER {
                 return Result::Err(self.err(P_CHAINED_COMPARISON))
             }
@@ -540,10 +553,7 @@ impl Parser {
         while op > first {
             op -= 1
             let t = self.ast.lexed.toks[op]
-            var n = Node::leaf(NODE_UNARY, t.span.start)
-            n.op = t.kind
-            n.a = e
-            e = self.ast.add_node(n)
+            e = self.ast.add_node(Node::new_unary(t.span.start, op: t.kind, operand: e))
         }
         Result::Ok(e)
     }
@@ -555,23 +565,21 @@ impl Parser {
         let k = t.kind
         if k == T_INT {
             self.bump()
-            var n = Node::leaf(NODE_INT, t.span.start)
-            n.a = self.ast.add_int(t)
-            return Result::Ok(self.ast.add_node(n))
+            let word = self.ast.add_int(t)
+            return Result::Ok(self.ast.add_node(Node::new_int(t.span.start, word)))
         }
         if k == K_TRUE || k == K_FALSE {
             self.bump()
-            var n = Node::leaf(NODE_BOOL, t.span.start)
-            if k == K_TRUE { n.a = 1 }
-            return Result::Ok(self.ast.add_node(n))
+            return Result::Ok(
+                self.ast.add_node(Node::new_bool(t.span.start, value: k == K_TRUE)),
+            )
         }
         if k == T_IDENT {
             if self.peek2() == P_LPAREN {
                 return self.call()
             }
-            var n = Node::leaf(NODE_NAME, t.span.start)
-            n.a = self.ident()?
-            return Result::Ok(self.ast.add_node(n))
+            let name = self.ident()?
+            return Result::Ok(self.ast.add_node(Node::new_name(t.span.start, name)))
         }
         if k == P_LPAREN {
             self.bump()
@@ -593,22 +601,23 @@ impl Parser {
 
     // IDENT "(" [ args ] ")", where args = arg { "," arg } [ "," ]
     fn call(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_CALL, self.tok().span.start)
-        n.a = self.ident()?
+        let pos = self.tok().span.start
+        let name = self.ident()?
         self.expect(P_LPAREN)?
-        n.b = self.comma_list(P_RPAREN, NODE_ARG)?
-        Result::Ok(self.ast.add_node(n))
+        let args = self.comma_list(P_RPAREN, NODE_ARG)?
+        Result::Ok(self.ast.add_node(Node::new_call(pos, name, args)))
     }
 
     // arg = [ IDENT ":" ] expr
     fn arg(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_ARG, self.tok().span.start)
+        let pos = self.tok().span.start
+        var label: usize = 0
         if self.peek() == T_IDENT && self.peek2() == P_COLON {
-            n.a = self.ident()?
+            label = self.ident()?
             self.bump()
         }
-        n.b = self.expr()?
-        Result::Ok(self.ast.add_node(n))
+        let value = self.expr()?
+        Result::Ok(self.ast.add_node(Node::new_arg(pos, label, value)))
     }
 
     // if = "if" expr block [ "else" ( if | block ) ]. An `else if` chain is read in a loop, each
@@ -617,10 +626,10 @@ impl Parser {
         var first: usize = 0
         var prev: usize = 0
         while true {
-            var n = Node::leaf(NODE_IF, self.expect(K_IF)?.span.start)
-            n.a = self.expr()?
-            n.b = self.block()?
-            let i = self.ast.add_node(n)
+            let pos = self.expect(K_IF)?.span.start
+            let cond = self.expr()?
+            let then = self.block()?
+            let i = self.ast.add_node(Node::new_if(pos, cond, then))
             if prev == 0 {
                 first = i
             } else {
@@ -639,23 +648,22 @@ impl Parser {
 
     // assert = "assert" "!" "(" expr [ "," STRING ] ")"
     fn assert(mut self) -> Result<Diag, usize> {
-        var n = Node::leaf(NODE_ASSERT, self.bump().span.start)
+        let pos = self.bump().span.start
         self.expect(O_BANG)?
         self.expect(P_LPAREN)?
-        n.a = self.expr()?
+        let cond = self.expr()?
+        var message: usize = 0
         if self.eat(P_COMMA) {
             let s = self.expect(T_STR)?
             let v = self.ast.lexed.text.string_value(s.span)
             if v.len > MAX_MESSAGE {
                 return Result::Err(diag(P_MESSAGE_TOO_LONG, s.span.start))
             }
-            var m = Node::leaf(NODE_STR, s.span.start)
-            m.a = self.ast.add_word(v.word)
-            m.b = v.len
-            n.b = self.ast.add_node(m)
+            let word = self.ast.add_word(v.word)
+            message = self.ast.add_node(Node::new_str(s.span.start, word, len: v.len))
         }
         self.expect(P_RPAREN)?
-        Result::Ok(self.ast.add_node(n))
+        Result::Ok(self.ast.add_node(Node::new_assert(pos, cond, message)))
     }
 }
 
