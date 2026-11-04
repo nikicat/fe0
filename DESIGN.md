@@ -33,7 +33,7 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
 ## 2. Lexer
 
 - **Input:** the lexer pulls bytes one at a time through `uses (input: mut Source)` and keeps one
-  byte of lookahead. It appends each byte to a `MemVec<u8>` source buffer as it reads it.
+  byte of lookahead. It appends each byte to the source buffer, a `Text`, as it reads it.
   `Source` is fe0's own effect, and WORKAROUNDS.md says why it is not std I/O.
 - **Tokens** are spans of the source buffer, so the lexer never copies the text. `Token` is
   declared in `fe0/src/lexer.fe`.
@@ -46,40 +46,32 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
 ## 3. AST: an index-based arena
 
 Fe has no recursive types without `unsafe`, so the AST lives in flat arrays and refers to nodes
-by index.
+by index. Index 0 means "none". A child list is a length-prefixed run in one array. `op` and `ty`
+are typed fields, so operators and written types never travel as bare integers.
+`fe0/src/ast.fe` declares `Ast`, `Node` and the fields of each node kind.
 
-```fe
-struct Node { kind: u8, a: u32, b: u32, c: u32, pos: u32 }
-nodes: MemVec<Node>     // node 0 is a sentinel; index 0 means "none"
-lists: MemVec<u32>      // child lists: a node stores (start, len) into `lists`
-syms:  MemVec<Sym>      // interned identifiers: (start, len) into the source
-```
-
-- **Field meaning by kind:**
-  - `Bin`: `a` = op, `b` = lhs, `c` = rhs.
-  - `If`: `a` = cond, `b` = then, `c` = else.
-  - `Call`: `a` = callee sym, `b`/`c` = argument list.
-  - `Block`: `b`/`c` = statement list, `a` = tail expression.
-  - The full table goes in `ast.fe`, one comment per kind.
-- **Interning:** a linear scan over `syms`, comparing spans byte by byte.
-  `ponytail: O(n²) in identifiers; hash if programs grow`.
-- **Check results go in side tables indexed by node** (`types: MemVec<u8>`,
-  `res: MemVec<u32>`). The AST itself is never mutated after parsing.
+- **Building lists:** one stack, `Parser.pending` in `fe0/src/parser.fe`, serves all lists, since
+  inner lists close before outer ones.
+- **Interning:** a linear scan over `syms`, in `Ast.intern`.
+- **Check results go in side tables indexed by node** (`types: MemVec<Ty>`,
+  `res: MemVec<usize>`). The AST itself is never mutated after parsing.
 
 ## 4. Parser
 
 - Recursive descent, one function per grammar rule in SPEC §3.1.
 - Binary expressions use precedence climbing with the SPEC §3.2 table.
-- **No error recovery:** the first error returns `Err(Diag)`. Every parse function returns
-  `Result<Diag, u32>` (a node index).
-- **Statement terminators:** after a statement, expect `;`, a newline, or `}`. Anything else is
-  `P` "expected end of statement".
+- **No error recovery:** the first error ends the parse. `parse()` reports it in `Ast.err`
+  instead of returning a `Result`, for the reason in WORKAROUNDS.md (IR0600).
+- **Recursion is bounded:** nesting depth is capped at `MAX_DEPTH` in `fe0/src/parser.fe` (§8a).
+- **Statement terminators** follow SPEC §3.4. Any other token after a statement is
+  `P_EXPECTED_END`.
 
 ## 5. Checker
 
 The checker makes one pass over items to collect names, then one pass over bodies.
 
-- **Types:** `0 = u256`, `1 = bool`, `2 = Address`, `3 = unit`. Every expression node gets one.
+- **Types:** the checker reuses `Ty` from `fe0/src/ast.fe` and adds a unit type, for blocks and
+  calls that have no value. Every expression node gets one.
 - **Scopes:** a stack of `Local { sym, ty, mutable, frame_slot }` plus a stack of scope marks.
   Lookup scans from the top. A local named like a storage field is an error (SPEC §5.2).
 - **Constants:** evaluated during checking with the same checked arithmetic as runtime. Overflow
@@ -234,8 +226,16 @@ Measured Oct 28 on master `d217a51bf` (`spike-limits/`, 30M gas per call):
 - **Recursion depth is bounded by the EVM stack, not by gas:** at most **1,019** nested calls
   for a one-argument function. Fe keeps return addresses on the 1,024-slot EVM stack, and
   functions with more live values get less depth.
-  - **Consequence:** the parser caps nesting depth (start at 64 and measure with the real
-    parser) and reports `P` "nesting too deep" instead of crashing with a stack overflow.
+  - **Consequence:** the parser caps nesting depth and reports `P008` "nesting too deep"
+    instead of crashing with a stack overflow.
+  - **Measured with the real parser** (Nov 4, Fe 26.5.1). At `-O 0`, 20 nested parentheses
+    parse and 22 overflow the EVM stack. That is about 45 stack slots per parenthesis. Nested
+    blocks cost less, and 12 of them parse. At `-O 2`, every probe up to 28 parentheses parsed,
+    and 28 was the largest one tried.
+  - **The cap:** `MAX_DEPTH` is 20 depth steps. A function body and its outer expression take
+    2 steps, each parenthesis takes 1, and each block inside a block takes 2. So the cap allows
+    18 nested parentheses or 9 nested blocks, which keeps a margin at `-O 0`. Only optimized
+    builds could take a higher cap.
   - This limits only the compiler running on chain. Code *generated by* Fe0 keeps its frames
     in memory (§6.1), so it has no such limit.
 - **`fe test` does not enforce EIP-170:** 24,577 and 49,152-byte runtimes deploy fine.
@@ -258,9 +258,9 @@ are numbered and printed. The message comes from a table indexed by code.
 | Phase | Examples |
 |---|---|
 | Lexer | bad character, unterminated string, literal over 256 bits |
-| Parser | expected token, end of statement |
+| Parser | expected token, end of statement, chained comparison |
 | Names | unknown name, duplicate item, local shadows a field |
-| Types | mismatch, missing return path, chained comparison |
+| Types | mismatch, missing return path |
 | Effects | field not in `uses`, write without `mut`, unknown field, duplicate entry |
 | Constants | overflow (`C034`), division by zero (`C025`) |
 

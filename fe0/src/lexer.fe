@@ -33,6 +33,11 @@ impl Tok {
         // O_ kinds span 60-80, so A_ kinds take 90-110.
         Tok { code: self.code + 30 }
     }
+
+    // Whether this is `=` or an assignment operator such as `+=`.
+    pub fn is_assign(self) -> bool {
+        self == O_ASSIGN || (self.code >= A_PLUS.code && self.code <= A_SHR.code)
+    }
 }
 
 // Token kinds.
@@ -114,33 +119,114 @@ pub const A_PIPE: Tok = O_PIPE.assign_form()
 pub const A_SHL: Tok = O_SHL.assign_form()
 pub const A_SHR: Tok = O_SHR.assign_form()
 
-pub struct Token { pub kind: Tok, pub start: usize, pub len: usize }
+// `len` bytes of the source from offset `start`.
+pub struct Span { pub start: usize, pub len: usize }
+
+impl Copy for Span {}
+
+impl Span {
+    // Offset just past the last byte.
+    pub fn end(self) -> usize {
+        self.start + self.len
+    }
+}
+
+pub struct Token { pub kind: Tok, pub span: Span }
 
 impl Copy for Token {}
 
 // The lexed source. On error, `toks` holds the tokens before it. This is not a `Result`
 // because extracting it from one hits a compiler bug. WORKAROUNDS.md has the details.
-pub struct Lexed { pub src: MemVec<u8>, pub toks: MemVec<Token>, pub err: Option<Diag> }
+pub struct Lexed { pub text: Text, pub toks: MemVec<Token>, pub err: Option<Diag> }
 
 // A 1-based position in the source text.
 pub struct LineCol { pub line: usize, pub col: usize }
 
 impl Copy for LineCol {}
 
-impl Lexed {
-    // Value of an integer token that `lex` accepted.
-    pub fn int_value(self, _ t: Token) -> u256 {
-        decode_int(self.src, t).unwrap()
+// The source text the lexer read. Spans and tokens index into it.
+pub struct Text { bytes: MemVec<u8> }
+
+impl Text {
+    fn new() -> Text {
+        Text { bytes: MemVec::new() }
+    }
+
+    fn push(mut self, _ b: u8) {
+        self.bytes.push(b)
+    }
+
+    pub fn len(self) -> usize {
+        self.bytes.len()
+    }
+
+    // Byte at offset `i`.
+    pub fn byte(self, _ i: usize) -> u8 {
+        self.bytes[i]
+    }
+
+    // Whether span `s` spells `w`.
+    pub fn spells<const N: usize>(self, _ s: Span, _ w: String<N>) -> bool {
+        s.len == N && same_bytes(self.bytes, s.start, w.as_bytes(), 0, N)
+    }
+
+    // Whether spans `a` and `b` hold the same text.
+    pub fn same(self, _ a: Span, _ b: Span) -> bool {
+        a.len == b.len && same_bytes(self.bytes, a.start, self.bytes, b.start, a.len)
+    }
+
+    // Value of the integer literal at span `s`, or none if it exceeds 2^256 - 1. The literal
+    // is one that `Lexer::number` scanned.
+    pub fn int_value(self, _ s: Span) -> Option<u256> {
+        var base: u256 = 10
+        var i = s.start
+        if s.len > 2 && is_hex_marker(self.bytes[i + 1] as i32) {
+            base = 16
+            i += 2
+        }
+        var v: u256 = 0
+        while i < s.end() {
+            let c = self.bytes[i] as i32
+            if c != C_UNDERSCORE {
+                let d = digit_value(c)
+                if v > (U256_MAX - d) / base {
+                    return Option::None
+                }
+                v = v * base + d
+            }
+            i += 1
+        }
+        Option::Some(v)
+    }
+
+    // Text of string literal `s` with its escapes decoded and its quotes removed.
+    pub fn string_value(self, _ s: Span) -> StrValue {
+        var v = StrValue { word: 0, len: 0 }
+        var i = s.start + 1
+        while i < s.end() - 1 {
+            var c = self.bytes[i] as i32
+            if c == C_BACKSLASH {
+                i += 1
+                c = unescape(self.bytes[i] as i32)
+            }
+            if v.len < 32 {
+                let byte: u256 = c.downcast_truncate()
+                v.word = v.word | byte << ((31 - v.len) * 8) as u256
+            }
+            v.len += 1
+            i += 1
+        }
+        v
     }
 
     // Line and column of byte offset `pos`. LF, CR and CRLF each end one line.
     pub fn line_col(self, _ pos: usize) -> LineCol {
         var at = LineCol { line: 1, col: 1 }
         var i: usize = 0
-        while i < pos && i < self.src.len() {
-            let c = self.src[i] as i32
+        while i < pos && i < self.bytes.len() {
+            let c = self.bytes[i] as i32
             i += 1
-            let crlf = c == C_CR && i < self.src.len() && self.src[i] as i32 == C_LF
+            let crlf = c == C_CR && i < self.bytes.len() && self.bytes[i] as i32 == C_LF
             if is_newline(c) && !crlf {
                 at.line += 1
                 at.col = 1
@@ -150,6 +236,37 @@ impl Lexed {
         }
         at
     }
+}
+
+// The bytes of a string literal, packed into one word the way Solidity's `Error(string)` data
+// word holds them. The first byte is the most significant, and unused bytes are zero.
+pub struct StrValue {
+    // The first 32 bytes.
+    pub word: u256,
+    // The number of bytes, which may exceed 32.
+    pub len: usize,
+}
+
+impl Copy for StrValue {}
+
+// Whether the `n` bytes of `a` at `i` equal the `n` bytes of `b` at `j`.
+fn same_bytes<B: core::ops::Index<usize, Output = u8>>(
+    _ a: MemVec<u8>,
+    _ i: usize,
+    _ b: B,
+    _ j: usize,
+    _ n: usize,
+) -> bool
+uses B::E
+{
+    var k: usize = 0
+    while k < n {
+        if a[i + k] != b[j + k] {
+            return false
+        }
+        k += 1
+    }
+    true
 }
 
 const U256_MAX: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
@@ -240,6 +357,15 @@ fn is_escape(_ c: i32) -> bool {
     c == C_QUOTE || c == C_BACKSLASH || c == C_LOWER_N || c == C_LOWER_R || c == C_LOWER_T
 }
 
+// Byte that the escape `\c` stands for, where `is_escape(c)` holds.
+fn unescape(_ c: i32) -> i32 {
+    if c == C_LOWER_N {
+        C_LF
+    } else if c == C_LOWER_R {
+        C_CR
+    } else if c == C_LOWER_T { C_TAB } else { c }
+}
+
 // Value of a hex digit.
 fn digit_value(_ c: i32) -> u256 {
     let v = if is_digit(c) {
@@ -252,34 +378,11 @@ fn digit_value(_ c: i32) -> u256 {
     v.downcast_truncate()
 }
 
-// Value of an integer literal that `Lexer::number` scanned, or none if it exceeds 2^256 - 1.
-fn decode_int(_ src: MemVec<u8>, _ t: Token) -> Option<u256> {
-    var base: u256 = 10
-    var i = t.start
-    if t.len > 2 && is_hex_marker(src[i + 1] as i32) {
-        base = 16
-        i += 2
-    }
-    var v: u256 = 0
-    while i < t.start + t.len {
-        let c = src[i] as i32
-        if c != C_UNDERSCORE {
-            let d = digit_value(c)
-            if v > (U256_MAX - d) / base {
-                return Option::None
-            }
-            v = v * base + d
-        }
-        i += 1
-    }
-    Option::Some(v)
-}
-
 struct Lexer {
-    src: MemVec<u8>,
+    text: Text,
     peeked: i32,
     paren_depth: usize,
-    // Offset in `src` where the token being read starts.
+    // Offset in `text` where the token being read starts.
     start: usize,
     // A `/` token read while skipping trivia, returned after the newline before it.
     queued: Option<Token>,
@@ -288,7 +391,7 @@ struct Lexer {
 impl Lexer {
     fn new() -> Self uses (input: mut Source) {
         Lexer {
-            src: MemVec::new(),
+            text: Text::new(),
             peeked: input.next_byte(),
             paren_depth: 0,
             start: 0,
@@ -296,9 +399,9 @@ impl Lexer {
         }
     }
 
-    // Consume the peeked byte into `src`.
+    // Consume the peeked byte into `text`.
     fn bump(mut self) uses (input: mut Source) {
-        self.src.push(self.peeked.downcast_truncate())
+        self.text.push(self.peeked.downcast_truncate())
         self.peeked = input.next_byte()
     }
 
@@ -312,18 +415,12 @@ impl Lexer {
 
     // Whether the token read so far is `w`.
     fn word<const N: usize>(self, _ w: String<N>) -> bool {
-        if self.src.len() - self.start != N {
-            return false
-        }
-        let b = w.as_bytes()
-        var i: usize = 0
-        while i < N {
-            if self.src[self.start + i] != b[i] {
-                return false
-            }
-            i += 1
-        }
-        true
+        self.text.spells(self.span(), w)
+    }
+
+    // Span of the token read so far.
+    fn span(self) -> Span {
+        Span { start: self.start, len: self.text.len() - self.start }
     }
 
     // Keyword kind of the token read so far, or T_IDENT.
@@ -418,12 +515,8 @@ impl Lexer {
             || self.word("with")
     }
 
-    fn into_src(own self) -> MemVec<u8> {
-        self.src
-    }
-
     fn tok(self, _ kind: Tok) -> Token {
-        Token { kind, start: self.start, len: self.src.len() - self.start }
+        Token { kind, span: self.span() }
     }
 
     fn err(self, _ code: DiagCode) -> Result<Diag, Token> {
@@ -435,7 +528,9 @@ impl Lexer {
             match self.skip_trivia() {
                 Option::Some(pos) => {
                     if self.paren_depth == 0 {
-                        return Result::Ok(Token { kind: T_NEWLINE, start: pos, len: 1 })
+                        return Result::Ok(
+                            Token { kind: T_NEWLINE, span: Span { start: pos, len: 1 } },
+                        )
                     }
                 },
                 Option::None => {},
@@ -447,7 +542,7 @@ impl Lexer {
             },
             Option::None => {},
         }
-        self.start = self.src.len()
+        self.start = self.text.len()
         let c = self.peeked
         if c < 0 {
             return Result::Ok(self.tok(T_EOF))
@@ -477,12 +572,12 @@ impl Lexer {
         while true {
             let c = self.peeked
             if is_newline(c) && newline.is_none() {
-                newline = Option::Some(self.src.len())
+                newline = Option::Some(self.text.len())
             }
             if c == C_SPACE || c == C_TAB || is_newline(c) {
                 self.bump()
             } else if c == C_SLASH {
-                self.start = self.src.len()
+                self.start = self.text.len()
                 self.bump()
                 if self.peeked != C_SLASH {
                     let kind = self.op_or_assign(O_SLASH)
@@ -660,7 +755,7 @@ impl Lexer {
             return self.err(L_BAD_INT)
         }
         let t = self.tok(T_INT)
-        if decode_int(self.src, t).is_none() {
+        if self.text.int_value(t.span).is_none() {
             return self.err(L_INT_TOO_LARGE)
         }
         Result::Ok(t)
@@ -678,7 +773,7 @@ impl Lexer {
             if c == C_QUOTE { break }
             if c == C_BACKSLASH {
                 if !is_escape(self.peeked) {
-                    return Result::Err(diag(L_BAD_ESCAPE, self.src.len() - 1))
+                    return Result::Err(diag(L_BAD_ESCAPE, self.text.len() - 1))
                 }
                 self.bump()
             }
@@ -704,5 +799,5 @@ pub fn lex() -> Lexed uses (input: mut Source) {
             },
         }
     }
-    Lexed { src: lx.into_src(), toks, err }
+    Lexed { text: lx.text, toks, err }
 }

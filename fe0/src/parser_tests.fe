@@ -1,0 +1,606 @@
+use ingot::ast::*
+use ingot::diag::{
+    Diag,
+    L_RESERVED_WORD,
+    P_CHAINED_COMPARISON,
+    P_EXPECTED_END,
+    P_EXPECTED_EXPR,
+    P_EXPECTED_IDENT,
+    P_EXPECTED_ITEM,
+    P_EXPECTED_TOKEN,
+    P_EXPECTED_TYPE,
+    P_FIELD_NOT_MUT,
+    P_MESSAGE_TOO_LONG,
+    P_TOO_DEEP,
+}
+use ingot::io::{Source, text}
+use ingot::lexer::{
+    A_AMP,
+    A_CARET,
+    A_MINUS,
+    A_PERCENT,
+    A_PIPE,
+    A_PLUS,
+    A_SHL,
+    A_SHR,
+    A_SLASH,
+    A_STAR,
+    O_AMP,
+    O_ANDAND,
+    O_ASSIGN,
+    O_BANG,
+    O_CARET,
+    O_EQ,
+    O_GE,
+    O_GT,
+    O_LE,
+    O_LT,
+    O_MINUS,
+    O_NE,
+    O_OROR,
+    O_PERCENT,
+    O_PIPE,
+    O_PLUS,
+    O_SHL,
+    O_SHR,
+    O_SLASH,
+    O_STAR,
+    O_TILDE,
+    Span,
+    Tok,
+}
+use ingot::parser::parse
+use std::abi::DynString
+
+fn parse_text(_ s: DynString) -> Ast {
+    with (Source = text(s)) {
+        let a = parse()
+        assert!(a.err.is_none())
+        a
+    }
+}
+
+fn parse_err(_ s: DynString) -> Diag {
+    with (Source = text(s)) {
+        parse().err.unwrap()
+    }
+}
+
+// Asserts that the first item of `src` prints as `want`.
+fn item_is(_ src: DynString, _ want: DynString) {
+    let ast = parse_text(src)
+    let i = ast.list_at(ast.items, 0)
+    prints(ast, i, want)
+}
+
+// Asserts that the tail expression of the first item, a function, prints as `want`.
+fn tail_is(_ src: DynString, _ want: DynString) {
+    let ast = parse_text(src)
+    let f = ast.nodes[ast.list_at(ast.items, 0)]
+    let i = ast.nodes[f.c].b
+    prints(ast, i, want)
+}
+
+// Asserts that node `i` of `ast` prints as `want`.
+fn prints(_ ast: own Ast, _ i: usize, _ want: DynString) {
+    var p = Printer { ast, out: MemVec::new() }
+    p.node(i)
+    assert!(p.matches(want))
+}
+
+// Renders nodes as S-expressions: `(op a b)` for operators and items, `{s; s; tail}` for
+// blocks, `name:type` for typed names, and `?` for a type that is not written.
+struct Printer { ast: Ast, out: MemVec<u8> }
+
+impl Printer {
+    fn matches(self, _ want: DynString) -> bool {
+        let w = want.as_bytes()
+        if w.len() != self.out.len() {
+            return false
+        }
+        var i: usize = 0
+        while i < w.len() {
+            if w.byte_at(i) != self.out[i] {
+                return false
+            }
+            i += 1
+        }
+        true
+    }
+
+    fn put<const N: usize>(mut self, _ w: String<N>) {
+        let b = w.as_bytes()
+        var i: usize = 0
+        while i < N {
+            self.out.push(b[i])
+            i += 1
+        }
+    }
+
+    fn span(mut self, _ s: Span) {
+        var i = s.start
+        while i < s.end() {
+            self.out.push(self.ast.lexed.text.byte(i))
+            i += 1
+        }
+    }
+
+    // Writes byte `b`, escaped as the lexer reads it inside a string literal.
+    fn escaped(mut self, _ b: u8) {
+        let plain: String<5> = "\n\r\t\"\\"
+        let letters: String<5> = "nrt\"\\"
+        var i: usize = 0
+        while i < plain.len() {
+            if b == plain.as_bytes()[i] {
+                self.put("\\")
+                self.out.push(letters.as_bytes()[i])
+                return
+            }
+            i += 1
+        }
+        self.out.push(b)
+    }
+
+    fn sym(mut self, _ s: usize) {
+        let y = self.ast.syms[s]
+        self.span(y)
+    }
+
+    // The source spelling of operator `t`.
+    fn op(mut self, _ t: Tok) {
+        if t == O_PLUS {
+            self.put("+")
+        } else if t == O_MINUS {
+            self.put("-")
+        } else if t == O_STAR {
+            self.put("*")
+        } else if t == O_SLASH {
+            self.put("/")
+        } else if t == O_PERCENT {
+            self.put("%")
+        } else if t == O_TILDE {
+            self.put("~")
+        } else if t == O_BANG {
+            self.put("!")
+        } else if t == O_CARET {
+            self.put("^")
+        } else if t == O_AMP {
+            self.put("&")
+        } else if t == O_PIPE {
+            self.put("|")
+        } else if t == O_ANDAND {
+            self.put("&&")
+        } else if t == O_OROR {
+            self.put("||")
+        } else if t == O_LT {
+            self.put("<")
+        } else if t == O_GT {
+            self.put(">")
+        } else if t == O_ASSIGN {
+            self.put("=")
+        } else if t == O_EQ {
+            self.put("==")
+        } else if t == O_NE {
+            self.put("!=")
+        } else if t == O_LE {
+            self.put("<=")
+        } else if t == O_GE {
+            self.put(">=")
+        } else if t == O_SHL {
+            self.put("<<")
+        } else if t == O_SHR {
+            self.put(">>")
+        } else if t == A_PLUS {
+            self.put("+=")
+        } else if t == A_MINUS {
+            self.put("-=")
+        } else if t == A_STAR {
+            self.put("*=")
+        } else if t == A_SLASH {
+            self.put("/=")
+        } else if t == A_PERCENT {
+            self.put("%=")
+        } else if t == A_CARET {
+            self.put("^=")
+        } else if t == A_AMP {
+            self.put("&=")
+        } else if t == A_PIPE {
+            self.put("|=")
+        } else if t == A_SHL {
+            self.put("<<=")
+        } else if t == A_SHR {
+            self.put(">>=")
+        } else {
+            self.put("<bad op>")
+        }
+    }
+
+    fn ty(mut self, _ t: Ty) {
+        if t == TY_U256 {
+            self.put("u256")
+        } else if t == TY_BOOL {
+            self.put("bool")
+        } else if t == TY_ADDRESS {
+            self.put("Address")
+        } else {
+            self.put("?")
+        }
+    }
+
+    fn typed(mut self, _ s: usize, _ t: Ty) {
+        self.sym(s)
+        self.put(":")
+        self.ty(t)
+    }
+
+    fn uint(mut self, _ v: u256) {
+        let numerals: String<10> = "0123456789"
+        var digits: MemVec<u8> = MemVec::new()
+        var x = v
+        while true {
+            let d: usize = (x % 10).downcast_truncate()
+            digits.push(numerals.as_bytes()[d])
+            x = x / 10
+            if x == 0 { break }
+        }
+        while digits.len() > 0 {
+            self.out.push(digits.pop().unwrap())
+        }
+    }
+
+    // ` (e e e)`, with a leading space.
+    fn list(mut self, _ l: usize) {
+        self.put(" (")
+        var i: usize = 0
+        while i < self.ast.list_len(l) {
+            if i > 0 { self.put(" ") }
+            self.node(self.ast.list_at(l, i))
+            i += 1
+        }
+        self.put(")")
+    }
+
+    // ` e`, or ` ?` for node 0.
+    fn opt(mut self, _ i: usize) {
+        self.put(" ")
+        if i == 0 { self.put("?") } else { self.node(i) }
+    }
+
+    fn node(mut self, _ i: usize) {
+        let n = self.ast.nodes[i]
+        let k = n.kind
+        if k == NODE_CONST {
+            self.put("(const ")
+            self.typed(n.a, n.ty)
+            self.opt(n.b)
+            self.put(")")
+        } else if k == NODE_FN {
+            self.put("(fn ")
+            self.sym(n.a)
+            self.list(n.b)
+            self.put(" ")
+            self.ty(n.ty)
+            self.opt(n.c)
+            self.put(")")
+        } else if k == NODE_PARAM {
+            if n.b == 1 { self.put("_") }
+            self.typed(n.a, n.ty)
+        } else if k == NODE_MSG {
+            self.put("(msg ")
+            self.sym(n.a)
+            self.list(n.b)
+            self.put(")")
+        } else if k == NODE_VARIANT {
+            self.put("(")
+            let v = self.ast.words[n.c]
+            self.uint(v)
+            self.put(" ")
+            self.sym(n.a)
+            self.list(n.b)
+            self.put(" ")
+            self.ty(n.ty)
+            self.put(")")
+        } else if k == NODE_FIELD {
+            self.typed(n.a, n.ty)
+        } else if k == NODE_CONTRACT {
+            self.put("(contract ")
+            self.sym(n.a)
+            self.list(n.b)
+            self.opt(n.c)
+            self.list(n.d)
+            self.put(")")
+        } else if k == NODE_INIT {
+            self.put("(init")
+            self.list(n.a)
+            self.list(n.b)
+            self.opt(n.c)
+            self.put(")")
+        } else if k == NODE_RECV {
+            self.put("(recv ")
+            self.sym(n.a)
+            self.list(n.b)
+            self.put(")")
+        } else if k == NODE_ARM {
+            self.put("(")
+            self.sym(n.a)
+            self.list(n.b)
+            self.put(" ")
+            self.ty(n.ty)
+            self.list(n.c)
+            self.opt(n.d)
+            self.put(")")
+        } else if k == NODE_BIND {
+            self.sym(n.a)
+            if n.b != n.a {
+                self.put(":")
+                self.sym(n.b)
+            }
+        } else if k == NODE_USE {
+            if n.b == 1 {
+                self.put("mut ")
+            }
+            self.sym(n.a)
+        } else if k == NODE_LET {
+            if n.c == 1 {
+                self.put("(var ")
+            } else {
+                self.put("(let ")
+            }
+            self.typed(n.a, n.ty)
+            self.opt(n.b)
+            self.put(")")
+        } else if k == NODE_WHILE {
+            self.put("(while")
+            self.opt(n.a)
+            self.opt(n.b)
+            self.put(")")
+        } else if k == NODE_RETURN {
+            self.put("(return")
+            self.opt(n.a)
+            self.put(")")
+        } else if k == NODE_BREAK {
+            self.put("break")
+        } else if k == NODE_CONTINUE {
+            self.put("continue")
+        } else if k == NODE_ASSIGN {
+            self.put("(")
+            self.op(n.op)
+            self.put(" ")
+            self.sym(n.a)
+            self.opt(n.b)
+            self.put(")")
+        } else if k == NODE_INT {
+            let v = self.ast.words[n.a]
+            self.uint(v)
+        } else if k == NODE_BOOL {
+            if n.a == 1 {
+                self.put("true")
+            } else {
+                self.put("false")
+            }
+        } else if k == NODE_NAME {
+            self.sym(n.a)
+        } else if k == NODE_BINARY || k == NODE_UNARY {
+            self.put("(")
+            self.op(n.op)
+            self.opt(n.a)
+            if k == NODE_BINARY {
+                self.opt(n.b)
+            }
+            self.put(")")
+        } else if k == NODE_CALL {
+            self.put("(call ")
+            self.sym(n.a)
+            self.list(n.b)
+            self.put(")")
+        } else if k == NODE_ARG {
+            if n.a != 0 {
+                self.sym(n.a)
+                self.put(":")
+            }
+            self.node(n.b)
+        } else if k == NODE_IF {
+            self.put("(if")
+            self.opt(n.a)
+            self.opt(n.b)
+            self.opt(n.c)
+            self.put(")")
+        } else if k == NODE_BLOCK {
+            self.put("{")
+            var i: usize = 0
+            while i < self.ast.list_len(n.a) {
+                self.node(self.ast.list_at(n.a, i))
+                self.put("; ")
+                i += 1
+            }
+            if n.b != 0 { self.node(n.b) }
+            self.put("}")
+        } else if k == NODE_ASSERT {
+            self.put("(assert")
+            self.opt(n.a)
+            if n.b != 0 {
+                self.put(" ")
+                self.node(n.b)
+            }
+            self.put(")")
+        } else if k == NODE_STR {
+            self.put("\"")
+            let word = self.ast.words[n.a]
+            var i: usize = 0
+            while i < n.b {
+                self.escaped((word >> ((31 - i) * 8) as u256).downcast_truncate())
+                i += 1
+            }
+            self.put("\"")
+        } else {
+            self.put("<bad node>")
+        }
+    }
+}
+
+// A `Source` of `fn f() { (((1))) }` with `depth` pairs of `brackets` around the 1.
+struct Nested { brackets: String<2>, depth: usize, pos: usize }
+
+impl Source for Nested {
+    fn next_byte(mut self) -> i32 {
+        let head: String<9> = "fn f() { "
+        let one: String<1> = "1"
+        let tail: String<2> = " }"
+        let i = self.pos
+        self.pos += 1
+        if i < head.len() {
+            return head.as_bytes()[i] as i32
+        }
+        let j = i - head.len()
+        if j < self.depth {
+            return self.brackets.as_bytes()[0] as i32
+        }
+        if j == self.depth {
+            return one.as_bytes()[0] as i32
+        }
+        if j <= 2 * self.depth {
+            return self.brackets.as_bytes()[1] as i32
+        }
+        let k = j - 2 * self.depth - 1
+        if k < tail.len() {
+            return tail.as_bytes()[k] as i32
+        }
+        return -1
+    }
+}
+
+fn nested(_ brackets: String<2>, _ depth: usize) -> Option<Diag> {
+    with (Source = Nested { brackets, depth, pos: 0 }) {
+        parse().err
+    }
+}
+
+#[test]
+fn binary_precedence() {
+    tail_is(
+        "fn f() { a || b && c == d | e ^ f & g << h + i * j }",
+        "(|| a (&& b (== c (| d (^ e (& f (<< g (+ h (* i j)))))))))",
+    )
+    tail_is(
+        "fn f() { a * b + c << d & e ^ f | g != h && i || j }",
+        "(|| (&& (!= (| (^ (& (<< (+ (* a b) c) d) e) f) g) h) i) j)",
+    )
+    tail_is("fn f() { a - b - c }", "(- (- a b) c)")
+    tail_is("fn f() { a / (b % c) >> 2 }", "(>> (/ a (% b c)) 2)")
+}
+
+#[test]
+fn unary_and_primaries() {
+    tail_is("fn f() { !~a == !b }", "(== (! (~ a)) (! b))")
+    tail_is("fn f() { 0x10 + 1_000 }", "(+ 16 1000)")
+    tail_is("fn f() { true != false }", "(!= true false)")
+    tail_is("fn f() { { 1 } }", "{1}")
+    tail_is(
+        "fn f() { g(x, y: 1 + 2, h()) }",
+        "(call g (x y:(+ 1 2) (call h ())))",
+    )
+    tail_is(
+        "fn f() { if a { 1 } else if b { 2 } else { 3 } }",
+        "(if a {1} (if b {2} {3}))",
+    )
+    tail_is("fn f() { if a { g() } }", "(if a {(call g ())} ?)")
+    tail_is(
+        "fn f() { assert!(x == 1, \"no\\n\") }",
+        "(assert (== x 1) \"no\\n\")",
+    )
+    tail_is(
+        "fn f() { assert!(x, \"say \\\"hi\\\" \\\\ \\t\\r\") }",
+        "(assert x \"say \\\"hi\\\" \\\\ \\t\\r\")",
+    )
+}
+
+#[test]
+fn statements() {
+    item_is(
+        "fn f(_ a: u256, b: bool) -> u256 {\n    let x = 1\n    var y: u256 = 2; y += x\n    while y < 9 { y = y + 1 }\n    if b { return y }\n    break\n    continue\n    return\n}",
+        "(fn f (_a:u256 b:bool) u256 {(let x:? 1); (var y:u256 2); (+= y x); (while (< y 9) {(= y (+ y 1)); }); (if b {(return y); } ?); break; continue; (return ?); })",
+    )
+    // A statement may end at `;` with the block's `}` right after it.
+    item_is("fn f() { g(); }", "(fn f () ? {(call g ()); })")
+    item_is("fn f() { x = 1 }", "(fn f () ? {(= x 1); })")
+}
+
+#[test]
+fn newlines() {
+    // Inside parentheses, newlines are ignored.
+    tail_is("fn f() {\n    (1 +\n    2)\n}", "(+ 1 2)")
+    // A newline ends a statement, so `(a)` on the next line is not a call.
+    item_is(
+        "fn f() {\n    let x = a\n    (a)\n}",
+        "(fn f () ? {(let x:? a); a})",
+    )
+    assert!(
+        parse_err("fn f() { let x = 1 +\n 2 }").code == P_EXPECTED_EXPR,
+    )
+    assert!(parse_err("fn f() { a b }").code == P_EXPECTED_END)
+    // `{` must be on the same line as the signature or condition.
+    assert!(parse_err("fn f()\n{ }").code == P_EXPECTED_TOKEN)
+    // `else` must follow `}` on the same line.
+    assert!(
+        parse_err("fn f() { if a { 1 }\n else { 2 } }").code == P_EXPECTED_EXPR,
+    )
+}
+
+#[test]
+fn items() {
+    item_is("pub const N: u256 = 2 * 3\n", "(const N:u256 (* 2 3))")
+    item_is(
+        "msg M {\n    #[selector = 0xd09de08a]\n    Inc {},\n    #[selector = 1]\n    Set { a: u256, b: Address } -> bool\n}",
+        "(msg M ((3500007562 Inc () ?) (1 Set (a:u256 b:Address) bool)))",
+    )
+    item_is(
+        "contract C {\n    mut a: u256,\n    mut b: bool\n\n    init(x: u256) uses (mut a) {\n        a = x\n    }\n\n    recv M {\n        Inc {} uses (mut a) { a += 1 }\n        Set { a: v, b } -> bool uses (a, mut b,) {\n            b\n        }\n    }\n}",
+        "(contract C (a:u256 b:bool) (init (x:u256) (mut a) {(= a x); }) ((recv M ((Inc () ? (mut a) {(+= a 1); }) (Set (a:v b) bool (a mut b) {b})))))",
+    )
+    item_is("contract E {}", "(contract E () ? ())")
+}
+
+#[test]
+fn errors() {
+    assert!(parse_err("let x = 1").code == P_EXPECTED_ITEM)
+    assert!(parse_err("fn (").code == P_EXPECTED_IDENT)
+    assert!(parse_err("fn f(x: u8) {}").code == P_EXPECTED_TYPE)
+    assert!(parse_err("fn f() { (1 }").code == P_EXPECTED_TOKEN)
+    assert!(parse_err("fn f() { 1 + }").code == P_EXPECTED_EXPR)
+    assert!(
+        parse_err("contract C { x: u256 }").code == P_FIELD_NOT_MUT,
+    )
+    assert!(
+        parse_err("msg M { #[slector = 1] A {} }").code == P_EXPECTED_TOKEN,
+    )
+    // A lexer error stops the parse.
+    assert!(
+        parse_err("fn f() { let for = 1 }").code == L_RESERVED_WORD,
+    )
+    // The error points at the offending token.
+    let d = parse_err("fn f() { a < b < c }")
+    assert!(d.code == P_CHAINED_COMPARISON)
+    assert!(d.pos == 15)
+}
+
+#[test]
+fn assert_message_length() {
+    // 31 bytes after decoding is the limit; `\n` counts as one.
+    parse_text(
+        "fn f() { assert!(true, \"01234567890123456789012345678\\n\\t\") }",
+    )
+    let d = parse_err(
+        "fn f() { assert!(true, \"01234567890123456789012345678901\") }",
+    )
+    assert!(d.code == P_MESSAGE_TOO_LONG)
+}
+
+#[test]
+fn deepest_nesting() {
+    // The function body and the outer expression take two levels, and each parenthesis one.
+    assert!(nested("()", 18).is_none())
+    assert!(nested("()", 19).unwrap().code == P_TOO_DEEP)
+    // Each block in a block takes two levels: the block and its tail expression.
+    assert!(nested("{}", 9).is_none())
+    assert!(nested("{}", 10).unwrap().code == P_TOO_DEEP)
+}

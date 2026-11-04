@@ -13,7 +13,7 @@ Marks used below:
   differential test before it is relied on.
 - **[✓]** — confirmed by a probe. The probes are in `spike-*/` and summarised in `TODO.md` §1.
 
-Reference toolchain: Fe 26.5.0. Probes ran on master `d217a51bf`.
+Reference toolchain: Fe 26.5.1. Probes ran on master `d217a51bf`.
 
 ---
 
@@ -96,14 +96,14 @@ type        = "u256" | "bool" | "Address" ;
 
 block       = "{" { NL } { stmt { NL } } [ expr { NL } ] "}" ;
 stmt        = ( "let" | "var" ) IDENT [ ":" type ] "=" expr TERM
-            | "while" expr block
+            | "while" expr block TERM
             | "return" [ expr ] TERM
             | "break" TERM | "continue" TERM
             | place "=" expr TERM
             | place AUGOP expr TERM
             | expr TERM ;
 place       = IDENT ;
-TERM        = ";" | NL ;                          (* see §3.4 *)
+TERM        = ";" | NL | (* before "}" or at end of input *) ;   (* see §3.4 *)
 
 expr        = or ;
 or          = and { "||" and } ;
@@ -115,17 +115,19 @@ bitand      = shift { "&" shift } ;
 shift       = add { ( "<<" | ">>" ) add } ;
 add         = mul { ( "+" | "-" ) mul } ;
 mul         = unary { ( "*" | "/" | "%" ) unary } ;
-unary       = ( "!" | "~" ) unary | postfix ;
-postfix     = primary [ "(" [ args ] ")" ] ;
+unary       = ( "!" | "~" ) unary | primary ;
 args        = arg { "," arg } [ "," ] ;
 arg         = [ IDENT ":" ] expr ;
-primary     = INT | "true" | "false" | IDENT | "(" expr ")" | block | if | assert ;
+primary     = INT | "true" | "false" | IDENT "(" [ args ] ")" | IDENT | "(" expr ")" | block | if
+            | assert ;
 if          = "if" expr block [ "else" ( if | block ) ] ;
 assert      = "assert" "!" "(" expr [ "," STRING ] ")" ;
 
 CMPOP       = "==" | "!=" | "<" | ">" | "<=" | ">=" ;
 AUGOP       = "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
 ```
+
+An expression right before `}` with no `;` is the block's tail expression, not a statement.
 
 ### 3.2 Precedence
 
@@ -149,10 +151,16 @@ tightest:
 
 ### 3.4 Statement termination
 
-A statement ends at `;` or at a newline. Fe0 adopts a deliberately **strict** rule:
+A statement ends at `;`, at a newline, right before the `}` that closes its block, as in
+`{ x = 1 }`, or at the end of the file. Fe0 adopts a deliberately **strict** rule:
 - Inside `( … )`, newlines are ignored.
 - Anywhere else, a newline ends the statement if the tokens so far form a complete statement.
   Otherwise the program is a syntax error.
+- A statement must end before the next one starts, so `while c { } x = 1` on one line is
+  rejected.
+- The `{` that opens a block must be on the same line as the header or condition before it.
+  This holds for a function, `init`, arm, `recv`, `msg` and `contract` header, and for the
+  condition of an `if` or `while`. `else` must be on the same line as the `}` before it.
 
 So an expression may span lines only inside parentheses. Fe's automatic semicolon rule is more
 permissive, for example a line may start with `||`, so this is a valid subset.
@@ -161,7 +169,7 @@ Probed **[✓]**:
 - Fe accepts a parenthesised expression spread over several lines.
 - Fe also reads `let x = a` followed by `(a)` on the next line as two statements, not as the
   call `a(a)`, just as Fe0 does.
-- Fe accepts the `{` of an `if` or `while` on the next line. **Fe0 requires it on the same line.**
+- Fe accepts the `{` of an `if` or `while` on the next line.
 
 Still **[V]**: a systematic check that Fe reads every Fe0-accepted line break the same way.
 This becomes a parser differential test over the corpus.

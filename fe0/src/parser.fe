@@ -1,0 +1,676 @@
+// Parses Fe0 source into the arena AST. The grammar is SPEC.md §3, and the design is in
+// DESIGN.md §3–4. The first error stops the parse.
+
+use ingot::ast::*
+use ingot::diag::{
+    Diag,
+    DiagCode,
+    diag,
+    P_CHAINED_COMPARISON,
+    P_EXPECTED_END,
+    P_EXPECTED_EXPR,
+    P_EXPECTED_IDENT,
+    P_EXPECTED_ITEM,
+    P_EXPECTED_TOKEN,
+    P_EXPECTED_TYPE,
+    P_FIELD_NOT_MUT,
+    P_MESSAGE_TOO_LONG,
+    P_TOO_DEEP,
+}
+use ingot::io::Source
+use ingot::lexer::*
+
+// Deepest nesting of blocks and binary expressions. The parser recurses at each level, and the
+// EVM stack bounds that recursion. DESIGN.md §8a gives the measurement behind this cap, and
+// `parser_tests::deepest_nesting` checks it.
+const MAX_DEPTH: usize = 20
+
+// Bytes an `assert!` message may hold after decoding escapes (SPEC.md §1).
+const MAX_MESSAGE: usize = 31
+
+// Binding power of the comparisons, which don't chain (SPEC.md §3.2).
+const CMP_POWER: usize = 3
+
+// Binding power of a binary operator, from 1 for `||` to 9 for `*`, or 0 for other tokens.
+fn binding_power(_ t: Tok) -> usize {
+    if t == O_OROR { return 1 }
+    if t == O_ANDAND { return 2 }
+    if t == O_EQ || t == O_NE || t == O_LT || t == O_GT || t == O_LE || t == O_GE {
+        return CMP_POWER
+    }
+    if t == O_PIPE { return 4 }
+    if t == O_CARET { return 5 }
+    if t == O_AMP { return 6 }
+    if t == O_SHL || t == O_SHR {
+        return 7
+    }
+    if t == O_PLUS || t == O_MINUS {
+        return 8
+    }
+    if t == O_STAR || t == O_SLASH || t == O_PERCENT {
+        return 9
+    }
+    0
+}
+
+struct Parser {
+    ast: Ast,
+    // Index of the current token.
+    at: usize,
+    depth: usize,
+    // Elements of the lists being built. `Ast.add_list` moves them into a list.
+    pending: MemVec<usize>,
+}
+
+impl Parser {
+    fn tok(self) -> Token {
+        self.ast.lexed.toks[self.at]
+    }
+
+    fn peek(self) -> Tok {
+        self.tok().kind
+    }
+
+    // Kind of the token after the current one. The last token is T_EOF, so this stays in range.
+    fn peek2(self) -> Tok {
+        if self.peek() == T_EOF {
+            return T_EOF
+        }
+        self.ast.lexed.toks[self.at + 1].kind
+    }
+
+    fn bump(mut self) -> Token {
+        let t = self.tok()
+        if t.kind != T_EOF {
+            self.at += 1
+        }
+        t
+    }
+
+    fn eat(mut self, _ kind: Tok) -> bool {
+        if self.peek() == kind {
+            self.at += 1
+            return true
+        }
+        false
+    }
+
+    fn err(self, _ code: DiagCode) -> Diag {
+        diag(code, self.tok().span.start)
+    }
+
+    fn expect(mut self, _ kind: Tok) -> Result<Diag, Token> {
+        if self.peek() != kind {
+            return Result::Err(self.err(P_EXPECTED_TOKEN))
+        }
+        Result::Ok(self.bump())
+    }
+
+    fn skip_newlines(mut self) {
+        while self.eat(T_NEWLINE) {}
+    }
+
+    // Whether the current token ends a statement (SPEC.md §3.4).
+    fn at_stmt_end(self) -> bool {
+        let k = self.peek()
+        k == P_SEMI || k == T_NEWLINE || k == P_RBRACE || k == T_EOF
+    }
+
+    // Ends the statement, as SPEC.md §3.4 says. It consumes a `;` or a newline and leaves a `}`
+    // or the end of input for the caller.
+    fn end_stmt(mut self) -> Result<Diag, ()> {
+        if self.eat(P_SEMI) || self.eat(T_NEWLINE) || self.at_stmt_end() {
+            return Result::Ok(())
+        }
+        Result::Err(self.err(P_EXPECTED_END))
+    }
+
+    // The rest of a comma-separated list, after its opening token, up to and including `close`.
+    // Each element is a node of kind `elem`. A trailing comma and newlines around elements are
+    // allowed. Returns the list.
+    fn comma_list(mut self, _ close: Tok, _ elem: Kind) -> Result<Diag, usize> {
+        let mark = self.pending.len()
+        self.skip_newlines()
+        while !self.eat(close) {
+            let e = self.element(elem)?
+            self.pending.push(e)
+            self.skip_newlines()
+            if !self.eat(P_COMMA) {
+                self.expect(close)?
+                break
+            }
+            self.skip_newlines()
+        }
+        Result::Ok(self.ast.add_list(mut self.pending, mark))
+    }
+
+    // One element of a comma-separated list, parsed by the parser for its kind. Fe has no
+    // closures, so `comma_list` names the element parser by the kind of node it builds.
+    fn element(mut self, _ kind: Kind) -> Result<Diag, usize> {
+        if kind == NODE_PARAM {
+            return self.param()
+        }
+        if kind == NODE_VARIANT {
+            return self.variant()
+        }
+        if kind == NODE_FIELD {
+            return self.field()
+        }
+        if kind == NODE_BIND {
+            return self.bind()
+        }
+        if kind == NODE_USE {
+            return self.use_entry()
+        }
+        // The only kind left is NODE_ARG.
+        self.arg()
+    }
+
+    fn enter(mut self) -> Result<Diag, ()> {
+        self.depth += 1
+        if self.depth > MAX_DEPTH {
+            return Result::Err(self.err(P_TOO_DEEP))
+        }
+        Result::Ok(())
+    }
+
+    fn leave(mut self) {
+        self.depth -= 1
+    }
+
+    fn ident(mut self) -> Result<Diag, usize> {
+        if self.peek() != T_IDENT {
+            return Result::Err(self.err(P_EXPECTED_IDENT))
+        }
+        let t = self.bump()
+        Result::Ok(self.ast.intern(t))
+    }
+
+    fn ty(mut self) -> Result<Diag, Ty> {
+        let t = self.tok()
+        var ty = TY_NONE
+        if t.kind == T_IDENT {
+            if self.ast.lexed.text.spells(t.span, "u256") {
+                ty = TY_U256
+            } else if self.ast.lexed.text.spells(t.span, "bool") {
+                ty = TY_BOOL
+            } else if self.ast.lexed.text.spells(t.span, "Address") {
+                ty = TY_ADDRESS
+            }
+        }
+        if ty == TY_NONE {
+            return Result::Err(self.err(P_EXPECTED_TYPE))
+        }
+        self.bump()
+        Result::Ok(ty)
+    }
+
+    // `-> type`, or TY_NONE when there is no arrow.
+    fn ret_ty(mut self) -> Result<Diag, Ty> {
+        if self.eat(P_ARROW) {
+            return self.ty()
+        }
+        Result::Ok(TY_NONE)
+    }
+
+    // program = { NL } { item { NL } }
+    fn program(mut self) -> Result<Diag, usize> {
+        let mark = self.pending.len()
+        self.skip_newlines()
+        while self.peek() != T_EOF {
+            let item = self.item()?
+            self.pending.push(item)
+            self.skip_newlines()
+        }
+        Result::Ok(self.ast.add_list(mut self.pending, mark))
+    }
+
+    fn item(mut self) -> Result<Diag, usize> {
+        self.eat(K_PUB)
+        let k = self.peek()
+        if k == K_CONST {
+            return self.const_item()
+        }
+        if k == K_FN {
+            return self.fn_item()
+        }
+        if k == K_MSG {
+            return self.msg_item()
+        }
+        if k == K_CONTRACT {
+            return self.contract_item()
+        }
+        Result::Err(self.err(P_EXPECTED_ITEM))
+    }
+
+    // const = "const" IDENT ":" type "=" expr TERM
+    fn const_item(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_CONST, self.bump().span.start)
+        n.a = self.ident()?
+        self.expect(P_COLON)?
+        n.ty = self.ty()?
+        self.expect(O_ASSIGN)?
+        n.b = self.expr()?
+        self.end_stmt()?
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // function = "fn" IDENT "(" [ params ] ")" [ "->" type ] block
+    fn fn_item(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_FN, self.bump().span.start)
+        n.a = self.ident()?
+        n.b = self.params()?
+        n.ty = self.ret_ty()?
+        n.c = self.block()?
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // "(" [ params ] ")", where params = param { "," param } [ "," ]
+    fn params(mut self) -> Result<Diag, usize> {
+        self.expect(P_LPAREN)?
+        self.comma_list(P_RPAREN, NODE_PARAM)
+    }
+
+    // param = [ "_" ] IDENT ":" type
+    fn param(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_PARAM, self.tok().span.start)
+        if self.eat(T_UNDERSCORE) {
+            n.b = 1
+        }
+        n.a = self.ident()?
+        self.expect(P_COLON)?
+        n.ty = self.ty()?
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // msg = "msg" IDENT "{" [ variants ] "}"
+    fn msg_item(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_MSG, self.bump().span.start)
+        n.a = self.ident()?
+        self.expect(P_LBRACE)?
+        n.b = self.comma_list(P_RBRACE, NODE_VARIANT)?
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // variant = selector IDENT [ "{" [ fields ] "}" ] [ "->" type ]
+    // selector = "#" "[" "selector" "=" INT "]"
+    fn variant(mut self) -> Result<Diag, usize> {
+        let hash = self.expect(P_HASH)?
+        self.expect(P_LBRACKET)?
+        let word = self.tok()
+        if word.kind != T_IDENT || !self.ast.lexed.text.spells(word.span, "selector") {
+            return Result::Err(self.err(P_EXPECTED_TOKEN))
+        }
+        self.bump()
+        self.expect(O_ASSIGN)?
+        let sel = self.expect(T_INT)?
+        self.expect(P_RBRACKET)?
+        self.skip_newlines()
+        var n = Node::leaf(NODE_VARIANT, hash.span.start)
+        n.c = self.ast.add_int(sel)
+        n.a = self.ident()?
+        if self.eat(P_LBRACE) {
+            n.b = self.comma_list(P_RBRACE, NODE_FIELD)?
+        }
+        n.ty = self.ret_ty()?
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // field = IDENT ":" type
+    fn field(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_FIELD, self.tok().span.start)
+        n.a = self.ident()?
+        self.expect(P_COLON)?
+        n.ty = self.ty()?
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // contract = "contract" IDENT "{" { cfield } [ init ] { recv } "}"
+    // cfield = "mut" IDENT ":" type [ "," ]
+    fn contract_item(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_CONTRACT, self.bump().span.start)
+        n.a = self.ident()?
+        self.expect(P_LBRACE)?
+        self.skip_newlines()
+        let fields = self.pending.len()
+        while self.peek() == K_MUT || self.peek() == T_IDENT {
+            if !self.eat(K_MUT) {
+                return Result::Err(self.err(P_FIELD_NOT_MUT))
+            }
+            let f = self.field()?
+            self.pending.push(f)
+            self.eat(P_COMMA)
+            self.skip_newlines()
+        }
+        n.b = self.ast.add_list(mut self.pending, fields)
+        if self.peek() == K_INIT {
+            n.c = self.init()?
+            self.skip_newlines()
+        }
+        let recvs = self.pending.len()
+        while self.peek() == K_RECV {
+            let r = self.recv()?
+            self.pending.push(r)
+            self.skip_newlines()
+        }
+        n.d = self.ast.add_list(mut self.pending, recvs)
+        self.expect(P_RBRACE)?
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // init = "init" "(" [ params ] ")" [ uses ] block
+    fn init(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_INIT, self.bump().span.start)
+        n.a = self.params()?
+        n.b = self.uses_clause()?
+        n.c = self.block()?
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // recv = "recv" IDENT "{" { arm } "}"
+    fn recv(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_RECV, self.bump().span.start)
+        n.a = self.ident()?
+        self.expect(P_LBRACE)?
+        self.skip_newlines()
+        let mark = self.pending.len()
+        while !self.eat(P_RBRACE) {
+            let arm = self.arm()?
+            self.pending.push(arm)
+            self.skip_newlines()
+        }
+        n.b = self.ast.add_list(mut self.pending, mark)
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // arm = IDENT "{" [ binds ] "}" [ "->" type ] [ uses ] block
+    fn arm(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_ARM, self.tok().span.start)
+        n.a = self.ident()?
+        self.expect(P_LBRACE)?
+        n.b = self.comma_list(P_RBRACE, NODE_BIND)?
+        n.ty = self.ret_ty()?
+        n.c = self.uses_clause()?
+        n.d = self.block()?
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // bind = IDENT [ ":" IDENT ]
+    fn bind(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_BIND, self.tok().span.start)
+        n.a = self.ident()?
+        n.b = n.a
+        if self.eat(P_COLON) {
+            n.b = self.ident()?
+        }
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // [ "uses" "(" [ use { "," use } [ "," ] ] ")" ]
+    fn uses_clause(mut self) -> Result<Diag, usize> {
+        if !self.eat(K_USES) {
+            return Result::Ok(0)
+        }
+        self.expect(P_LPAREN)?
+        self.comma_list(P_RPAREN, NODE_USE)
+    }
+
+    // use = [ "mut" ] IDENT
+    fn use_entry(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_USE, self.tok().span.start)
+        if self.eat(K_MUT) { n.b = 1 }
+        n.a = self.ident()?
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // block = "{" { NL } { stmt { NL } } [ expr { NL } ] "}"
+    fn block(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_BLOCK, self.expect(P_LBRACE)?.span.start)
+        self.enter()?
+        let mark = self.pending.len()
+        self.skip_newlines()
+        while !self.eat(P_RBRACE) {
+            let s = self.stmt()?
+            let kind = self.ast.nodes[s].kind
+            if !kind.is_expr() || self.eat(P_SEMI) {
+                self.pending.push(s)
+            } else {
+                // An expression: the tail if `}` follows, else a statement ended by a newline.
+                let newline = self.peek() == T_NEWLINE
+                self.skip_newlines()
+                if self.peek() == P_RBRACE {
+                    n.b = s
+                } else if newline {
+                    self.pending.push(s)
+                } else {
+                    return Result::Err(self.err(P_EXPECTED_END))
+                }
+            }
+            self.skip_newlines()
+        }
+        n.a = self.ast.add_list(mut self.pending, mark)
+        self.leave()
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // A statement, or an expression that the caller ends.
+    fn stmt(mut self) -> Result<Diag, usize> {
+        let k = self.peek()
+        if k == K_LET || k == K_VAR {
+            var n = Node::leaf(NODE_LET, self.bump().span.start)
+            if k == K_VAR { n.c = 1 }
+            n.a = self.ident()?
+            if self.eat(P_COLON) {
+                n.ty = self.ty()?
+            }
+            self.expect(O_ASSIGN)?
+            n.b = self.expr()?
+            return self.finish_stmt(n)
+        }
+        if k == K_WHILE {
+            var n = Node::leaf(NODE_WHILE, self.bump().span.start)
+            n.a = self.expr()?
+            n.b = self.block()?
+            return self.finish_stmt(n)
+        }
+        if k == K_RETURN {
+            var n = Node::leaf(NODE_RETURN, self.bump().span.start)
+            if !self.at_stmt_end() {
+                n.a = self.expr()?
+            }
+            return self.finish_stmt(n)
+        }
+        if k == K_BREAK {
+            return self.finish_stmt(Node::leaf(NODE_BREAK, self.bump().span.start))
+        }
+        if k == K_CONTINUE {
+            return self.finish_stmt(Node::leaf(NODE_CONTINUE, self.bump().span.start))
+        }
+        if k == T_IDENT && self.peek2().is_assign() {
+            var n = Node::leaf(NODE_ASSIGN, self.tok().span.start)
+            n.a = self.ident()?
+            n.op = self.bump().kind
+            n.b = self.expr()?
+            return self.finish_stmt(n)
+        }
+        self.expr()
+    }
+
+    fn finish_stmt(mut self, _ n: Node) -> Result<Diag, usize> {
+        self.end_stmt()?
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    fn expr(mut self) -> Result<Diag, usize> {
+        self.binary(1)
+    }
+
+    // Precedence climbing over the operators that bind at least as tightly as `min`.
+    fn binary(mut self, _ min: usize) -> Result<Diag, usize> {
+        self.enter()?
+        var lhs = self.unary()?
+        while true {
+            let power = binding_power(self.peek())
+            if power < min || power == 0 {
+                break
+            }
+            var n = Node::leaf(NODE_BINARY, self.tok().span.start)
+            n.op = self.bump().kind
+            n.a = lhs
+            n.b = self.binary(power + 1)?
+            lhs = self.ast.add_node(n)
+            if power == CMP_POWER && binding_power(self.peek()) == CMP_POWER {
+                return Result::Err(self.err(P_CHAINED_COMPARISON))
+            }
+        }
+        self.leave()
+        Result::Ok(lhs)
+    }
+
+    // unary = ( "!" | "~" ) unary | primary. Written as a loop, so a run of operators does not
+    // recurse. The operators are consecutive tokens, so the primary is wrapped in them from the
+    // last back to the first.
+    fn unary(mut self) -> Result<Diag, usize> {
+        let first = self.at
+        while self.peek() == O_BANG || self.peek() == O_TILDE {
+            self.bump()
+        }
+        var op = self.at
+        var e = self.primary()?
+        while op > first {
+            op -= 1
+            let t = self.ast.lexed.toks[op]
+            var n = Node::leaf(NODE_UNARY, t.span.start)
+            n.op = t.kind
+            n.a = e
+            e = self.ast.add_node(n)
+        }
+        Result::Ok(e)
+    }
+
+    // primary = INT | "true" | "false" | IDENT "(" [ args ] ")" | IDENT | "(" expr ")" | block | if
+    //     | assert
+    fn primary(mut self) -> Result<Diag, usize> {
+        let t = self.tok()
+        let k = t.kind
+        if k == T_INT {
+            self.bump()
+            var n = Node::leaf(NODE_INT, t.span.start)
+            n.a = self.ast.add_int(t)
+            return Result::Ok(self.ast.add_node(n))
+        }
+        if k == K_TRUE || k == K_FALSE {
+            self.bump()
+            var n = Node::leaf(NODE_BOOL, t.span.start)
+            if k == K_TRUE { n.a = 1 }
+            return Result::Ok(self.ast.add_node(n))
+        }
+        if k == T_IDENT {
+            if self.peek2() == P_LPAREN {
+                return self.call()
+            }
+            var n = Node::leaf(NODE_NAME, t.span.start)
+            n.a = self.ident()?
+            return Result::Ok(self.ast.add_node(n))
+        }
+        if k == P_LPAREN {
+            self.bump()
+            let e = self.expr()?
+            self.expect(P_RPAREN)?
+            return Result::Ok(e)
+        }
+        if k == P_LBRACE {
+            return self.block()
+        }
+        if k == K_IF {
+            return self.if_expr()
+        }
+        if k == K_ASSERT {
+            return self.assert()
+        }
+        Result::Err(self.err(P_EXPECTED_EXPR))
+    }
+
+    // IDENT "(" [ args ] ")", where args = arg { "," arg } [ "," ]
+    fn call(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_CALL, self.tok().span.start)
+        n.a = self.ident()?
+        self.expect(P_LPAREN)?
+        n.b = self.comma_list(P_RPAREN, NODE_ARG)?
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // arg = [ IDENT ":" ] expr
+    fn arg(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_ARG, self.tok().span.start)
+        if self.peek() == T_IDENT && self.peek2() == P_COLON {
+            n.a = self.ident()?
+            self.bump()
+        }
+        n.b = self.expr()?
+        Result::Ok(self.ast.add_node(n))
+    }
+
+    // if = "if" expr block [ "else" ( if | block ) ]. An `else if` chain is read in a loop, each
+    // IF linked to the next as it is read, so it does not recurse.
+    fn if_expr(mut self) -> Result<Diag, usize> {
+        var first: usize = 0
+        var prev: usize = 0
+        while true {
+            var n = Node::leaf(NODE_IF, self.expect(K_IF)?.span.start)
+            n.a = self.expr()?
+            n.b = self.block()?
+            let i = self.ast.add_node(n)
+            if prev == 0 {
+                first = i
+            } else {
+                self.ast.set_else(prev, i)
+            }
+            prev = i
+            if !self.eat(K_ELSE) { break }
+            if self.peek() != K_IF {
+                let otherwise = self.block()?
+                self.ast.set_else(prev, otherwise)
+                break
+            }
+        }
+        Result::Ok(first)
+    }
+
+    // assert = "assert" "!" "(" expr [ "," STRING ] ")"
+    fn assert(mut self) -> Result<Diag, usize> {
+        var n = Node::leaf(NODE_ASSERT, self.bump().span.start)
+        self.expect(O_BANG)?
+        self.expect(P_LPAREN)?
+        n.a = self.expr()?
+        if self.eat(P_COMMA) {
+            let s = self.expect(T_STR)?
+            let v = self.ast.lexed.text.string_value(s.span)
+            if v.len > MAX_MESSAGE {
+                return Result::Err(diag(P_MESSAGE_TOO_LONG, s.span.start))
+            }
+            var m = Node::leaf(NODE_STR, s.span.start)
+            m.a = self.ast.add_word(v.word)
+            m.b = v.len
+            n.b = self.ast.add_node(m)
+        }
+        self.expect(P_RPAREN)?
+        Result::Ok(self.ast.add_node(n))
+    }
+}
+
+// Lexes and parses everything `Source` provides.
+pub fn parse() -> Ast uses (input: mut Source) {
+    var p = Parser { ast: Ast::new(lex()), at: 0, depth: 0, pending: MemVec::new() }
+    if p.ast.err.is_none() {
+        match p.program() {
+            Result::Ok(items) => {
+                p.ast.items = items
+            },
+            Result::Err(d) => {
+                p.ast.err = Option::Some(d)
+            },
+        }
+    }
+    p.ast
+}

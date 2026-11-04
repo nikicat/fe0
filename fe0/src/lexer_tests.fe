@@ -154,20 +154,20 @@ fn newlines_collapse_and_vanish_inside_parens() {
 #[test]
 fn integers() {
     let l = lex_text("0 42 1_000_000 0xff")
-    assert!(l.int_value(l.toks[0]) == 0)
-    assert!(l.int_value(l.toks[1]) == 42)
-    assert!(l.int_value(l.toks[2]) == 1000000)
-    assert!(l.int_value(l.toks[3]) == 255)
+    assert!(l.text.int_value(l.toks[0].span).unwrap() == 0)
+    assert!(l.text.int_value(l.toks[1].span).unwrap() == 42)
+    assert!(l.text.int_value(l.toks[2].span).unwrap() == 1000000)
+    assert!(l.text.int_value(l.toks[3].span).unwrap() == 255)
     assert!(lex_err("0XDEAD_").code == L_BAD_INT)
     let m = lex_text(
         "115792089237316195423570985008687907853269984665640564039457584007913129639935 0x00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     )
     assert!(
-        m.int_value(m.toks[0])
+        m.text.int_value(m.toks[0].span).unwrap()
             == 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
     )
     assert!(
-        m.int_value(m.toks[1])
+        m.text.int_value(m.toks[1].span).unwrap()
             == 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
     )
     assert!(
@@ -195,13 +195,13 @@ fn strings() {
     let l = lex_text("assert!(x, \"a \\\"b\\\" \\n\")")
     // assert ! ( x , "a \"b\" \n" ) EOF: the string token spans 12 source bytes.
     assert!(l.toks[5].kind == T_STR)
-    assert!(l.toks[5].len == 12)
+    assert!(l.toks[5].span.len == 12)
     assert!(lex_err("\"abc").code == L_UNTERMINATED_STRING)
     assert!(lex_err("\"ab\ncd\"").code == L_UNTERMINATED_STRING)
     assert!(lex_err("\"\\q\"").code == L_BAD_ESCAPE)
     let u = lex_text("assert!(x, \"é\")")
     assert!(u.toks[5].kind == T_STR)
-    assert!(u.toks[5].len == 4)
+    assert!(u.toks[5].span.len == 4)
 }
 
 #[test]
@@ -220,23 +220,23 @@ fn bad_characters() {
 #[test]
 fn token_spans() {
     let l = lex_text("let total = a1 + 0x10")
-    assert!(l.toks[1].start == 4)
-    assert!(l.toks[1].len == 5)
-    assert!(l.toks[5].start == 17)
-    assert!(l.toks[5].len == 4)
+    assert!(l.toks[1].span.start == 4)
+    assert!(l.toks[1].span.len == 5)
+    assert!(l.toks[5].span.start == 17)
+    assert!(l.toks[5].span.len == 4)
     assert!(l.toks[6].kind == T_EOF)
-    assert!(l.toks[6].start == 21)
+    assert!(l.toks[6].span.start == 21)
 }
 
 #[test]
 fn line_col() {
     let l = lex_text("let x = 1\nlet y = 2")
-    assert!(l.line_col(18).line == 2)
-    assert!(l.line_col(18).col == 9)
+    assert!(l.text.line_col(18).line == 2)
+    assert!(l.text.line_col(18).col == 9)
     let cr = lex_text("a\rb")
-    assert!(cr.line_col(2).line == 2)
-    assert!(cr.line_col(2).col == 1)
+    assert!(cr.text.line_col(2).line == 2)
+    assert!(cr.text.line_col(2).col == 1)
     let crlf = lex_text("a\r\nb")
-    assert!(crlf.line_col(3).line == 2)
-    assert!(crlf.line_col(3).col == 1)
+    assert!(crlf.text.line_col(3).line == 2)
+    assert!(crlf.text.line_col(3).col == 1)
 }

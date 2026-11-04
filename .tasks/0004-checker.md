@@ -1,6 +1,6 @@
 ---
 status: todo
-deps: [T0002]
+deps: [T0002, T0016]
 due: 2026-11-09
 tags: [compiler]
 ---

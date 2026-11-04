@@ -1,0 +1,224 @@
+// The AST: an arena of nodes that refer to each other by index. DESIGN.md §3 says why.
+//
+// Index 0 of `nodes`, `lists` and `syms` is a sentinel, so an index that is 0 means "none". In
+// the table below:
+// - "sym" is an index into `Ast.syms`, an interned identifier.
+// - "list" is an index into `Ast.lists`, read with `Ast.list_len` and `Ast.list_at`. List 0 is
+//   the empty list.
+// - `ty` is the type written in the source, or TY_NONE when none is.
+// - `pos` is the byte offset of the token that diagnostics about the node point at.
+
+use ingot::diag::Diag
+use ingot::lexer::{Lexed, Span, T_EOF, Tok, Token}
+
+// Kind of a node. The NODE_ constants below are its only values.
+pub struct Kind { code: u8 }
+
+impl Copy for Kind {}
+
+impl core::ops::Eq for Kind {
+    fn eq(self, _ other: Kind) -> bool {
+        self.code == other.code
+    }
+}
+
+impl Kind {
+    // Whether nodes of this kind are expressions, which have a value.
+    pub fn is_expr(self) -> bool {
+        self.code >= NODE_INT.code && self.code <= NODE_ASSERT.code
+    }
+}
+
+// The sentinel at index 0.
+pub const NODE_NONE: Kind = Kind { code: 0 }
+
+// Items and their parts.
+// const: ty = type, a = name sym, b = value.
+pub const NODE_CONST: Kind = Kind { code: 1 }
+// fn: ty = return type, a = name sym, b = PARAM list, c = body BLOCK.
+pub const NODE_FN: Kind = Kind { code: 2 }
+// param: ty = type, a = name sym, b = 1 if written `_ name` (positional), else 0.
+pub const NODE_PARAM: Kind = Kind { code: 3 }
+// msg: a = name sym, b = VARIANT list.
+pub const NODE_MSG: Kind = Kind { code: 4 }
+// variant: ty = return type, a = name sym, b = FIELD list, c = selector, an index into `words`.
+pub const NODE_VARIANT: Kind = Kind { code: 5 }
+// field of a variant or a contract: ty = type, a = name sym.
+pub const NODE_FIELD: Kind = Kind { code: 6 }
+// contract: a = name sym, b = FIELD list, c = INIT or 0, d = RECV list.
+pub const NODE_CONTRACT: Kind = Kind { code: 7 }
+// init: a = PARAM list, b = USE list, c = body BLOCK.
+pub const NODE_INIT: Kind = Kind { code: 8 }
+// recv: a = msg name sym, b = ARM list.
+pub const NODE_RECV: Kind = Kind { code: 9 }
+// arm: ty = return type, a = variant name sym, b = BIND list, c = USE list, d = body BLOCK.
+pub const NODE_ARM: Kind = Kind { code: 10 }
+// bind: a = field name sym, b = local name sym (the same as `a` when written `{ x }`).
+pub const NODE_BIND: Kind = Kind { code: 11 }
+// one entry of `uses (...)`: a = field name sym, b = 1 if written `mut`, else 0.
+pub const NODE_USE: Kind = Kind { code: 12 }
+// string literal: a = index into `words` of its bytes as a `StrValue.word`, b = its byte count.
+pub const NODE_STR: Kind = Kind { code: 13 }
+
+// Statements.
+// let or var: ty = type, a = name sym, b = value, c = 1 for `var`, else 0.
+pub const NODE_LET: Kind = Kind { code: 20 }
+// while: a = condition, b = body BLOCK.
+pub const NODE_WHILE: Kind = Kind { code: 21 }
+// return: a = value or 0.
+pub const NODE_RETURN: Kind = Kind { code: 22 }
+pub const NODE_BREAK: Kind = Kind { code: 23 }
+pub const NODE_CONTINUE: Kind = Kind { code: 24 }
+// `x = e` or `x op= e`: op = O_ASSIGN or an A_ kind, a = target sym, b = value.
+pub const NODE_ASSIGN: Kind = Kind { code: 25 }
+
+// Expressions. Any expression node may also appear in a statement list.
+// integer literal: a = index into `words`.
+pub const NODE_INT: Kind = Kind { code: 40 }
+// `true` or `false`: a = 1 or 0.
+pub const NODE_BOOL: Kind = Kind { code: 41 }
+// a name of a local, parameter, constant or field: a = sym.
+pub const NODE_NAME: Kind = Kind { code: 42 }
+// binary operator: op = its O_ kind, a = left operand, b = right operand.
+pub const NODE_BINARY: Kind = Kind { code: 43 }
+// `!` or `~`: op = O_BANG or O_TILDE, a = operand.
+pub const NODE_UNARY: Kind = Kind { code: 44 }
+// call: a = callee sym, b = ARG list.
+pub const NODE_CALL: Kind = Kind { code: 45 }
+// argument: a = label sym or 0, b = value.
+pub const NODE_ARG: Kind = Kind { code: 46 }
+// if: a = condition, b = then BLOCK, c = else BLOCK, IF or 0.
+pub const NODE_IF: Kind = Kind { code: 47 }
+// block: a = statement list, b = tail expression or 0.
+pub const NODE_BLOCK: Kind = Kind { code: 48 }
+// `assert!`: a = condition, b = message STR or 0.
+pub const NODE_ASSERT: Kind = Kind { code: 49 }
+
+// A type written in the source.
+pub struct Ty { code: u8 }
+
+impl Copy for Ty {}
+
+impl core::ops::Eq for Ty {
+    fn eq(self, _ other: Ty) -> bool {
+        self.code == other.code
+    }
+}
+
+pub const TY_NONE: Ty = Ty { code: 0 }
+pub const TY_U256: Ty = Ty { code: 1 }
+pub const TY_BOOL: Ty = Ty { code: 2 }
+pub const TY_ADDRESS: Ty = Ty { code: 3 }
+
+pub struct Node {
+    pub kind: Kind,
+    pub op: Tok,
+    pub ty: Ty,
+    pub a: usize,
+    pub b: usize,
+    pub c: usize,
+    pub d: usize,
+    pub pos: usize,
+}
+
+impl Copy for Node {}
+
+impl Node {
+    // Returns a node of `kind` at `pos` with every other field empty.
+    pub fn leaf(_ kind: Kind, _ pos: usize) -> Node {
+        Node { kind, op: T_EOF, ty: TY_NONE, a: 0, b: 0, c: 0, d: 0, pos }
+    }
+}
+
+// The parsed program. On error, the arrays hold whatever was built before it. This is not a
+// `Result` for the same reason `Lexed` is not.
+pub struct Ast {
+    pub lexed: Lexed,
+    pub nodes: MemVec<Node>,
+    pub lists: MemVec<usize>,
+    // The source span of each distinct identifier.
+    pub syms: MemVec<Span>,
+    // 256-bit values that nodes refer to: integer literals, selectors and the packed bytes of
+    // `assert!` messages.
+    pub words: MemVec<u256>,
+    // The list of items.
+    pub items: usize,
+    // The lexer's or the parser's error.
+    pub err: Option<Diag>,
+}
+
+impl Ast {
+    // Returns an empty AST over `lexed`, with the sentinels at index 0 and the lexer's error.
+    pub fn new(_ lexed: own Lexed) -> Ast {
+        var nodes: MemVec<Node> = MemVec::new()
+        nodes.push(Node::leaf(NODE_NONE, 0))
+        var lists: MemVec<usize> = MemVec::new()
+        lists.push(0)
+        var syms: MemVec<Span> = MemVec::new()
+        syms.push(Span { start: 0, len: 0 })
+        let err = lexed.err
+        Ast { lexed, nodes, lists, syms, words: MemVec::new(), items: 0, err }
+    }
+
+    pub fn list_len(self, _ l: usize) -> usize {
+        self.lists[l]
+    }
+
+    pub fn list_at(self, _ l: usize, _ i: usize) -> usize {
+        self.lists[l + 1 + i]
+    }
+
+    // Adds node `n` and returns its index.
+    pub fn add_node(mut self, _ n: Node) -> usize {
+        self.nodes.push(n)
+        self.nodes.len() - 1
+    }
+
+    // Sets the else branch of IF node `i`.
+    pub fn set_else(mut self, _ i: usize, _ otherwise: usize) {
+        var n = self.nodes[i]
+        n.c = otherwise
+        self.nodes.set(i, n)
+    }
+
+    // Adds the value of integer token `t` to `words` and returns its index.
+    pub fn add_int(mut self, _ t: Token) -> usize {
+        self.add_word(self.lexed.text.int_value(t.span).unwrap())
+    }
+
+    // Adds `v` to `words` and returns its index.
+    pub fn add_word(mut self, _ v: u256) -> usize {
+        self.words.push(v)
+        self.words.len() - 1
+    }
+
+    // Moves the elements of `pending` from `mark` on into a new list and returns it. A list is
+    // stored as its length followed by its elements.
+    pub fn add_list(mut self, _ pending: mut MemVec<usize>, _ mark: usize) -> usize {
+        let n = pending.len() - mark
+        if n == 0 { return 0 }
+        let l = self.lists.len()
+        self.lists.push(n)
+        var i = mark
+        while i < mark + n {
+            self.lists.push(pending[i])
+            i += 1
+        }
+        pending.truncate(mark)
+        l
+    }
+
+    // Interns the identifier token `t` and returns its sym.
+    // ponytail: linear scan, O(n²) in identifiers; hash if programs grow.
+    pub fn intern(mut self, _ t: Token) -> usize {
+        var i: usize = 1
+        while i < self.syms.len() {
+            if self.lexed.text.same(self.syms[i], t.span) {
+                return i
+            }
+            i += 1
+        }
+        self.syms.push(t.span)
+        self.syms.len() - 1
+    }
+}
