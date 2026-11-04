@@ -11,7 +11,8 @@ and the official compiler disagree, the compiler wins and the document is fixed.
 Marks used below:
 - **[V]** — behaviour not yet confirmed against the official compiler. Each one becomes a
   differential test before it is relied on.
-- **[✓]** — confirmed by a probe. The probes are in `spike-*/` and summarised in `TODO.md` §1.
+- **[✓]** — confirmed by a probe. The probes are in `spike-*/`; the ADRs in `docs/adr/`
+  summarise what they found.
 
 Reference toolchain: Fe 26.5.1. Probes ran on master `d217a51bf`.
 
@@ -147,7 +148,8 @@ tightest:
 - method calls and field access, generics and traits;
 - `struct`, `enum`, `use`, `mod`, `impl`, `extern`, `unsafe`, `with` and closures;
 - contract-level `uses`, `#[payable]`, events, `StorageMap`, fallback arms (`_`);
-- `sol("…")` selectors, which are a stretch goal (TODO §1, `Hasher` effect).
+- `sol("…")` selectors, which are a stretch goal
+  ([ADR 0004](adr/0004-literal-selectors-first.md), `Hasher` effect).
 
 ### 3.4 Statement termination
 

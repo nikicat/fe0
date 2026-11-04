@@ -24,26 +24,17 @@ Fe Builders Challenge 2026. Build window Nov 3–24 (UTC), register by Nov 17.
   and `fe test` gets an `ArrayReader` over a byte array. Both work, and no compiler bugs were hit.
 - **Native speed:** a 42 KB std file lexes in about 5 ms.
 - **EVM gas:** about 803k gas per 1 KB of source at -O1/-O2 (784 gas/byte), and 1.42M at -O0.
-- **Bytecode size:** the lexer plus a dispatcher is 3.1 KB of runtime code.
-  - A full compiler would be roughly 8–15× that, so it will **exceed the 24 KB EIP-170 limit**.
-    It has to be split across several contracts (see §4).
-- **Language idioms learned:**
-  - Mutable locals are `var`, not `let mut`. There is no `loop`, so use `while true`.
-  - `as` only allows lossless casts. Narrowing needs `.downcast_truncate()` or `.downcast()`.
-  - `xs[i]` on a `MemVec` yields an *access*. A non-Copy element needs `let t = ref xs[i]`,
-    and `.get(i).unwrap()` cannot be used as a value.
-  - Recursive types only work through raw `*T` (unsafe). Use an index-based arena for the AST.
-  - No byte or char literals were found yet; keywords were matched with numeric arrays. Check
-    whether `"fn".as_bytes()` indexing (`PackedBytes`) works.
+- **Bytecode size:** the lexer plus a dispatcher is 3.1 KB of runtime code. The window's lexer
+  is 7.5 KB, and with the parser it is over the 24 KB limit
+  ([ADR 0014](adr/0014-contract-per-phase.md)).
+- The language idioms learned are in WORKAROUNDS.md.
 
 **Rerun on master** (`d217a51bf`, Oct 27; built at `~/src/fe/target/release/fe` with
 `--features cranelift`):
 - Results are identical: the test passes, gas is 802,865 per KB at -O1/-O2, runtime code is
   3,144 bytes, and the native output matches.
 - `--version` still says 26.5.0, so the native-pipeline improvements the Fe team mentioned have
-  not landed yet.
-- Rebuild with `git -C ~/src/fe fetch --depth 1 origin master && git -C ~/src/fe checkout -B master FETCH_HEAD && cargo build --release -p fe --features cranelift`.
-- Rerun the spike after each rebuild.
+  not landed yet. Watching master continues as T0012.
 
 ## 2. How the official compiler is built (for reference)
 
@@ -76,14 +67,14 @@ Everything below is in `~/src/fe`.
 
 ## 3. Scope: the language subset ("Fe0")
 
-Fe0 must be a strict subset of Fe: every Fe0 program is also a valid Fe program with the same behaviour.
+Fe0 must be a strict subset of Fe: every Fe0 program is also a valid Fe program with the same
+behaviour ([ADR 0001](adr/0001-strict-subset.md)).
 
 - **Types:** `u256`, `bool`, `Address`.
 - **Items:** `fn` (no generics), `const`, one `contract` with plain storage fields, a `msg`
   with `#[selector = 0x...]`, `init`, and `recv`.
-  - `sol("...")` needs keccak at Fe0's own run time, which the native backend lacks.
-  - Plan: a `Hasher` effect, with the opcode on the EVM and a software keccak-f[1600] written in
-    Fe natively. It's a stretch goal after literal selectors work (see TODO §1).
+  - `sol("...")` selectors are a stretch goal
+    ([ADR 0004](adr/0004-literal-selectors-first.md)).
 - **Statements and expressions:**
   - `let`, `var`, `=`, `+=` and friends, `if`/`else`, `while`, `return`, calls;
   - arithmetic, comparison, bitwise and logical operators, checked overflow (panics like Fe);
@@ -103,24 +94,18 @@ source ──Source effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec
        ─▶ assembler (jump fixups, PUSH sizing) ─▶ initcode + runtime ─▶ Write effect / Bytes
 ```
 
-- **Input and output are effects.** DESIGN.md §2 describes the `Source` input effect.
+- **Input and output are effects** ([ADR 0010](adr/0010-source-effect.md)). DESIGN.md §2
+  describes the `Source` effect.
   - Natively, source comes from stdin (`host()`) and bytecode goes to stdout as hex.
   - On chain, `io::bytes` gives a `Source` over calldata `Bytes`. The output is a `MemVec<u8>`.
   - Under `fe test`, `io::text` gives a `Source` over a string.
   - The compiler core has no idea which one it is running under.
-- **Errors:** report the first error with a position (no recovery). The lexer reports its error
-  in `Lexed.err`.
-- **Code generation:** emit EVM opcodes directly from the AST as a stack machine, with no IR.
-  - Locals live in memory at fixed offsets per frame.
-  - Function calls push a return label and jump; there is no recursion depth check, which is
-    acceptable for the subset.
-  - Storage fields get slots 0, 1, 2… in declaration order, matching Fe's layout for plain fields.
-    Verify this differentially.
-- **On chain** (24 KB limit):
-  - Three contracts: `Frontend` (lex, parse, check, returning a serialised AST), `Backend`
-    (code generation and assembly), and a `Compiler` facade that STATICCALLs both and then
-    `create_raw` deploys the result.
-  - Measure the size of each phase early. If one phase alone exceeds 24 KB, split it again.
+- **Errors:** the first error ends the compile ([ADR 0006](adr/0006-no-error-recovery.md)).
+  Each phase reports it in an `err` field ([ADR 0011](adr/0011-error-field-not-result.md)).
+- **Code generation:** EVM opcodes straight from the AST, with locals in memory frames
+  ([ADR 0007](adr/0007-codegen-from-ast.md), DESIGN.md §6).
+- **On chain:** one contract per phase, plus a `Compiler` that calls them in turn and deploys
+  the result with `create_raw` ([ADR 0014](adr/0014-contract-per-phase.md), DESIGN.md §8).
 - **SP1 (stretch):** prove that bytecode B was compiled from source S, a trustless version of
   source verification. Only if the SP1 target can take byte input.
 
@@ -135,13 +120,9 @@ source ──Source effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec
      sends both contracts the same messages, and asserts identical return data, revert
      behaviour and storage reads.
    - So every test also exercises the compiler running on chain.
-3. **Corpus:**
-   - About 40 Fe0 programs written for this project (arithmetic, control flow, storage,
-     effects, ABI).
-   - The official fixtures contribute only 4 files (`bitnot`, `bool_literal`, and two
-     immutable-field contracts for when immutables are supported). See corpus/SCAN.md.
-   - The probes in `spike-conform/` (arithmetic edge cases, malformed calldata) seed the
-     hand-written set.
+3. **Corpus:** about 40 Fe0 programs written for this project (arithmetic, control flow,
+   storage, effects, ABI), seeded by the `spike-conform/` probes. The official fixtures fit Fe0
+   too rarely to be the corpus ([ADR 0003](adr/0003-own-corpus-and-generator.md)).
 4. **Negative tests:** programs that must be rejected (effect violations, type errors), with
    the expected error code and position.
 5. **Native round trip:** `fefe < P.fe` produces hex, which is compared byte for byte with the
@@ -149,15 +130,9 @@ source ──Source effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec
 6. **Gas and size report:** gas to compile each corpus program on the EVM, and bytecode size
    compared with the official compiler's output.
 7. **CI:** the starter's workflow (`fe fmt --check`, `fe test`) plus a native build step.
-8. **Core, no longer a stretch goal: a random generator of Fe0 programs** feeding the
-   differential test, i.e. fuzzing, which the official repo has none of. The official corpus
-   yields only 4 Fe0-compatible files (corpus/SCAN.md), so hand-written programs plus generated
-   ones are the whole suite.
-   - Generated programs cover expression trees over `u256`/`bool` with checked operators,
-     `if`/`while`, locals, storage fields with `uses`, and multiple arms.
-   - The oracle is the official compiler: identical status, return data and revert data.
-   - The generator can be a Python supporting tool. A Fe version using the `Rng` effect would be
-     a nice extra.
+8. **A random generator of Fe0 programs** feeding the differential test, i.e. fuzzing, which the
+   official repo has none of ([ADR 0003](adr/0003-own-corpus-and-generator.md), DESIGN.md
+   §11).
 
 ## 6. Schedule
 
@@ -183,12 +158,12 @@ Likelihood and impact are rated H, M or L.
 
 | # | Risk | L | I | Mitigation |
 |---|---|---|---|---|
-| 1 | **Toolchain drift between master and the release.** We experiment on master (as the Fe team advises), but the submission must pin a *release* of 26.5.0 or later. Features or fixes we rely on might exist only on master | H | H | Freeze the toolchain on Nov 3: the newest release out by then. CI runs on the pinned release only. After each upstream merge, master is checked by hand: rebuild Fe, then run `tools/spikes.sh` and the fe0 tests. A CI job on master would build Fe from source on every push. Never depend on a feature that is master-only |
-| 2 | **Language churn mid-window.** Fe changes fast; 26.5 alone changed reference semantics. A release during Nov 3–24 could break our code or invite a costly upgrade | M | M | Do not upgrade mid-window unless a blocking bug fix requires it. Note the reason in the README if we do |
+| 1 | **Toolchain drift between master and the release.** We experiment on master (as the Fe team advises), but the submission must pin a *release* of 26.5.0 or later. Features or fixes we rely on might exist only on master | H | H | Frozen on Fe 26.5.1 ([ADR 0009](adr/0009-freeze-on-26-5-1.md)). Master is checked by hand (T0012) |
+| 2 | **Language churn mid-window.** Fe changes fast; 26.5 alone changed reference semantics. A release during Nov 3–24 could break our code or invite a costly upgrade | M | M | No upgrade mid-window unless a blocking bug needs it ([ADR 0009](adr/0009-freeze-on-26-5-1.md)) |
 | 3 | **Compiler bugs, especially in the native backend.** The Fe team expects us to hit some ("as I suspect you will"). The native backend is experimental | H | M | Keep the core target-agnostic, so the EVM path under `fe test` is always the primary oracle and the native build is a bonus. Reduce each bug to a minimal example and file it; fix it upstream if it's cheap (welcome, and good for usefulness); keep `WORKAROUNDS.md` |
 | 4 | **Experts on the jury.** Two judges are Fe core developers with a personal interest in Fe-in-Fe and a Lean-formalizable subset. Claims of correctness or "strict subset" will be scrutinised | M | H | Claim only what the tests show. Write a precise Fe0 spec (grammar and semantics) and a frank limitations section. Every difference from Fe found by testing is either fixed or documented |
 | 5 | **The idea is pre-empted or leaks.** The Fe team has considered Fe-in-Fe itself, and another contestant could choose something similar | L | M | Keep it private until submission (no public Zulip posts or public repo pushes before Nov 24; make the repo public at submission). Our differentiators are the on-chain compile-and-deploy and effect checking |
-| 6 | **24 KB contract size limit.** The lexer alone is 3.1 KB, and the full compiler is estimated at 25–45 KB | H | M | Split into front-end and back-end contracts plus a facade. Measure each phase Nov 3–5. A further split is the fallback |
+| 6 | **24 KB contract size limit.** Measured Nov 4: lexer and parser together are 26.5 KB at `-O s` | H | M | One contract per phase ([ADR 0014](adr/0014-contract-per-phase.md)). If a phase alone outgrows 24 KB, shrink it, starting with keyword matching |
 | 7 | **Gas for compiling on chain.** Lexing costs about 0.8M gas per KB; a full compile is guessed at 5–10× that (8–16M for a 2 KB program). EVM memory costs grow quadratically | M | M | Measure on Nov 5. If it exceeds a block, compile via a free read-only call (`eth_call`) and deploy the output in a separate step, or keep the demo programs small |
 | 8 | **Storage layout or ABI mismatch with official Fe** | M | M | Differential tests catch it; mirror the official dispatcher (`mir/src/runtime/synthetic.rs:745`) |
 | 9 | **Scope creep.** Fe0 features, the Lean angle, SP1, fuzzing | H | H | Freeze Fe0 before Nov 3. The Lean subset is mentioned in the README only, with no formal work. Stretch items (SP1, fuzzing, events, `StorageMap`) only after the differential tests are green, and in that order |

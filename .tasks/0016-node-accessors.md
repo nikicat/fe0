@@ -18,8 +18,8 @@ as `Node::param(pos, name, ty, positional: bool)`, `n.is_positional()`, `n.is_va
 - Planned rather than fixed in the parser commit: it touches every `NODE_` kind. Do it before
   the checker (T0004) starts reading nodes. From /unsmell run 20261104-221200, findings b1-9 and
   x-7 (`.git/unsmell/20261104-221200/findings/`).
-- A separate `NODE_VAR` kind for `var` was judged not worth it (finding b2-8); an `is_var()`
-  accessor names the flag instead.
+- No separate `NODE_VAR` kind; an `is_var()` accessor names the flag ([ADR
+  0013](../docs/adr/0013-no-var-node-kind.md)).
 
 ## Next
 List each kind's slots from `ast.fe`, and write one constructor and the accessors per kind.

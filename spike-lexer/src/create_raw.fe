@@ -1,4 +1,4 @@
-// TODO §1 check: can a `fe test` deploy hand-assembled bytecode with
+// Pre-window check: can a `fe test` deploy hand-assembled bytecode with
 // `create_raw` and call it, both raw and through a typed `msg`?
 
 use std::abi::sol

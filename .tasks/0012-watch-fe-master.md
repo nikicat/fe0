@@ -15,5 +15,9 @@ operator: rerun the spike-conform probes when it lands), #1845 (fieldless msg va
 `{}`: recheck the SPEC example).
 
 ## Next
-Every couple of days: rebuild master (`cargo build --release -p fe --features cranelift` in
-`~/src/fe`), run `tools/spikes.sh ~/src/fe/target/release/fe` and the fe0 tests.
+Every couple of days: rebuild master, then run `tools/spikes.sh ~/src/fe/target/release/fe`
+and the fe0 tests.
+```sh
+git -C ~/src/fe fetch --depth 1 origin master && git -C ~/src/fe checkout -B master FETCH_HEAD
+(cd ~/src/fe && cargo build --release -p fe --features cranelift)
+```

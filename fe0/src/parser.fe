@@ -21,7 +21,7 @@ use ingot::io::Source
 use ingot::lexer::*
 
 // Deepest nesting of blocks and binary expressions. The parser recurses at each level, and the
-// EVM stack bounds that recursion. DESIGN.md §8a gives the measurement behind this cap, and
+// EVM stack bounds that recursion. ADR 0012 gives the measurement behind this cap, and
 // `parser_tests::deepest_nesting` checks it.
 const MAX_DEPTH: usize = 20
 

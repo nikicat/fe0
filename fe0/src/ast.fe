@@ -1,4 +1,4 @@
-// The AST: an arena of nodes that refer to each other by index. DESIGN.md §3 says why.
+// The AST: an arena of nodes that refer to each other by index. ADR 0005 says why.
 //
 // Index 0 of `nodes`, `lists` and `syms` is a sentinel, so an index that is 0 means "none". In
 // the table below:

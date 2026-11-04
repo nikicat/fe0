@@ -1,8 +1,8 @@
 # Fe0 compiler design
 
 How the compiler is built. [SPEC.md](SPEC.md) defines what Fe0 means, and [PLAN.md](PLAN.md)
-covers scope and schedule. This document fixes the decisions that would otherwise cost the first
-days of the build window.
+covers scope and schedule. This document describes the compiler as it is meant to be; the
+reasons for each choice are in [docs/adr/](adr/README.md).
 
 Guiding rules:
 - Prefer the simplest thing that is correct.
@@ -37,7 +37,7 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
   `Source` is fe0's own effect, and WORKAROUNDS.md says why it is not std I/O.
 - **Tokens** are spans of the source buffer, so the lexer never copies the text. `Token` is
   declared in `fe0/src/lexer.fe`.
-- **Keywords:** compared against `String<N>` constants (`s.as_bytes()[i]`, see TODO §1).
+- **Keywords:** compared against `String<N>` constants (`s.as_bytes()[i]`).
 - **Newline tokens** are kept. Inside parentheses the lexer drops them, since it already tracks
   paren depth; anywhere else the parser decides whether a newline ends a statement (SPEC §3.4).
 - **Positions:** line and column are computed only when an error is reported, by scanning the
@@ -45,10 +45,11 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
 
 ## 3. AST: an index-based arena
 
-Fe has no recursive types without `unsafe`, so the AST lives in flat arrays and refers to nodes
-by index. Index 0 means "none". A child list is a length-prefixed run in one array. `op` and `ty`
-are typed fields, so operators and written types never travel as bare integers.
-`fe0/src/ast.fe` declares `Ast`, `Node` and the fields of each node kind.
+The AST lives in flat arrays and refers to nodes by index
+([ADR 0005](adr/0005-arena-ast.md)). Index 0 means "none". A child list is a
+length-prefixed run in one array. `op` and `ty` are typed fields, so operators and written types
+never travel as bare integers. `fe0/src/ast.fe` declares `Ast`, `Node` and the fields of each
+node kind.
 
 - **Building lists:** one stack, `Parser.pending` in `fe0/src/parser.fe`, serves all lists, since
   inner lists close before outer ones.
@@ -60,9 +61,11 @@ are typed fields, so operators and written types never travel as bare integers.
 
 - Recursive descent, one function per grammar rule in SPEC §3.1.
 - Binary expressions use precedence climbing with the SPEC §3.2 table.
-- **No error recovery:** the first error ends the parse. `parse()` reports it in `Ast.err`
-  instead of returning a `Result`, for the reason in WORKAROUNDS.md (IR0600).
-- **Recursion is bounded:** nesting depth is capped at `MAX_DEPTH` in `fe0/src/parser.fe` (§8a).
+- **No error recovery** ([ADR 0006](adr/0006-no-error-recovery.md)): the first error ends
+  the parse. `parse()` reports it in `Ast.err` instead of returning a `Result`
+  ([ADR 0011](adr/0011-error-field-not-result.md)).
+- **Recursion is bounded:** nesting depth is capped at `MAX_DEPTH` in `fe0/src/parser.fe`
+  ([ADR 0012](adr/0012-max-depth.md)).
 - **Statement terminators** follow SPEC §3.4. Any other token after a statement is
   `P_EXPECTED_END`.
 
@@ -86,6 +89,9 @@ The checker makes one pass over items to collect names, then one pass over bodie
   end in `return`. This is checked on the AST, with "always returns" computed bottom-up.
 
 ## 6. Code generation
+
+Opcodes are emitted straight from the AST, with no IR
+([ADR 0007](adr/0007-codegen-from-ast.md)).
 
 ### 6.1 Memory layout
 
@@ -200,18 +206,8 @@ There is a single pass with no relaxation, because the 2-byte targets keep offse
 
 ## 8. On-chain split (24 KB limit)
 
-Measured Nov 4 on Fe 26.5.1 (`spike-sizes/`, probes that take the source as `bytes` calldata).
-Runtime bytes:
-
-| Probe | `-O 0` | `-O 1` | `-O 2` | `-O s` |
-|---|---|---|---|---|
-| empty (ABI decode only) | | | | 182 |
-| lexer | 18,441 | 7,583 | 7,580 | 7,511 |
-| lexer + parser | 54,014 | 27,365 | 27,301 | 26,456 |
-
-Lexer and parser together are already over 24,576 bytes. On anvil the lexer probe deploys and
-the lexer + parser probe is rejected (status 0). So the planned `Front` (lex, parse, check) does
-not fit, and each phase gets its own contract. The parser alone is about 19 KB.
+Each phase is its own contract, because lexer and parser together already exceed 24,576 bytes
+([ADR 0014](adr/0014-contract-per-phase.md), with the measurements). Builds use `-O s`.
 
 | Contract | Message | Does |
 |---|---|---|
@@ -223,12 +219,6 @@ not fit, and each phase gets its own contract. The parser alone is about 19 KB.
 
 - **Serialization format:** the arrays are dumped as 32-byte words with length prefixes. No
   schema; every side is compiled from the same `fe0` ingot.
-- **Builds use `-O s`.** `-O 0` is two to three times larger and is only for tests.
-- **The parser must take tokens.** `parse()` lexes for itself today; the `Parser` contract needs
-  an entry point that takes a `Lexed`.
-- **If a phase outgrows 24 KB,** the cheapest cut found so far is keyword matching: `word<N>` is
-  instantiated once per keyword length, and `keyword` plus `is_reserved` are among the largest
-  functions in the IR.
 - Errors cross the boundary as `Error(string)`-style revert data that carries the `Diag`.
 
 ## 8a. Measured limits of the host (official Fe on the EVM)
@@ -243,16 +233,8 @@ Measured Oct 28 on master `d217a51bf` (`spike-limits/`, 30M gas per call):
 - **Recursion depth is bounded by the EVM stack, not by gas:** at most **1,019** nested calls
   for a one-argument function. Fe keeps return addresses on the 1,024-slot EVM stack, and
   functions with more live values get less depth.
-  - **Consequence:** the parser caps nesting depth and reports `P008` "nesting too deep"
-    instead of crashing with a stack overflow.
-  - **Measured with the real parser** (Nov 4, Fe 26.5.1). At `-O 0`, 20 nested parentheses
-    parse and 22 overflow the EVM stack. That is about 45 stack slots per parenthesis. Nested
-    blocks cost less, and 12 of them parse. At `-O 2`, every probe up to 28 parentheses parsed,
-    and 28 was the largest one tried.
-  - **The cap:** `MAX_DEPTH` is 20 depth steps. A function body and its outer expression take
-    2 steps, each parenthesis takes 1, and each block inside a block takes 2. So the cap allows
-    18 nested parentheses or 9 nested blocks, which keeps a margin at `-O 0`. Only optimized
-    builds could take a higher cap.
+  - **Consequence:** the parser caps its nesting depth and reports `P_TOO_DEEP` instead of
+    overflowing the stack ([ADR 0012](adr/0012-max-depth.md), with the measurements).
   - This limits only the compiler running on chain. Code *generated by* Fe0 keeps its frames
     in memory (§6.1), so it has no such limit.
 - **`fe test` does not enforce EIP-170:** 24,577 and 49,152-byte runtimes deploy fine.
@@ -294,7 +276,8 @@ the column.
 3. One `#[test]` that:
    1. deploys the official build with `evm.create2<C>(args)`;
    2. compiles `SRC` with the `fe0` library *inside the test*, so on the EVM;
-   3. deploys Fe0's output with `create_raw`;
+   3. deploys Fe0's output with `create_raw`, where bad initcode gives address 0 rather than
+      a revert (`spike-lexer/src/create_raw.fe`);
    4. replays every call in `X.calls` against both contracts with `try_call_raw`;
    5. asserts that the success flag and the returndata bytes are equal, including revert
       payloads;
@@ -356,13 +339,9 @@ counts), which keeps the subset rule honest.
   - the EVM provider calls the `KECCAK256` opcode;
   - the native provider is a software keccak-f[1600] in Fe, because 26.5.1 cannot lower
     `EvmKeccak256` natively (WORKAROUNDS.md).
-- **Feasibility checked Oct 28** (`spike-keccak/`): one full round (theta, rho, pi, chi, iota)
-  over `[u64; 25]` gives the same digest on EVM, native and a Python reference
-  (`01ac8e14a6e6ea79`).
-  - `u64` shifts discard overflowing bits, like `u256`, so `rotl` is `(x << n) | (x >> (64 - n))`.
-- **Cost:** about 28k gas per round on the EVM (-O1 and -O2), so about 680k per permutation.
-  That's why the EVM provider must use the opcode, while the software version runs natively
-  only.
+- Why, with the feasibility and gas measurements:
+  [ADR 0004](adr/0004-literal-selectors-first.md).
+- `u64` shifts discard overflowing bits, like `u256`, so `rotl` is `(x << n) | (x >> (64 - n))`.
 - Remaining work for the window: padding (`0x01 … 0x80`, rate 136 bytes), absorbing input,
   and testing against known vectors (`keccak("answer()") = 0x85bb7d69…`).
 

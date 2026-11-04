@@ -1,4 +1,4 @@
-// TODO §1 check: can contracts pass `Bytes` to each other (needed to split the
+// Pre-window check: can contracts pass `Bytes` to each other (needed to split the
 // on-chain compiler under 24 KB), and can `Read` be fed from calldata `Bytes`?
 
 use ingot::lex_all

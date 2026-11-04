@@ -19,7 +19,7 @@ Each entry says where it bites, what we do instead, and its upstream status.
 - **Only with optimizations:** the original `Result` version compiles and runs at `-O 0`. It
   fails at `-O 1` and at the default level (`spike-harness/ice-lexer`, git-ignored).
 - **Workaround:** `lex()` returns `Lexed` with an `err: Option<Diag>` field instead of a
-  `Result`.
+  `Result` ([ADR 0011](adr/0011-error-field-not-result.md)).
 - **Upstream:** not yet reported. The failing version is saved for a reproduction. Minimize it
   and check it on master first.
 
@@ -31,7 +31,10 @@ Each entry says where it bites, what we do instead, and its upstream status.
   does `usize → u64` (because `usize` is 256-bit on the EVM).
 - A shift amount must have the same type as the shifted value.
 - `MemVec[i]` yields an access, so bind a non-`Copy` element with `let x = ref v[i]`.
-- `MemVec` has no `span()`. Use `.into_array().span()` instead.
+- `MemVec` has no `span()`. Use `.into_array().span()` instead, and
+  `Bytes::from_payload(source: v.into_array().span())` to make `Bytes`.
+- An untyped `"fn".as_bytes()` is `Bytes`, which has no `Index`: use `.byte_at(i)`, or type the
+  literal as `String<N>`.
 - `String<N>` holds at most 31 bytes. Longer literals are `DynString` (`len()`, `byte_at(i)`).
   Test sources go through `io::text(DynString)`.
 - `MemVec` has no `Default`, so use `core::mem::replace(mut place, MemVec::new())`, not `take`.
@@ -49,8 +52,9 @@ Each entry says where it bites, what we do instead, and its upstream status.
 - **Master removes character I/O from `std::io`** (newsfragment `+native-io.removal`).
   `Read`, `Write`, `read_char`, `write_char`, `host()` and `main(argc, argv)` are gone.
   `Stdout`/`Stdin` effects, `print!` and `StdinReader` replace them.
-  - So the compiler core reads its input through **its own `fe0::io::Source` effect**. Only
-    the edge adapters touch std. `fe0` passes on both 26.5.1 and master `95ec05413`.
+  - So the compiler core reads its input through **its own `fe0::io::Source` effect**
+    ([ADR 0010](adr/0010-source-effect.md)). Only the edge adapters touch std. `fe0` passes
+    on both 26.5.1 and master `95ec05413`.
   - The native CLI (`fe0-cli`) is not written yet. It will use 26.5.1's `std::io`, and it
     needs a port to the new API only if we leave 26.5.1.
 

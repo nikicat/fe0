@@ -1,4 +1,4 @@
-// TODO §1 check: what the official compiler does for plain storage fields,
+// Pre-window check: what the official compiler does for plain storage fields,
 // return data, and failures (overflow, assert, div by zero, unknown selector).
 // Run `fe test --trace-evm` and read SSTOREs; failing tests print revert data.
 

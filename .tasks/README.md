@@ -33,7 +33,8 @@ Only the title is required; use the sections as the task grows.
 
 - **Start / block:** edit `status:`. Write blockers in `deps` or in the body.
 - **Done:** delete the file in the commit that resolves it, with `(task TNNNN)`
-  in the message.
+  in the message. Each decision in it that outlives the code becomes a record in
+  `docs/adr/` in the same commit.
 - **Someone else's task:** ask the author before you close or rewrite it.
 
 ## History

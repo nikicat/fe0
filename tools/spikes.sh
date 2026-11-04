@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Re-run every pre-window spike/probe against a Fe binary and compare with the values
-# recorded in TODO.md / SPEC.md / DESIGN.md. Usage: tools/spikes.sh [path/to/fe]
+# recorded in docs/adr/, SPEC.md and DESIGN.md. Usage: tools/spikes.sh [path/to/fe]
 # Many probe tests fail on purpose to report a value via Panic(code); we compare that code.
 set -u
 FE=${1:-$HOME/src/fe/target/release/fe}
