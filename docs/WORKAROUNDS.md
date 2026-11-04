@@ -4,25 +4,6 @@ Known compiler issues and the shapes we use instead. The toolchain is **Fe 26.5.
 pinned in `.github/workflows/ci.yml`.
 Each entry says where it bites, what we do instead, and its upstream status.
 
-## Open
-
-### `enum.extract requires an initialized payload subtree` (IR0600)
-
-- **Symptom:** `fe test` fails with `internal error: error [IR0600] enum.extract requires an
-  initialized payload subtree @ …(%lex_text, enum.extract)`.
-- **When:** a test helper extracted the `Ok` payload of the lexer's `Result<Diag, Lexed>`, with
-  either `unwrap()` or `match`. The helper ran `lex()` inside `with (Read = …)`, before fe0's
-  own `Source` effect replaced `Read`. In the failing version, `Lexed` held two `MemVec`s.
-  - A smaller program does not reproduce it. That program builds a `Result<E, S>` whose `S`
-    holds a `MemVec<u8>` and a `MemVec` of a `Copy` struct, in a loop that uses `?` inside
-    `with` (`spike-harness/ice`, git-ignored).
-- **Only with optimizations:** the original `Result` version compiles and runs at `-O 0`. It
-  fails at `-O 1` and at the default level (`spike-harness/ice-lexer`, git-ignored).
-- **Workaround:** `lex()` returns `Lexed` with an `err: Option<Diag>` field instead of a
-  `Result` ([ADR 0011](adr/0011-error-field-not-result.md)).
-- **Upstream:** not yet reported. The failing version is saved for a reproduction. Minimize it
-  and check it on master first.
-
 ## Language idioms (not bugs, but they cost time)
 
 - `var` declares a mutable local.
@@ -66,3 +47,11 @@ Each entry says where it bites, what we do instead, and its upstream status.
   unique name (DESIGN.md §10).
 - **Native keccak** (argotorg/fe#1886, fixed by #1909). On 26.5.1 the native `Hasher` still
   needs the software keccak (DESIGN.md §12).
+- **`enum.extract requires an initialized payload subtree` (IR0600)**, an internal error at
+  `-O 1` and above; `-O 0` works. Fixed on master `95ec05413`, probably by its newer Sonatina,
+  so it was not reported.
+  - **Trigger:** `?` on a `Result<E, T>` inside a `while true` loop, in a function whose own
+    `Result` the caller then matches or unwraps. A 46-line reproduction is in
+    `spike-harness/ice-min/repro.fe` (git-ignored); run it with `fe test -O 1 repro.fe`.
+  - **Workaround on 26.5.1:** `Lexed` and `Ast` carry an `err: Option<Diag>` field instead of
+    being a `Result` ([ADR 0011](adr/0011-error-field-not-result.md)).

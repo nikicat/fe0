@@ -17,4 +17,5 @@ before it. Later phases follow the same shape.
 
 ## Consequences
 - A caller must check `err` before reading the arrays; nothing forces it to.
-- Revisit when IR0600 is fixed upstream (T0013).
+- IR0600 is fixed on master, so revisit this only if we leave 26.5.1
+  ([0009](0009-freeze-on-26-5-1.md)).
