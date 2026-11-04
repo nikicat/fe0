@@ -163,7 +163,7 @@ source ──Source effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec
 
 The schedule lives in `.tasks/` as tasks with due dates and dependencies: parser (Nov 5),
 checker (Nov 9), codegen (Nov 14), harness, generator and native CLI (Nov 18), on-chain demo
-(Nov 21), submission (Nov 24). Registration closes Nov 17 (task T0001).
+(Nov 21), submission (Nov 24). Registered as project FE-001 on Oct 28.
 
 ## 7. Risks
 

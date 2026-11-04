@@ -1,13 +1,16 @@
 ---
 status: todo
-deps: [T0001, T0006, T0009]
+deps: [T0006, T0009]
 due: 2026-11-24
 tags: [contest]
 ---
 # Submission
 
 ## Goal
-Submit by Nov 24, 23:59 UTC with the personal link from the registration email.
+Submit by Nov 24, 23:59 UTC. Registered as project **FE-001** (confirmed by email; it was in
+spam). The prefilled submission link with the private submission code is in
+`docs/registration-confirmation.txt`, which is git-ignored and must never be committed, since
+the repo goes public. Resubmitting before the deadline is allowed; the latest valid one counts.
 
 ## Next
 - README from the starter's SUBMISSION.md: pitch, problem, approach, Fe highlight (the effect

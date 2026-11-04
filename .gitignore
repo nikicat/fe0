@@ -3,3 +3,5 @@ trace/
 spike-harness/
 .fe-lsp.json
 .fe-lsp/
+# Private submission code and link (registration email); never commit
+docs/registration-confirmation.txt
