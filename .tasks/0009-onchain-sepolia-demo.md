@@ -7,7 +7,7 @@ tags: [onchain]
 # On-chain compiler, Sepolia deployment and demo
 
 ## Goal
-Front / Back / Compiler contracts (DESIGN.md §8) that compile source sent in calldata and deploy
+The phase contracts and Compiler (DESIGN.md §8) that compile source sent in calldata and deploy
 the result with `create_raw`. Deploy to Sepolia and script the demo: compile, deploy, call.
 
 ## Next
