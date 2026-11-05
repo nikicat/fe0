@@ -301,6 +301,8 @@ This check is the point of Fe0.
 - Arm bindings name the variant's fields: `Set { a: x }` binds field `a` to the local `x`, and
   `Set { a }` binds it to the local `a`.
 - An arm's return type must match its variant's.
+- A selector must fit in 32 bits (`9-0001`) **[✓]**. Selectors must be unique within a msg
+  (`9-0004`) **[✓]** and across all msgs the contract receives (`8-0047`) **[✓]**.
 - Every variant's arm pattern is written with braces, `Name {}` even when it has no fields. That
   avoids an ambiguity in Fe's grammar **[✓]**.
 
@@ -335,7 +337,7 @@ The runtime dispatcher matches the official one (`mir/src/runtime/synthetic.rs:7
 
 ## 7. Diagnostics
 
-- Fe0 stops at the first error.
+- Fe0 stops at the first error. Warnings (unused `uses` entries) do not stop it.
 - It reports `line:col`, a stable error code (`L` lexical, `P` parse, `N` name, `T` type, `E`
   effect, `C` const-eval) and a one-line message.
 - Error codes are part of the test suite. Matching Fe's message wording is not a goal.

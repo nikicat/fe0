@@ -6,6 +6,7 @@ use ingot::diag::*
 use ingot::lexer::*
 
 const U256_MAX: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+const SELECTOR_MAX: u256 = 0xffffffff
 
 // A set of contract fields with one bit per storage slot, so it holds at most MAX_FIELDS fields.
 struct FieldSet { bits: u256 }
@@ -27,6 +28,14 @@ impl FieldSet {
     }
 }
 
+// What the `uses` list of the body being checked grants, and which granted fields the body has
+// read or assigned so far.
+struct Grant { list: usize, read: FieldSet, write: FieldSet, used: FieldSet }
+
+impl Copy for Grant {}
+
+const NO_GRANT: Grant = Grant { list: 0, read: NO_FIELDS, write: NO_FIELDS, used: NO_FIELDS }
+
 // The checked program. On error, `err` holds the first error and the side tables are partly
 // filled. This is not a `Result` for the same reason `Ast` is not.
 pub struct Checked {
@@ -36,13 +45,23 @@ pub struct Checked {
     pub types: MemVec<Ty>,
     // What a name refers to. For NAME and ASSIGN: the declaring node (CONST, PARAM, FIELD, LET or
     // BIND). For CALL: the FN. For RECV: the MSG. For ARM: the VARIANT. For BIND: the variant's
-    // FIELD.
+    // FIELD. For USE: the FIELD.
     pub res: MemVec<usize>,
     // For LET, PARAM and BIND: the frame slot. For a contract FIELD: the storage slot. For CONST:
     // the index of its value in `ast.words`. For FN, INIT and ARM: the number of frame slots.
     pub slots: MemVec<usize>,
     pub err: Option<Diag>,
+    // Warnings, in source order: unused `uses` entries (E_UNUSED_USE).
+    pub warns: MemVec<Diag>,
 }
+
+// What makes two nodes of a list duplicates: the same name, or the same msg selector.
+struct Key { selector: bool }
+
+impl Copy for Key {}
+
+const BY_NAME: Key = Key { selector: false }
+const BY_SELECTOR: Key = Key { selector: true }
 
 // A local declaration in scope, which name lookup finds before contract fields and items.
 struct Local { sym: usize, decl: usize }
@@ -58,14 +77,17 @@ struct Checker {
     c: Checked,
     // The CONTRACT, or 0.
     the_contract: usize,
+    body: Body,
+}
+
+// The state of checking one FN, INIT or ARM body. `begin` replaces it for each body.
+struct Body {
     // The locals in scope, innermost last.
     locals: MemVec<Local>,
-    // Frame slots used so far by the body being checked.
+    // Frame slots used so far.
     frame: usize,
-    // Fields the body may read and write.
-    may_read: FieldSet,
-    may_write: FieldSet,
-    // The return type of the body being checked.
+    grant: Grant,
+    // The type that `return` values and the body's value must have.
     ret: Ty,
     // How many `while` loops enclose the current statement.
     loops: usize,
@@ -149,21 +171,39 @@ impl Checker {
     }
 
     // Fails with `code` at the first node in list `l` whose name an earlier node already has.
-    // ponytail: O(n²) in the list length; lists are short.
     fn unique(self, _ l: usize, _ code: DiagCode) -> Result<Diag, ()> {
         var k: usize = 1
         while k < self.len(l) {
             let i = self.elem(l, k)
-            var j: usize = 0
-            while j < k {
-                if self.node(self.elem(l, j)).name() == self.node(i).name() {
-                    return Result::Err(self.at(code, i))
-                }
-                j += 1
+            if self.seen(i, l, k, BY_NAME) {
+                return Result::Err(self.at(code, i))
             }
             k += 1
         }
         Result::Ok(())
+    }
+
+    // Whether one of the first `n` nodes in list `l` has the same key `by` as node `i`.
+    // ponytail: every caller compares each node with all earlier ones. That is O(n²) in a list's
+    // length, and O(n²) in all received variants across msgs. Lists and msgs are short.
+    fn seen(self, _ i: usize, _ l: usize, _ n: usize, _ by: Key) -> bool {
+        var j: usize = 0
+        while j < n {
+            if self.key(self.elem(l, j), by) == self.key(i, by) {
+                return true
+            }
+            j += 1
+        }
+        false
+    }
+
+    // Returns the key `by` of node `i`, which is its name symbol or its selector word.
+    fn key(self, _ i: usize, _ by: Key) -> u256 {
+        if by.selector {
+            self.c.ast.word_value(i)
+        } else {
+            self.node(i).name() as u256
+        }
     }
 
     // The contract FIELD named `sym`, or 0.
@@ -180,11 +220,11 @@ impl Checker {
     }
 
     fn local(self, _ sym: usize) -> usize {
-        var k = self.locals.len()
+        var k = self.body.locals.len()
         while k > 0 {
             k -= 1
-            if self.locals[k].sym == sym {
-                return self.locals[k].decl
+            if self.body.locals[k].sym == sym {
+                return self.body.locals[k].decl
             }
         }
         0
@@ -215,9 +255,9 @@ impl Checker {
             return Result::Err(self.at(N_SHADOWS_FIELD, decl))
         }
         self.set_ty(decl, ty)
-        self.c.slots.set(decl, self.frame)
-        self.frame += 1
-        self.locals.push(Local { sym, decl })
+        self.c.slots.set(decl, self.body.frame)
+        self.body.frame += 1
+        self.body.locals.push(Local { sym, decl })
         Result::Ok(())
     }
 
@@ -233,27 +273,23 @@ impl Checker {
         Result::Ok(())
     }
 
-    // Starts a body that returns `ret`, with no locals.
-    fn begin(mut self, _ ret: Ty) {
-        self.frame = 0
-        self.locals.truncate(0)
-        self.ret = ret.or_unit()
-    }
-
-    // Checks BLOCK `body` of FN, INIT or ARM `owner` once its parameters are declared. Records the
-    // body's frame size in `slots[owner]`.
-    fn finish(mut self, _ owner: usize, _ body: usize) -> Result<Diag, ()> {
-        self.want(body, self.ret)?
-        self.c.slots.set(owner, self.frame)
+    // Starts a body that returns `ret`, with no locals and the fields that USE list `l` grants (0
+    // for none). Errors as `grant` does.
+    fn begin(mut self, _ ret: Ty, _ l: usize) -> Result<Diag, ()> {
+        let grant = self.grant(l)?
+        // Reuses the locals vector, because EVM memory is never freed.
+        var locals = self.body.locals
+        locals.truncate(0)
+        self.body = Body { locals, frame: 0, grant, ret: ret.or_unit(), loops: 0 }
         Result::Ok(())
     }
 
-    // Sets the fields the body may read and write from USE list `l`.
-    fn effects(mut self, _ l: usize) -> Result<Diag, ()> {
-        self.may_read = NO_FIELDS
-        self.may_write = NO_FIELDS
+    // Returns the fields that USE list `l` grants, and records each entry's FIELD in `res`.
+    // Errors with E_DUPLICATE_USE or E_UNKNOWN_FIELD at a bad entry.
+    fn grant(mut self, _ l: usize) -> Result<Diag, Grant> {
         self.unique(l, E_DUPLICATE_USE)?
-        // ponytail: unused `uses` entries are not reported, though SPEC §6 asks for a warning.
+        var read = NO_FIELDS
+        var write = NO_FIELDS
         var k: usize = 0
         while k < self.len(l) {
             let u = self.elem(l, k)
@@ -261,13 +297,46 @@ impl Checker {
             if f == 0 {
                 return Result::Err(self.at(E_UNKNOWN_FIELD, u))
             }
+            self.c.res.set(u, f)
             let slot = self.c.slots[f]
-            self.may_read = self.may_read.add(slot)
+            read = read.add(slot)
             if self.node(u).is_mut() {
-                self.may_write = self.may_write.add(slot)
+                write = write.add(slot)
             }
             k += 1
         }
+        Result::Ok(Grant { list: l, read, write, used: NO_FIELDS })
+    }
+
+    // Checks BLOCK `body` of FN, INIT or ARM `owner` once its parameters are declared. Records the
+    // body's frame size in `slots[owner]`, and warns as `warn_unused` does.
+    fn finish(mut self, _ owner: usize, _ body: usize) -> Result<Diag, ()> {
+        self.want(body, self.body.ret)?
+        self.c.slots.set(owner, self.body.frame)
+        self.warn_unused()
+        Result::Ok(())
+    }
+
+    // Warns with E_UNUSED_USE at each USE entry whose field the body never read or assigned.
+    fn warn_unused(mut self) {
+        let l = self.body.grant.list
+        var k: usize = 0
+        while k < self.len(l) {
+            let u = self.elem(l, k)
+            if !self.body.grant.used.has(self.c.slots[self.c.res[u]]) {
+                self.c.warns.push(self.at(E_UNUSED_USE, u))
+            }
+            k += 1
+        }
+    }
+
+    // Records that the body uses FIELD `f`. Errors with `err` when `allowed` does not hold `f`.
+    fn access(mut self, _ f: usize, _ allowed: FieldSet, _ err: Diag) -> Result<Diag, ()> {
+        let slot = self.c.slots[f]
+        if !allowed.has(slot) {
+            return Result::Err(err)
+        }
+        self.body.grant.used = self.body.grant.used.add(slot)
         Result::Ok(())
     }
 
@@ -359,7 +428,7 @@ impl Checker {
         let k = n.kind
         var v = Val { v: 0, ty: TY_U256 }
         if k == NODE_INT {
-            v.v = self.c.ast.words[n.word()]
+            v.v = self.c.ast.word_value(i)
         } else if k == NODE_BOOL {
             v = Val { v: bit(n.is_true()), ty: TY_BOOL }
         } else if k == NODE_NAME {
@@ -464,9 +533,7 @@ impl Checker {
     fn fn_item(mut self, _ i: usize) -> Result<Diag, ()> {
         let n = self.node(i)
         // Free functions are pure: they may touch no field.
-        self.may_read = NO_FIELDS
-        self.may_write = NO_FIELDS
-        self.begin(n.ty())
+        self.begin(n.ty(), 0)?
         self.params(n.list())?
         self.finish(i, n.body())
     }
@@ -476,7 +543,14 @@ impl Checker {
         self.unique(variants, N_DUPLICATE)?
         var k: usize = 0
         while k < self.len(variants) {
-            self.unique(self.node(self.elem(variants, k)).list(), N_DUPLICATE)?
+            let v = self.elem(variants, k)
+            self.unique(self.node(v).list(), N_DUPLICATE)?
+            if self.c.ast.word_value(v) > SELECTOR_MAX {
+                return Result::Err(self.at(T_SELECTOR_TOO_LARGE, v))
+            }
+            if self.seen(v, variants, k, BY_SELECTOR) {
+                return Result::Err(self.at(N_DUPLICATE_SELECTOR, v))
+            }
             k += 1
         }
         Result::Ok(())
@@ -486,8 +560,7 @@ impl Checker {
         let n = self.node(self.the_contract)
         if n.init() != 0 {
             let init = self.node(n.init())
-            self.effects(init.use_list())?
-            self.begin(TY_NONE)
+            self.begin(TY_NONE, init.use_list())?
             self.params(init.list())?
             self.finish(n.init(), init.body())?
         }
@@ -498,7 +571,43 @@ impl Checker {
             self.recv(self.elem(n.recvs(), k))?
             k += 1
         }
+        self.distinct_received_selectors(n.recvs())
+    }
+
+    // Fails with N_DUPLICATE_SELECTOR when two msgs received in RECV list `l` share a selector, so
+    // that the dispatcher could not tell their variants apart. Each msg's own selectors are
+    // already distinct (`msg_item`).
+    fn distinct_received_selectors(self, _ l: usize) -> Result<Diag, ()> {
+        var k: usize = 1
+        while k < self.len(l) {
+            let vs = self.received(self.elem(l, k))
+            var i: usize = 0
+            while i < self.len(vs) {
+                self.distinct_received_selector(self.elem(vs, i), l, k)?
+                i += 1
+            }
+            k += 1
+        }
         Result::Ok(())
+    }
+
+    // Fails with N_DUPLICATE_SELECTOR at VARIANT `v` when a msg received by one of the first `k`
+    // RECVs in list `l` has its selector.
+    fn distinct_received_selector(self, _ v: usize, _ l: usize, _ k: usize) -> Result<Diag, ()> {
+        var j: usize = 0
+        while j < k {
+            let earlier = self.received(self.elem(l, j))
+            if self.seen(v, earlier, self.len(earlier), BY_SELECTOR) {
+                return Result::Err(self.at(N_DUPLICATE_SELECTOR, v))
+            }
+            j += 1
+        }
+        Result::Ok(())
+    }
+
+    // Returns the VARIANT list of the msg that checked RECV `r` receives.
+    fn received(self, _ r: usize) -> usize {
+        self.node(self.c.res[r]).list()
     }
 
     // Checks RECV `r` and each of its arms against the msg it names. Errors with N_MISSING_ARM
@@ -538,8 +647,7 @@ impl Checker {
         }
         let fields = self.node(v).list()
         self.unique(n.list(), N_DUPLICATE)?
-        self.effects(n.use_list())?
-        self.begin(n.ty())
+        self.begin(n.ty(), n.use_list())?
         var k: usize = 0
         while k < self.len(n.list()) {
             let b = self.elem(n.list(), k)
@@ -610,8 +718,8 @@ impl Checker {
     fn name(mut self, _ i: usize) -> Result<Diag, Ty> {
         let d = self.resolve(i)?
         let kind = self.node(d).kind
-        if kind == NODE_FIELD && !self.may_read.has(self.c.slots[d]) {
-            return Result::Err(self.at(E_NOT_IN_USES, i))
+        if kind == NODE_FIELD {
+            self.access(d, self.body.grant.read, self.at(E_NOT_IN_USES, i))?
         }
         if kind == NODE_FN || kind == NODE_MSG || kind == NODE_CONTRACT {
             return Result::Err(self.at(N_NOT_A_VALUE, i))
@@ -708,7 +816,7 @@ impl Checker {
     // A block's type is its tail's, or TY_NEVER if a statement never completes, or unit.
     fn block(mut self, _ i: usize) -> Result<Diag, Ty> {
         let n = self.node(i)
-        let mark = self.locals.len()
+        let mark = self.body.locals.len()
         var t = TY_UNIT
         var k: usize = 0
         while k < self.len(n.list()) {
@@ -721,7 +829,7 @@ impl Checker {
             let tail = self.expr(n.value())?
             if t != TY_NEVER { t = tail }
         }
-        self.locals.truncate(mark)
+        self.body.locals.truncate(mark)
         Result::Ok(t)
     }
 
@@ -739,14 +847,14 @@ impl Checker {
         }
         if k == NODE_RETURN {
             if n.value() != 0 {
-                self.want(n.value(), self.ret)?
-            } else if self.ret != TY_UNIT {
+                self.want(n.value(), self.body.ret)?
+            } else if self.body.ret != TY_UNIT {
                 return Result::Err(self.at(T_MISMATCH, i))
             }
             return Result::Ok(TY_NEVER)
         }
         if k == NODE_BREAK || k == NODE_CONTINUE {
-            if self.loops == 0 {
+            if self.body.loops == 0 {
                 return Result::Err(self.at(N_OUTSIDE_LOOP, i))
             }
             return Result::Ok(TY_NEVER)
@@ -780,9 +888,9 @@ impl Checker {
     fn while_stmt(mut self, _ i: usize) -> Result<Diag, ()> {
         let n = self.node(i)
         self.want(n.cond(), TY_BOOL)?
-        self.loops += 1
+        self.body.loops += 1
         let body = self.expr(n.body())?
-        self.loops -= 1
+        self.body.loops -= 1
         if !body.fits(TY_UNIT) {
             return Result::Err(self.at(T_MISMATCH, n.body()))
         }
@@ -794,9 +902,7 @@ impl Checker {
         let d = self.resolve(i)?
         let target = self.node(d)
         if target.kind == NODE_FIELD {
-            if !self.may_write.has(self.c.slots[d]) {
-                return Result::Err(self.at(E_NOT_MUT, i))
-            }
+            self.access(d, self.body.grant.write, self.at(E_NOT_MUT, i))?
         } else if target.kind != NODE_LET || !target.is_var() {
             return Result::Err(self.at(N_ASSIGN_IMMUTABLE, i))
         }
@@ -824,14 +930,9 @@ pub fn check(_ ast: own Ast) -> Checked {
     }
     let err = ast.err
     var c = Checker {
-        c: Checked { ast, types, res, slots, err },
+        c: Checked { ast, types, res, slots, err, warns: MemVec::new() },
         the_contract: 0,
-        locals: MemVec::new(),
-        frame: 0,
-        may_read: NO_FIELDS,
-        may_write: NO_FIELDS,
-        ret: TY_UNIT,
-        loops: 0,
+        body: Body { locals: MemVec::new(), frame: 0, grant: NO_GRANT, ret: TY_UNIT, loops: 0 },
     }
     if c.c.err.is_none() {
         match c.program() {

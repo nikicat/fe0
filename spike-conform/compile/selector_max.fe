@@ -1,0 +1,4 @@
+msg M {
+    #[selector = 0xffffffff]
+    Get {} -> u256,
+}

@@ -82,7 +82,8 @@ for f in "$ROOT"/spike-conform/compile/*.fe; do
     if "$FE" check --standalone "$f" 2>&1 | grep -qE '^error'; then got=REJECT; else got=ACCEPT; fi
     case $n in
         assign_let|chain_cmp|const_divzero|const_overflow|field_nonmut_arm_write|label_required|\
-        label_wrong_order|no_return_path|uses_missing_read|uses_ro_write|uses_unknown_field) want=REJECT ;;
+        label_wrong_order|no_return_path|selector_dup_across_msgs|selector_dup_in_msg|\
+        selector_too_large|uses_missing_read|uses_ro_write|uses_unknown_field) want=REJECT ;;
         *) want=ACCEPT ;;
     esac
     check "compile: $n" "$got" "$want"

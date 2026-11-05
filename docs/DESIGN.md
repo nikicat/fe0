@@ -72,8 +72,8 @@ node kind.
 
 ## 5. Checker
 
-`check(ast)` in `fe0/src/check.fe` returns a `Checked`: the AST, side tables indexed by node,
-and the first error. `Checked` documents what each table holds.
+`check(ast)` in `fe0/src/check.fe` returns a `Checked`, which documents what each of its fields
+holds.
 
 Constants are evaluated before any body, in source order (`Checker.program`).
 
@@ -81,18 +81,22 @@ Constants are evaluated before any body, in source order (`Checker.program`).
   - `TY_UNIT`, for blocks and calls that have no value;
   - `TY_NEVER`, for `return`, `break`, `continue`, and a block that ends in one. It fits any
     type, so `if c { return 1 } else { 2 }` has type `u256`.
-- **Scopes:** a stack of locals, innermost last (`Checker.locals`). Lookup scans it from the
+- **Scopes:** a stack of locals, innermost last (`Body.locals`). Lookup scans it from the
   top, then the contract fields, then the items. A block truncates the stack back to where it
   started. A local named like a storage field is an error (SPEC §5.2).
 - **Constants:** evaluated during checking with the same checked arithmetic as run time.
   Overflow gives `C034` and division by zero `C025`.
   - Only earlier constants may be referenced.
   - Both operands of `&&` and `||` are evaluated. `eval_binary` in `fe0/src/check.fe` says why.
-- **Effects:** `init` and each arm get two `FieldSet`s, `may_read` and `may_write`, built from
-  their `uses`. `FieldSet` in `fe0/src/check.fe` bounds the number of contract fields.
-  - A field read checks `may_read` (`E116`), and an assignment checks `may_write` (`E018`).
-  - Free functions are pure (SPEC §5), so `fn_item` gives them empty sets.
-  - Duplicate entries are an error. Unused entries are not reported yet (`Checker.effects`).
+- **Effects:** `init` and each arm get a `Grant` built from their `uses` (`Checker.grant`).
+  `FieldSet` in `fe0/src/check.fe` bounds the number of contract fields.
+  - A field read checks `Grant.read` (`E116`), and an assignment checks `Grant.write` (`E018`).
+  - Free functions are pure (SPEC §5), so `fn_item` gives them an empty grant.
+  - Duplicate entries are an error. An entry the body never reads or assigns is a warning,
+    `E003`, collected in `Checked.warns`.
+- **Selectors** (SPEC §6): `Checker.msg_item` checks the selectors of each msg (`T004`,
+  `N016`), and `Checker.distinct_received_selectors` checks them across the msgs the contract
+  receives (`N016`).
 - **Return paths:** a body must have the type of its return type. A body that ends in `return`
   on every path has type `TY_NEVER`, so no separate "always returns" analysis is needed.
 - **Recursion:** the checker recurses over the AST as the parser does, so the parser's
@@ -277,6 +281,11 @@ are numbered and printed. The message comes from a table indexed by code.
 
 The CLI prints `file:line:col: CODE message`. On chain, the message is the code, the line and
 the column.
+
+The checker also reports warnings, in `Checked.warns`. They never stop the compile.
+- The CLI prints each one as `file:line:col: warning: CODE message` and still writes its output.
+- On chain, the `Checker` contract does not serialize them. `deploy` returns only an address,
+  so nothing would read them.
 
 ## 10. Differential test harness
 

@@ -80,32 +80,39 @@ pub const N_OUTSIDE_LOOP: DiagCode = DiagCode { raw: 3013 }
 // Assigning to a name that is neither a `var` local nor a contract field.
 pub const N_ASSIGN_IMMUTABLE: DiagCode = DiagCode { raw: 3014 }
 pub const N_TWO_CONTRACTS: DiagCode = DiagCode { raw: 3015 }
+// Two variants with one selector, in one msg or in two msgs the contract receives (SPEC §6).
+pub const N_DUPLICATE_SELECTOR: DiagCode = DiagCode { raw: 3016 }
 
 // Types
 pub const T_MISMATCH: DiagCode = DiagCode { raw: 4001 }
 pub const T_ARG_COUNT: DiagCode = DiagCode { raw: 4002 }
 // An expression without a value where one is needed.
 pub const T_NO_VALUE: DiagCode = DiagCode { raw: 4003 }
+// A selector that does not fit in 32 bits (SPEC §6).
+pub const T_SELECTOR_TOO_LARGE: DiagCode = DiagCode { raw: 4004 }
 
 // Effects
 
-// Reading a field that `uses` does not list. Fe's code is `8-0116`.
+// Reading a field that `uses` does not list (SPEC §6).
 pub const E_NOT_IN_USES: DiagCode = DiagCode { raw: 5116 }
-// Assigning to a field that `uses` does not list as `mut`. Fe's code is `8-0018`.
+// Assigning to a field that `uses` does not list as `mut` (SPEC §6).
 pub const E_NOT_MUT: DiagCode = DiagCode { raw: 5018 }
-// A `uses` entry that names no field of the contract. Fe's code is `8-0051`.
+// A `uses` entry that names no field of the contract (SPEC §6).
 pub const E_UNKNOWN_FIELD: DiagCode = DiagCode { raw: 5051 }
 pub const E_DUPLICATE_USE: DiagCode = DiagCode { raw: 5001 }
 // More contract fields than a FieldSet holds (MAX_FIELDS in check.fe).
 pub const E_TOO_MANY_FIELDS: DiagCode = DiagCode { raw: 5002 }
+// A warning, not an error: a `uses` entry for a field that the body never reads or assigns. Fe
+// accepts these (SPEC §6).
+pub const E_UNUSED_USE: DiagCode = DiagCode { raw: 5003 }
 
 // Constants
 
 // A constant's value uses something other than literals, earlier constants and operators.
 pub const C_NOT_CONST: DiagCode = DiagCode { raw: 6001 }
-// Division or remainder by zero in a constant. Fe's code is `3-0025`.
+// Division or remainder by zero in a constant (SPEC §5.3).
 pub const C_DIV_ZERO: DiagCode = DiagCode { raw: 6025 }
-// Arithmetic overflow in a constant. Fe's code is `3-0034`.
+// Arithmetic overflow in a constant (SPEC §5.3).
 pub const C_OVERFLOW: DiagCode = DiagCode { raw: 6034 }
 
 pub fn diag(_ code: DiagCode, _ pos: usize) -> Diag {

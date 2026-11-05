@@ -431,6 +431,11 @@ impl Ast {
         self.lists[l + 1 + i]
     }
 
+    // Returns the word that node `i` refers to: an integer literal's value or a variant's selector.
+    pub fn word_value(self, _ i: usize) -> u256 {
+        self.words[self.nodes[i].word()]
+    }
+
     // Adds node `n` and returns its index.
     pub fn add_node(mut self, _ n: Node) -> usize {
         self.nodes.push(n)

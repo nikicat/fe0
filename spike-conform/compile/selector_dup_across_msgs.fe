@@ -1,0 +1,12 @@
+msg M {
+    #[selector = 0x01]
+    Get {} -> u256,
+}
+msg N {
+    #[selector = 0x01]
+    Put {},
+}
+contract K {
+    recv M { Get {} -> u256 { 1 } }
+    recv N { Put {} { } }
+}
