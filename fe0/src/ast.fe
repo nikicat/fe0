@@ -95,7 +95,8 @@ pub const NODE_BLOCK: Kind = Kind { code: 48 }
 // `assert!`: cond, message (a STR or 0).
 pub const NODE_ASSERT: Kind = Kind { code: 49 }
 
-// A type written in the source.
+// A type. A node's ty() holds one written in the source, or TY_NONE when none is written.
+// The checker also uses TY_UNIT and TY_NEVER.
 pub struct Ty { code: u8 }
 
 impl Copy for Ty {}
@@ -110,6 +111,23 @@ pub const TY_NONE: Ty = Ty { code: 0 }
 pub const TY_U256: Ty = Ty { code: 1 }
 pub const TY_BOOL: Ty = Ty { code: 2 }
 pub const TY_ADDRESS: Ty = Ty { code: 3 }
+// The type of an expression that has no value.
+pub const TY_UNIT: Ty = Ty { code: 4 }
+// The type of an expression that never completes.
+pub const TY_NEVER: Ty = Ty { code: 5 }
+
+impl Ty {
+    // Whether an expression of this type may stand where `want` is expected.
+    // TY_NEVER fits any type.
+    pub fn fits(self, _ want: Ty) -> bool {
+        self == want || self == TY_NEVER
+    }
+
+    // Returns this written type, or TY_UNIT when none is written.
+    pub fn or_unit(self) -> Ty {
+        if self == TY_NONE { TY_UNIT } else { self }
+    }
+}
 
 // Each accessor reads one fixed slot, and no kind uses two accessors of the same slot. The
 // slots stay private to this file, so only the constructors write them.

@@ -23,7 +23,7 @@ use ingot::lexer::*
 // Deepest nesting of blocks and binary expressions. The parser recurses at each level, and the
 // EVM stack bounds that recursion. ADR 0012 gives the measurement behind this cap, and
 // `parser_tests::deepest_nesting` checks it.
-const MAX_DEPTH: usize = 20
+pub const MAX_DEPTH: usize = 20
 
 // Bytes an `assert!` message may hold after decoding escapes (SPEC.md §1).
 const MAX_MESSAGE: usize = 31
@@ -35,7 +35,7 @@ const CMP_POWER: usize = 3
 fn binding_power(_ t: Tok) -> usize {
     if t == O_OROR { return 1 }
     if t == O_ANDAND { return 2 }
-    if t == O_EQ || t == O_NE || t == O_LT || t == O_GT || t == O_LE || t == O_GE {
+    if t.is_comparison() {
         return CMP_POWER
     }
     if t == O_PIPE { return 4 }

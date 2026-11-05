@@ -49,7 +49,7 @@ use ingot::lexer::{
     Span,
     Tok,
 }
-use ingot::parser::parse
+use ingot::parser::{MAX_DEPTH, parse}
 use std::abi::DynString
 
 fn parse_text(_ s: DynString) -> Ast {
@@ -445,12 +445,17 @@ impl Printer {
     }
 }
 
-// A `Source` of `fn f() { (((1))) }` with `depth` pairs of `brackets` around the 1.
-struct Nested { brackets: String<2>, depth: usize, pos: usize }
+// The deepest nesting the parser accepts. The function body and the outer expression take two
+// levels, and each parenthesis one. Each block in a block takes two: the block and its tail.
+pub const DEEPEST_PARENS: usize = MAX_DEPTH - 2
+pub const DEEPEST_BLOCKS: usize = (MAX_DEPTH - 2) / 2
+
+// A `Source` of `fn f() -> u256 { (((1))) }` with `depth` pairs of `brackets` around the 1.
+pub struct Nested { pub brackets: String<2>, pub depth: usize, pub pos: usize }
 
 impl Source for Nested {
     fn next_byte(mut self) -> i32 {
-        let head: String<9> = "fn f() { "
+        let head: String<17> = "fn f() -> u256 { "
         let one: String<1> = "1"
         let tail: String<2> = " }"
         let i = self.pos
@@ -604,10 +609,12 @@ fn assert_message_length() {
 
 #[test]
 fn deepest_nesting() {
-    // The function body and the outer expression take two levels, and each parenthesis one.
-    assert!(nested("()", 18).is_none())
-    assert!(nested("()", 19).unwrap().code == P_TOO_DEEP)
-    // Each block in a block takes two levels: the block and its tail expression.
-    assert!(nested("{}", 9).is_none())
-    assert!(nested("{}", 10).unwrap().code == P_TOO_DEEP)
+    assert!(nested("()", DEEPEST_PARENS).is_none())
+    assert!(
+        nested("()", DEEPEST_PARENS + 1).unwrap().code == P_TOO_DEEP,
+    )
+    assert!(nested("{}", DEEPEST_BLOCKS).is_none())
+    assert!(
+        nested("{}", DEEPEST_BLOCKS + 1).unwrap().code == P_TOO_DEEP,
+    )
 }

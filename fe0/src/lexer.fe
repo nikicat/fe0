@@ -38,6 +38,11 @@ impl Tok {
     pub fn is_assign(self) -> bool {
         self == O_ASSIGN || (self.code >= A_PLUS.code && self.code <= A_SHR.code)
     }
+
+    // Whether this is a comparison operator, such as `==` or `<`.
+    pub fn is_comparison(self) -> bool {
+        self == O_EQ || self == O_NE || self == O_LT || self == O_GT || self == O_LE || self == O_GE
+    }
 }
 
 // Token kinds.

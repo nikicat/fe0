@@ -4,6 +4,7 @@
 use std::abi::{Bytes, sol}
 use fe0::io::{Source, bytes}
 use fe0::lexer::lex
+use fe0::check::check
 use fe0::parser::parse
 
 pub msg ProbeMsg {
@@ -35,6 +36,16 @@ pub contract EmptyProbe {
     recv ProbeMsg {
         Run { src } -> u256 {
             src.len() as u256
+        }
+    }
+}
+
+pub contract CheckProbe {
+    recv ProbeMsg {
+        Run { src } -> u256 {
+            with (Source = bytes(src)) {
+                check(parse()).slots.len() as u256
+            }
         }
     }
 }

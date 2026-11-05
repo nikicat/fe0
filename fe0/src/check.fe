@@ -1,0 +1,845 @@
+// Checks names, types, constants and effects (SPEC §2 and §4–6), and records what code
+// generation needs in side tables indexed by node. The design is in DESIGN.md §5.
+
+use ingot::ast::*
+use ingot::diag::*
+use ingot::lexer::*
+
+const U256_MAX: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+// A set of contract fields with one bit per storage slot, so it holds at most MAX_FIELDS fields.
+struct FieldSet { bits: u256 }
+
+impl Copy for FieldSet {}
+
+const MAX_FIELDS: usize = 256
+const NO_FIELDS: FieldSet = FieldSet { bits: 0 }
+
+impl FieldSet {
+    // Returns this set with storage slot `slot` added.
+    fn add(self, _ slot: usize) -> FieldSet {
+        FieldSet { bits: self.bits | (1 << (slot as u256)) }
+    }
+
+    // Whether the set holds storage slot `slot`.
+    fn has(self, _ slot: usize) -> bool {
+        (self.bits >> (slot as u256)) & 1 == 1
+    }
+}
+
+// The checked program. On error, `err` holds the first error and the side tables are partly
+// filled. This is not a `Result` for the same reason `Ast` is not.
+pub struct Checked {
+    pub ast: Ast,
+    // The type of every expression node, and of every node that declares a name: CONST, PARAM,
+    // FIELD, LET and BIND.
+    pub types: MemVec<Ty>,
+    // What a name refers to. For NAME and ASSIGN: the declaring node (CONST, PARAM, FIELD, LET or
+    // BIND). For CALL: the FN. For RECV: the MSG. For ARM: the VARIANT. For BIND: the variant's
+    // FIELD.
+    pub res: MemVec<usize>,
+    // For LET, PARAM and BIND: the frame slot. For a contract FIELD: the storage slot. For CONST:
+    // the index of its value in `ast.words`. For FN, INIT and ARM: the number of frame slots.
+    pub slots: MemVec<usize>,
+    pub err: Option<Diag>,
+}
+
+// A local declaration in scope, which name lookup finds before contract fields and items.
+struct Local { sym: usize, decl: usize }
+
+impl Copy for Local {}
+
+// The result of evaluating a constant expression.
+struct Val { v: u256, ty: Ty }
+
+impl Copy for Val {}
+
+struct Checker {
+    c: Checked,
+    // The CONTRACT, or 0.
+    the_contract: usize,
+    // The locals in scope, innermost last.
+    locals: MemVec<Local>,
+    // Frame slots used so far by the body being checked.
+    frame: usize,
+    // Fields the body may read and write.
+    may_read: FieldSet,
+    may_write: FieldSet,
+    // The return type of the body being checked.
+    ret: Ty,
+    // How many `while` loops enclose the current statement.
+    loops: usize,
+}
+
+// The type of the operand and the result of unary operator `op`.
+fn unary_ty(_ op: Tok) -> Ty {
+    if op == O_BANG { TY_BOOL } else { TY_U256 }
+}
+
+// Whether binary operator `op` is `==` or `!=`, whose operands may have any one type.
+fn is_equality(_ op: Tok) -> bool {
+    op == O_EQ || op == O_NE
+}
+
+// The type of the operands of binary operator `op`, other than `==` and `!=`.
+fn operand_ty(_ op: Tok) -> Ty {
+    if op == O_ANDAND || op == O_OROR {
+        TY_BOOL
+    } else {
+        TY_U256
+    }
+}
+
+// The type of the result of binary operator `op`.
+fn result_ty(_ op: Tok) -> Ty {
+    if op == O_ANDAND || op == O_OROR || op.is_comparison() {
+        TY_BOOL
+    } else {
+        TY_U256
+    }
+}
+
+// Whether argument `arg`, whose value is `value`, has the label parameter `param` asks for
+// (SPEC §5.4).
+fn label_ok(_ arg: Node, _ value: Node, _ param: Node) -> bool {
+    if param.is_positional() {
+        return arg.name() == 0
+    }
+    // A labelled parameter also takes, unlabelled, a name that spells its label.
+    let punned = arg.name() == 0 && value.kind == NODE_NAME && value.name() == param.name()
+    arg.name() == param.name() || punned
+}
+
+fn bit(_ b: bool) -> u256 {
+    if b { 1 } else { 0 }
+}
+
+impl Checker {
+    fn node(self, _ i: usize) -> Node {
+        self.c.ast.nodes[i]
+    }
+
+    fn at(self, _ code: DiagCode, _ i: usize) -> Diag {
+        diag(code, self.c.ast.nodes[i].pos)
+    }
+
+    fn len(self, _ l: usize) -> usize {
+        self.c.ast.list_len(l)
+    }
+
+    fn elem(self, _ l: usize, _ k: usize) -> usize {
+        self.c.ast.list_at(l, k)
+    }
+
+    fn set_ty(mut self, _ i: usize, _ t: Ty) {
+        self.c.types.set(i, t)
+    }
+
+    // The node in list `l` named `sym`, or 0.
+    fn find(self, _ l: usize, _ sym: usize) -> usize {
+        var k: usize = 0
+        while k < self.len(l) {
+            let i = self.elem(l, k)
+            if self.node(i).name() == sym {
+                return i
+            }
+            k += 1
+        }
+        0
+    }
+
+    // Fails with `code` at the first node in list `l` whose name an earlier node already has.
+    // ponytail: O(n²) in the list length; lists are short.
+    fn unique(self, _ l: usize, _ code: DiagCode) -> Result<Diag, ()> {
+        var k: usize = 1
+        while k < self.len(l) {
+            let i = self.elem(l, k)
+            var j: usize = 0
+            while j < k {
+                if self.node(self.elem(l, j)).name() == self.node(i).name() {
+                    return Result::Err(self.at(code, i))
+                }
+                j += 1
+            }
+            k += 1
+        }
+        Result::Ok(())
+    }
+
+    // The contract FIELD named `sym`, or 0.
+    fn field(self, _ sym: usize) -> usize {
+        if self.the_contract == 0 {
+            return 0
+        }
+        self.find(self.node(self.the_contract).list(), sym)
+    }
+
+    // The item named `sym`, or 0.
+    fn item(self, _ sym: usize) -> usize {
+        self.find(self.c.ast.items, sym)
+    }
+
+    fn local(self, _ sym: usize) -> usize {
+        var k = self.locals.len()
+        while k > 0 {
+            k -= 1
+            if self.locals[k].sym == sym {
+                return self.locals[k].decl
+            }
+        }
+        0
+    }
+
+    // The node that declares `sym` where it is used: a local, a field or an item, or 0.
+    fn lookup(self, _ sym: usize) -> usize {
+        let l = self.local(sym)
+        if l != 0 { return l }
+        let f = self.field(sym)
+        if f != 0 { return f }
+        self.item(sym)
+    }
+
+    // The node that declares the name of NAME, CALL or ASSIGN `i`. Errors with N_UNKNOWN_NAME
+    // when nothing declares it.
+    fn resolve(self, _ i: usize) -> Result<Diag, usize> {
+        let d = self.lookup(self.node(i).name())
+        if d == 0 {
+            return Result::Err(self.at(N_UNKNOWN_NAME, i))
+        }
+        Result::Ok(d)
+    }
+
+    // Declares local `sym` of type `ty`, declared by node `decl`, in the next frame slot.
+    fn declare(mut self, _ sym: usize, _ decl: usize, _ ty: Ty) -> Result<Diag, ()> {
+        if self.field(sym) != 0 {
+            return Result::Err(self.at(N_SHADOWS_FIELD, decl))
+        }
+        self.set_ty(decl, ty)
+        self.c.slots.set(decl, self.frame)
+        self.frame += 1
+        self.locals.push(Local { sym, decl })
+        Result::Ok(())
+    }
+
+    // Declares the PARAMs in list `l`.
+    fn params(mut self, _ l: usize) -> Result<Diag, ()> {
+        self.unique(l, N_DUPLICATE)?
+        var k: usize = 0
+        while k < self.len(l) {
+            let p = self.elem(l, k)
+            self.declare(self.node(p).name(), p, self.node(p).ty())?
+            k += 1
+        }
+        Result::Ok(())
+    }
+
+    // Starts a body that returns `ret`, with no locals.
+    fn begin(mut self, _ ret: Ty) {
+        self.frame = 0
+        self.locals.truncate(0)
+        self.ret = ret.or_unit()
+    }
+
+    // Checks BLOCK `body` of FN, INIT or ARM `owner` once its parameters are declared. Records the
+    // body's frame size in `slots[owner]`.
+    fn finish(mut self, _ owner: usize, _ body: usize) -> Result<Diag, ()> {
+        self.want(body, self.ret)?
+        self.c.slots.set(owner, self.frame)
+        Result::Ok(())
+    }
+
+    // Sets the fields the body may read and write from USE list `l`.
+    fn effects(mut self, _ l: usize) -> Result<Diag, ()> {
+        self.may_read = NO_FIELDS
+        self.may_write = NO_FIELDS
+        self.unique(l, E_DUPLICATE_USE)?
+        // ponytail: unused `uses` entries are not reported, though SPEC §6 asks for a warning.
+        var k: usize = 0
+        while k < self.len(l) {
+            let u = self.elem(l, k)
+            let f = self.field(self.node(u).name())
+            if f == 0 {
+                return Result::Err(self.at(E_UNKNOWN_FIELD, u))
+            }
+            let slot = self.c.slots[f]
+            self.may_read = self.may_read.add(slot)
+            if self.node(u).is_mut() {
+                self.may_write = self.may_write.add(slot)
+            }
+            k += 1
+        }
+        Result::Ok(())
+    }
+
+    // The one CONTRACT item, or 0. Errors with N_TWO_CONTRACTS at the second one.
+    fn find_contract(self) -> Result<Diag, usize> {
+        let items = self.c.ast.items
+        var found: usize = 0
+        var k: usize = 0
+        while k < self.len(items) {
+            let i = self.elem(items, k)
+            if self.node(i).kind == NODE_CONTRACT {
+                if found != 0 {
+                    return Result::Err(self.at(N_TWO_CONTRACTS, i))
+                }
+                found = i
+            }
+            k += 1
+        }
+        Result::Ok(found)
+    }
+
+    fn program(mut self) -> Result<Diag, ()> {
+        let items = self.c.ast.items
+        self.unique(items, N_DUPLICATE)?
+        self.the_contract = self.find_contract()?
+        if self.the_contract != 0 {
+            self.fields()?
+        }
+        // Constants first, in source order, so that bodies can use their values.
+        var k: usize = 0
+        while k < self.len(items) {
+            let i = self.elem(items, k)
+            if self.node(i).kind == NODE_CONST {
+                self.constant(i)?
+            }
+            k += 1
+        }
+        k = 0
+        while k < self.len(items) {
+            let i = self.elem(items, k)
+            let kind = self.node(i).kind
+            if kind == NODE_FN {
+                self.fn_item(i)?
+            } else if kind == NODE_MSG {
+                self.msg_item(i)?
+            }
+            k += 1
+        }
+        if self.the_contract != 0 {
+            self.contract_item()?
+        }
+        Result::Ok(())
+    }
+
+    // Gives each contract field its storage slot. Fields share the item namespace.
+    fn fields(mut self) -> Result<Diag, ()> {
+        let l = self.node(self.the_contract).list()
+        self.unique(l, N_DUPLICATE)?
+        var k: usize = 0
+        while k < self.len(l) {
+            let f = self.elem(l, k)
+            if k == MAX_FIELDS {
+                return Result::Err(self.at(E_TOO_MANY_FIELDS, f))
+            }
+            if self.item(self.node(f).name()) != 0 {
+                return Result::Err(self.at(N_DUPLICATE, f))
+            }
+            self.set_ty(f, self.node(f).ty())
+            self.c.slots.set(f, k)
+            k += 1
+        }
+        Result::Ok(())
+    }
+
+    fn constant(mut self, _ i: usize) -> Result<Diag, ()> {
+        let n = self.node(i)
+        let v = self.eval(n.value())?
+        if v.ty != n.ty() {
+            return Result::Err(self.at(T_MISMATCH, n.value()))
+        }
+        self.c.slots.set(i, self.c.ast.add_word(v.v))
+        self.set_ty(i, n.ty())
+        Result::Ok(())
+    }
+
+    // Evaluates constant expression `i` with the checked arithmetic of SPEC §4.
+    fn eval(mut self, _ i: usize) -> Result<Diag, Val> {
+        let n = self.node(i)
+        let k = n.kind
+        var v = Val { v: 0, ty: TY_U256 }
+        if k == NODE_INT {
+            v.v = self.c.ast.words[n.word()]
+        } else if k == NODE_BOOL {
+            v = Val { v: bit(n.is_true()), ty: TY_BOOL }
+        } else if k == NODE_NAME {
+            let d = self.item(n.name())
+            if d == 0 {
+                return Result::Err(self.at(N_UNKNOWN_NAME, i))
+            }
+            if self.node(d).kind != NODE_CONST {
+                return Result::Err(self.at(C_NOT_CONST, i))
+            }
+            // Constants are evaluated in source order, so a later one has no type yet.
+            if self.c.types[d] == TY_NONE {
+                return Result::Err(self.at(N_FORWARD_CONST, i))
+            }
+            self.c.res.set(i, d)
+            v = Val { v: self.c.ast.words[self.c.slots[d]], ty: self.c.types[d] }
+        } else if k == NODE_UNARY {
+            let a = self.eval(n.operand())?
+            v.ty = unary_ty(n.op())
+            if a.ty != v.ty {
+                return Result::Err(self.at(T_MISMATCH, n.operand()))
+            }
+            v.v = if n.op() == O_BANG { a.v ^ 1 } else { ~a.v }
+        } else if k == NODE_BINARY {
+            v = self.eval_binary(i)?
+        } else {
+            return Result::Err(self.at(C_NOT_CONST, i))
+        }
+        self.set_ty(i, v.ty)
+        Result::Ok(v)
+    }
+
+    // Evaluates BINARY `i`. Errors with C_OVERFLOW or C_DIV_ZERO when the operation overflows or
+    // divides by zero.
+    fn eval_binary(mut self, _ i: usize) -> Result<Diag, Val> {
+        let n = self.node(i)
+        let op = n.op()
+        let a = self.eval(n.lhs())?
+        let b = self.eval(n.rhs())?
+        if is_equality(op) {
+            if b.ty != a.ty {
+                return Result::Err(self.at(T_MISMATCH, n.rhs()))
+            }
+            return Result::Ok(Val { v: bit((a.v == b.v) == (op == O_EQ)), ty: TY_BOOL })
+        }
+        let t = operand_ty(op)
+        if a.ty != t {
+            return Result::Err(self.at(T_MISMATCH, n.lhs()))
+        }
+        if b.ty != t {
+            return Result::Err(self.at(T_MISMATCH, n.rhs()))
+        }
+        let x = a.v
+        let y = b.v
+        var r: u256 = 0
+        if op == O_PLUS {
+            if x > U256_MAX - y {
+                return Result::Err(self.at(C_OVERFLOW, i))
+            }
+            r = x + y
+        } else if op == O_MINUS {
+            if y > x {
+                return Result::Err(self.at(C_OVERFLOW, i))
+            }
+            r = x - y
+        } else if op == O_STAR {
+            if x != 0 && y > U256_MAX / x {
+                return Result::Err(self.at(C_OVERFLOW, i))
+            }
+            r = x * y
+        } else if op == O_SLASH || op == O_PERCENT {
+            if y == 0 {
+                return Result::Err(self.at(C_DIV_ZERO, i))
+            }
+            r = if op == O_SLASH { x / y } else { x % y }
+        } else if op == O_SHL || op == O_SHR {
+            // As on the EVM, a shift by 256 or more gives 0.
+            if y < 256 {
+                r = if op == O_SHL { x << y } else { x >> y }
+            }
+        } else if op == O_AMP || op == O_ANDAND {
+            // Both operands of `&&` and `||` were evaluated, so a constant whose right operand
+            // would fail is rejected even when it is never reached. That is stricter than run
+            // time, and the subset rule allows it.
+            r = x & y
+        } else if op == O_PIPE || op == O_OROR {
+            r = x | y
+        } else if op == O_CARET {
+            r = x ^ y
+        } else if op == O_LT {
+            r = bit(x < y)
+        } else if op == O_GT {
+            r = bit(x > y)
+        } else if op == O_LE {
+            r = bit(x <= y)
+        } else if op == O_GE {
+            r = bit(x >= y)
+        }
+        Result::Ok(Val { v: r, ty: result_ty(op) })
+    }
+
+    fn fn_item(mut self, _ i: usize) -> Result<Diag, ()> {
+        let n = self.node(i)
+        // Free functions are pure: they may touch no field.
+        self.may_read = NO_FIELDS
+        self.may_write = NO_FIELDS
+        self.begin(n.ty())
+        self.params(n.list())?
+        self.finish(i, n.body())
+    }
+
+    fn msg_item(mut self, _ i: usize) -> Result<Diag, ()> {
+        let variants = self.node(i).list()
+        self.unique(variants, N_DUPLICATE)?
+        var k: usize = 0
+        while k < self.len(variants) {
+            self.unique(self.node(self.elem(variants, k)).list(), N_DUPLICATE)?
+            k += 1
+        }
+        Result::Ok(())
+    }
+
+    fn contract_item(mut self) -> Result<Diag, ()> {
+        let n = self.node(self.the_contract)
+        if n.init() != 0 {
+            let init = self.node(n.init())
+            self.effects(init.use_list())?
+            self.begin(TY_NONE)
+            self.params(init.list())?
+            self.finish(n.init(), init.body())?
+        }
+        // Each RECV is named after its msg, so this rejects two blocks for one msg.
+        self.unique(n.recvs(), N_DUPLICATE)?
+        var k: usize = 0
+        while k < self.len(n.recvs()) {
+            self.recv(self.elem(n.recvs(), k))?
+            k += 1
+        }
+        Result::Ok(())
+    }
+
+    // Checks RECV `r` and each of its arms against the msg it names. Errors with N_MISSING_ARM
+    // when a variant has no arm.
+    fn recv(mut self, _ r: usize) -> Result<Diag, ()> {
+        let n = self.node(r)
+        let m = self.item(n.name())
+        if m == 0 || self.node(m).kind != NODE_MSG {
+            return Result::Err(self.at(N_NOT_A_MSG, r))
+        }
+        self.c.res.set(r, m)
+        let variants = self.node(m).list()
+        self.unique(n.list(), N_DUPLICATE)?
+        var k: usize = 0
+        while k < self.len(n.list()) {
+            let a = self.elem(n.list(), k)
+            let v = self.find(variants, self.node(a).name())
+            if v == 0 {
+                return Result::Err(self.at(N_UNKNOWN_VARIANT, a))
+            }
+            self.c.res.set(a, v)
+            self.arm(a, v)?
+            k += 1
+        }
+        // The arms are distinct variants, so equal counts mean every variant has one.
+        if self.len(n.list()) != self.len(variants) {
+            return Result::Err(self.at(N_MISSING_ARM, r))
+        }
+        Result::Ok(())
+    }
+
+    // Checks ARM `a` of VARIANT `v`. Its binds are its parameters.
+    fn arm(mut self, _ a: usize, _ v: usize) -> Result<Diag, ()> {
+        let n = self.node(a)
+        if n.ty() != self.node(v).ty() {
+            return Result::Err(self.at(T_MISMATCH, a))
+        }
+        let fields = self.node(v).list()
+        self.unique(n.list(), N_DUPLICATE)?
+        self.effects(n.use_list())?
+        self.begin(n.ty())
+        var k: usize = 0
+        while k < self.len(n.list()) {
+            let b = self.elem(n.list(), k)
+            let f = self.find(fields, self.node(b).name())
+            if f == 0 {
+                return Result::Err(self.at(N_UNKNOWN_FIELD, b))
+            }
+            if self.local(self.node(b).local()) != 0 {
+                return Result::Err(self.at(N_DUPLICATE, b))
+            }
+            self.c.res.set(b, f)
+            self.declare(self.node(b).local(), b, self.node(f).ty())?
+            k += 1
+        }
+        if self.len(n.list()) != self.len(fields) {
+            return Result::Err(self.at(N_MISSING_BIND, a))
+        }
+        self.finish(a, n.body())
+    }
+
+    // Checks that the type of expression `i` fits `ty`.
+    fn want(mut self, _ i: usize, _ ty: Ty) -> Result<Diag, ()> {
+        let t = self.expr(i)?
+        if !t.fits(ty) {
+            return Result::Err(self.at(T_MISMATCH, i))
+        }
+        Result::Ok(())
+    }
+
+    // Checks expression `i` and returns its type, which must not be unit.
+    fn value(mut self, _ i: usize) -> Result<Diag, Ty> {
+        let t = self.expr(i)?
+        if t == TY_UNIT {
+            return Result::Err(self.at(T_NO_VALUE, i))
+        }
+        Result::Ok(t)
+    }
+
+    // Checks expression `i` and returns its type.
+    fn expr(mut self, _ i: usize) -> Result<Diag, Ty> {
+        let n = self.node(i)
+        let k = n.kind
+        var t = TY_UNIT
+        if k == NODE_INT {
+            t = TY_U256
+        } else if k == NODE_BOOL {
+            t = TY_BOOL
+        } else if k == NODE_NAME {
+            t = self.name(i)?
+        } else if k == NODE_BINARY {
+            t = self.binary(i)?
+        } else if k == NODE_UNARY {
+            t = unary_ty(n.op())
+            self.want(n.operand(), t)?
+        } else if k == NODE_CALL {
+            t = self.call(i)?
+        } else if k == NODE_IF {
+            t = self.if_expr(i)?
+        } else if k == NODE_BLOCK {
+            t = self.block(i)?
+        } else if k == NODE_ASSERT {
+            self.want(n.cond(), TY_BOOL)?
+        }
+        self.set_ty(i, t)
+        Result::Ok(t)
+    }
+
+    fn name(mut self, _ i: usize) -> Result<Diag, Ty> {
+        let d = self.resolve(i)?
+        let kind = self.node(d).kind
+        if kind == NODE_FIELD && !self.may_read.has(self.c.slots[d]) {
+            return Result::Err(self.at(E_NOT_IN_USES, i))
+        }
+        if kind == NODE_FN || kind == NODE_MSG || kind == NODE_CONTRACT {
+            return Result::Err(self.at(N_NOT_A_VALUE, i))
+        }
+        self.c.res.set(i, d)
+        Result::Ok(self.c.types[d])
+    }
+
+    fn binary(mut self, _ i: usize) -> Result<Diag, Ty> {
+        let n = self.node(i)
+        let op = n.op()
+        if is_equality(op) {
+            let t = self.value(n.lhs())?
+            self.want(n.rhs(), t)?
+        } else {
+            self.want(n.lhs(), operand_ty(op))?
+            self.want(n.rhs(), operand_ty(op))?
+        }
+        Result::Ok(result_ty(op))
+    }
+
+    // Checks the arguments of CALL `i` against the parameters of its function (SPEC §5.4).
+    fn call(mut self, _ i: usize) -> Result<Diag, Ty> {
+        let n = self.node(i)
+        let f = self.resolve(i)?
+        if self.node(f).kind != NODE_FN {
+            return Result::Err(self.at(N_NOT_A_FUNCTION, i))
+        }
+        self.c.res.set(i, f)
+        let params = self.node(f).list()
+        let args = n.list()
+        if self.len(args) != self.len(params) {
+            return Result::Err(self.at(T_ARG_COUNT, i))
+        }
+        var k: usize = 0
+        while k < self.len(args) {
+            let a = self.node(self.elem(args, k))
+            let p = self.node(self.elem(params, k))
+            if !label_ok(a, self.node(a.value()), p) {
+                return Result::Err(self.at(N_BAD_LABEL, self.elem(args, k)))
+            }
+            self.want(a.value(), p.ty())?
+            k += 1
+        }
+        Result::Ok(self.node(f).ty().or_unit())
+    }
+
+    // Checks IF `i` and its `else if` chain. Returns the type of the whole chain, which every IF
+    // of the chain gets.
+    fn if_expr(mut self, _ i: usize) -> Result<Diag, Ty> {
+        // The type of the branches so far.
+        var ty = TY_NEVER
+        var at = i
+        // A loop, as the parser reads the chain, so that a long chain does not recurse.
+        while true {
+            let n = self.node(at)
+            self.want(n.cond(), TY_BOOL)?
+            ty = self.join(ty, n.body())?
+            let e = n.otherwise()
+            if e == 0 {
+                // Without `else`, the IF has no value, so neither may its branches.
+                if !ty.fits(TY_UNIT) {
+                    return Result::Err(self.at(T_MISMATCH, n.body()))
+                }
+                ty = TY_UNIT
+                break
+            }
+            if self.node(e).kind != NODE_IF {
+                ty = self.join(ty, e)?
+                break
+            }
+            at = e
+        }
+        at = i
+        while at != 0 && self.node(at).kind == NODE_IF {
+            self.set_ty(at, ty)
+            at = self.node(at).otherwise()
+        }
+        Result::Ok(ty)
+    }
+
+    // Checks branch `b` and joins its type with `ty`, the type of the branches before it.
+    fn join(mut self, _ ty: Ty, _ b: usize) -> Result<Diag, Ty> {
+        let t = self.expr(b)?
+        if ty == TY_NEVER {
+            return Result::Ok(t)
+        }
+        if !t.fits(ty) {
+            return Result::Err(self.at(T_MISMATCH, b))
+        }
+        Result::Ok(ty)
+    }
+
+    // A block's type is its tail's, or TY_NEVER if a statement never completes, or unit.
+    fn block(mut self, _ i: usize) -> Result<Diag, Ty> {
+        let n = self.node(i)
+        let mark = self.locals.len()
+        var t = TY_UNIT
+        var k: usize = 0
+        while k < self.len(n.list()) {
+            if self.stmt(self.elem(n.list(), k))? == TY_NEVER {
+                t = TY_NEVER
+            }
+            k += 1
+        }
+        if n.value() != 0 {
+            let tail = self.expr(n.value())?
+            if t != TY_NEVER { t = tail }
+        }
+        self.locals.truncate(mark)
+        Result::Ok(t)
+    }
+
+    // Checks statement `i`. Returns TY_NEVER if it never completes, else unit.
+    fn stmt(mut self, _ i: usize) -> Result<Diag, Ty> {
+        let n = self.node(i)
+        let k = n.kind
+        if k == NODE_LET {
+            self.let_stmt(i)?
+            return Result::Ok(TY_UNIT)
+        }
+        if k == NODE_WHILE {
+            self.while_stmt(i)?
+            return Result::Ok(TY_UNIT)
+        }
+        if k == NODE_RETURN {
+            if n.value() != 0 {
+                self.want(n.value(), self.ret)?
+            } else if self.ret != TY_UNIT {
+                return Result::Err(self.at(T_MISMATCH, i))
+            }
+            return Result::Ok(TY_NEVER)
+        }
+        if k == NODE_BREAK || k == NODE_CONTINUE {
+            if self.loops == 0 {
+                return Result::Err(self.at(N_OUTSIDE_LOOP, i))
+            }
+            return Result::Ok(TY_NEVER)
+        }
+        if k == NODE_ASSIGN {
+            self.assign(i)?
+            return Result::Ok(TY_UNIT)
+        }
+        if self.expr(i)? == TY_NEVER {
+            return Result::Ok(TY_NEVER)
+        }
+        Result::Ok(TY_UNIT)
+    }
+
+    // Checks LET `i` and declares its local.
+    fn let_stmt(mut self, _ i: usize) -> Result<Diag, ()> {
+        let n = self.node(i)
+        var t = self.value(n.value())?
+        if n.ty() != TY_NONE {
+            if !t.fits(n.ty()) {
+                return Result::Err(self.at(T_MISMATCH, n.value()))
+            }
+            t = n.ty()
+        } else if t == TY_NEVER {
+            return Result::Err(self.at(T_NO_VALUE, n.value()))
+        }
+        // Declared after its value, so a local is not in scope in its own initializer.
+        self.declare(n.name(), i, t)
+    }
+
+    fn while_stmt(mut self, _ i: usize) -> Result<Diag, ()> {
+        let n = self.node(i)
+        self.want(n.cond(), TY_BOOL)?
+        self.loops += 1
+        let body = self.expr(n.body())?
+        self.loops -= 1
+        if !body.fits(TY_UNIT) {
+            return Result::Err(self.at(T_MISMATCH, n.body()))
+        }
+        Result::Ok(())
+    }
+
+    fn assign(mut self, _ i: usize) -> Result<Diag, ()> {
+        let n = self.node(i)
+        let d = self.resolve(i)?
+        let target = self.node(d)
+        if target.kind == NODE_FIELD {
+            if !self.may_write.has(self.c.slots[d]) {
+                return Result::Err(self.at(E_NOT_MUT, i))
+            }
+        } else if target.kind != NODE_LET || !target.is_var() {
+            return Result::Err(self.at(N_ASSIGN_IMMUTABLE, i))
+        }
+        self.c.res.set(i, d)
+        let t = self.c.types[d]
+        // Every compound operator is arithmetic or bitwise on u256.
+        if n.op() != O_ASSIGN && t != TY_U256 {
+            return Result::Err(self.at(T_MISMATCH, i))
+        }
+        self.want(n.value(), t)
+    }
+}
+
+// Checks `ast`. A lexer or parser error in `ast.err` is passed on without checking.
+pub fn check(_ ast: own Ast) -> Checked {
+    var types: MemVec<Ty> = MemVec::new()
+    var res: MemVec<usize> = MemVec::new()
+    var slots: MemVec<usize> = MemVec::new()
+    var k: usize = 0
+    while k < ast.nodes.len() {
+        types.push(TY_NONE)
+        res.push(0)
+        slots.push(0)
+        k += 1
+    }
+    let err = ast.err
+    var c = Checker {
+        c: Checked { ast, types, res, slots, err },
+        the_contract: 0,
+        locals: MemVec::new(),
+        frame: 0,
+        may_read: NO_FIELDS,
+        may_write: NO_FIELDS,
+        ret: TY_UNIT,
+        loops: 0,
+    }
+    if c.c.err.is_none() {
+        match c.program() {
+            Result::Ok(_) => {},
+            Result::Err(d) => {
+                c.c.err = Option::Some(d)
+            },
+        }
+    }
+    c.c
+}

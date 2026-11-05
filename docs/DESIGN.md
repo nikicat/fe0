@@ -54,8 +54,9 @@ node kind.
 - **Building lists:** one stack, `Parser.pending` in `fe0/src/parser.fe`, serves all lists, since
   inner lists close before outer ones.
 - **Interning:** a linear scan over `syms`, in `Ast.intern`.
-- **Check results go in side tables indexed by node** (`types: MemVec<Ty>`,
-  `res: MemVec<usize>`). The AST itself is never mutated after parsing.
+- **Check results go in side tables indexed by node** (`types`, `res` and `slots`, §5). The
+  AST's nodes are never mutated after parsing; the checker only appends constant values to
+  `words`.
 
 ## 4. Parser
 
@@ -71,22 +72,32 @@ node kind.
 
 ## 5. Checker
 
-The checker makes one pass over items to collect names, then one pass over bodies.
+`check(ast)` in `fe0/src/check.fe` returns a `Checked`: the AST, side tables indexed by node,
+and the first error. `Checked` documents what each table holds.
 
-- **Types:** the checker reuses `Ty` from `fe0/src/ast.fe` and adds a unit type, for blocks and
-  calls that have no value. Every expression node gets one.
-- **Scopes:** a stack of `Local { sym, ty, mutable, frame_slot }` plus a stack of scope marks.
-  Lookup scans from the top. A local named like a storage field is an error (SPEC §5.2).
-- **Constants:** evaluated during checking with the same checked arithmetic as runtime. Overflow
-  gives `C034` and division by zero `C025`, mirroring Fe's `3-0034`/`3-0025`. Only earlier
-  constants may be referenced.
-- **Effects:** each `init`/arm gets two `u256` bitmasks over the contract's fields, `may_read`
-  and `may_write`, built from its `uses` (one bit per field, at most 256 fields).
-  - A field read checks `may_read`, an assignment checks `may_write`.
-  - Free functions have both masks zero, so any field access in them is an error.
-  - Entries that are never used produce a warning. Duplicates are an error.
-- **Return paths:** a function body must end in a value of the return type, or every path must
-  end in `return`. This is checked on the AST, with "always returns" computed bottom-up.
+Constants are evaluated before any body, in source order (`Checker.program`).
+
+- **Types:** the checker reuses `Ty` from `fe0/src/ast.fe` and adds two types of its own:
+  - `TY_UNIT`, for blocks and calls that have no value;
+  - `TY_NEVER`, for `return`, `break`, `continue`, and a block that ends in one. It fits any
+    type, so `if c { return 1 } else { 2 }` has type `u256`.
+- **Scopes:** a stack of locals, innermost last (`Checker.locals`). Lookup scans it from the
+  top, then the contract fields, then the items. A block truncates the stack back to where it
+  started. A local named like a storage field is an error (SPEC §5.2).
+- **Constants:** evaluated during checking with the same checked arithmetic as run time.
+  Overflow gives `C034` and division by zero `C025`.
+  - Only earlier constants may be referenced.
+  - Both operands of `&&` and `||` are evaluated. `eval_binary` in `fe0/src/check.fe` says why.
+- **Effects:** `init` and each arm get two `FieldSet`s, `may_read` and `may_write`, built from
+  their `uses`. `FieldSet` in `fe0/src/check.fe` bounds the number of contract fields.
+  - A field read checks `may_read` (`E116`), and an assignment checks `may_write` (`E018`).
+  - Free functions are pure (SPEC §5), so `fn_item` gives them empty sets.
+  - Duplicate entries are an error. Unused entries are not reported yet (`Checker.effects`).
+- **Return paths:** a body must have the type of its return type. A body that ends in `return`
+  on every path has type `TY_NEVER`, so no separate "always returns" analysis is needed.
+- **Recursion:** the checker recurses over the AST as the parser does, so the parser's
+  `MAX_DEPTH` bounds it too, as `check_tests::deep_nesting_and_long_chains` checks. An
+  `else if` chain is checked in a loop.
 
 ## 6. Code generation
 
@@ -213,7 +224,7 @@ Each phase is its own contract, because lexer and parser together already exceed
 |---|---|---|
 | `Lexer` | `lex(bytes src) -> bytes` | lex, then serialize the tokens |
 | `Parser` | `parse(bytes src, bytes toks) -> bytes` | parse, then serialize nodes, lists, syms and words |
-| `Checker` | `check(bytes src, bytes ast) -> bytes` | check, then serialize types and frame sizes |
+| `Checker` | `check(bytes src, bytes ast) -> bytes` | check, then serialize `types`, `res`, `slots` and the words it adds |
 | `Back` | `emit(bytes ir) -> bytes` | deserialize, codegen, assemble, return deploy code |
 | `Compiler` | `deploy(bytes src) -> address` | `STATICCALL` each phase in turn, then `create_raw` |
 
