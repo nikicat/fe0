@@ -1,0 +1,15 @@
+// expect: N017 11:13
+// A `let` local may not start with an uppercase letter (SPEC §5.2).
+msg M {
+    #[selector = 1]
+    Get { x: u256 } -> u256,
+}
+
+contract C {
+    recv M {
+        Get { x } -> u256 {
+            let Some: u256 = x
+            Some
+        }
+    }
+}

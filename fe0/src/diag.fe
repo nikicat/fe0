@@ -54,6 +54,10 @@ pub const P_CHAINED_COMPARISON: DiagCode = DiagCode { raw: 2007 }
 pub const P_TOO_DEEP: DiagCode = DiagCode { raw: 2008 }
 pub const P_MESSAGE_TOO_LONG: DiagCode = DiagCode { raw: 2009 }
 pub const P_FIELD_NOT_MUT: DiagCode = DiagCode { raw: 2010 }
+// A `<` that may start generic arguments after a name (SPEC.md §3.2).
+pub const P_GENERIC_ARGS: DiagCode = DiagCode { raw: 2011 }
+// A `{` at the start of a line after a statement that ends with a name (SPEC.md §3.4).
+pub const P_RECORD_LITERAL: DiagCode = DiagCode { raw: 2012 }
 
 // Names
 
@@ -82,6 +86,8 @@ pub const N_ASSIGN_IMMUTABLE: DiagCode = DiagCode { raw: 3014 }
 pub const N_TWO_CONTRACTS: DiagCode = DiagCode { raw: 3015 }
 // Two variants with one selector, in one msg or in two msgs the contract receives (SPEC §6).
 pub const N_DUPLICATE_SELECTOR: DiagCode = DiagCode { raw: 3016 }
+// A local or parameter whose name starts with an uppercase letter (SPEC §5.2).
+pub const N_UPPERCASE_LOCAL: DiagCode = DiagCode { raw: 3017 }
 
 // Types
 pub const T_MISMATCH: DiagCode = DiagCode { raw: 4001 }

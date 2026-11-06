@@ -1,0 +1,6 @@
+// expect: N017 4:6
+// A parameter may not start with an uppercase letter (SPEC §5.2).
+// fe: accepts
+fn f(_ Option: u256) -> u256 {
+    Option
+}

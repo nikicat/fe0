@@ -1,0 +1,7 @@
+# DESIGN.md §1 says why this workspace file exists. Only fe0 is a member.
+# The corpus programs are standalone on purpose. The spike-* directories hold
+# separate probe ingots or standalone probe files.
+[workspace]
+name = "fe-contest"
+version = "0.1.0"
+members = ["fe0"]

@@ -1,0 +1,9 @@
+// expect: P011 8:9
+// A list of generic arguments may run across a comma in a call (SPEC §3.2).
+fn g(_ a: bool, _ b: u256) -> u256 {
+    0
+}
+
+fn f(_ x: u256, _ y: u256, _ z: u256) -> u256 {
+    g(x < y, z >> x)
+}

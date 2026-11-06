@@ -246,10 +246,14 @@ impl Checker {
         Result::Ok(d)
     }
 
-    // Declares local `sym` of type `ty`, declared by node `decl`, in the next frame slot.
+    // Declares local `sym` of type `ty`, declared by node `decl`, in the next frame slot. Errors
+    // with N_SHADOWS_FIELD or N_UPPERCASE_LOCAL when SPEC §5.2 does not allow the name.
     fn declare(mut self, _ sym: usize, _ decl: usize, _ ty: Ty) -> Result<Diag, ()> {
         if self.field(sym) != 0 {
             return Result::Err(self.at(N_SHADOWS_FIELD, decl))
+        }
+        if self.c.ast.starts_upper(sym) {
+            return Result::Err(self.at(N_UPPERCASE_LOCAL, decl))
         }
         self.set_ty(decl, ty)
         self.c.slots.set(decl, self.body.frame)

@@ -10,7 +10,9 @@ use ingot::diag::{
     P_EXPECTED_TOKEN,
     P_EXPECTED_TYPE,
     P_FIELD_NOT_MUT,
+    P_GENERIC_ARGS,
     P_MESSAGE_TOO_LONG,
+    P_RECORD_LITERAL,
     P_TOO_DEEP,
 }
 use ingot::io::{Source, text}
@@ -591,6 +593,39 @@ fn errors() {
     let d = parse_err("fn f() { a < b < c }")
     assert!(d.code == P_CHAINED_COMPARISON)
     assert!(d.pos == 15)
+}
+
+#[test]
+fn generic_arguments() {
+    // Each of these `<` may start generic arguments (SPEC.md §3.2).
+    let d = parse_err("fn f() { a < b >> c }")
+    assert!(d.code == P_GENERIC_ARGS)
+    assert!(d.pos == 11)
+    assert!(
+        parse_err("fn f() { g(a < b, c >> d) }").code == P_GENERIC_ARGS,
+    )
+    assert!(
+        parse_err("fn f() { a < h(b) >= c }").code == P_GENERIC_ARGS,
+    )
+    assert!(
+        parse_err("fn f() { a < {b} >> c }").code == P_GENERIC_ARGS,
+    )
+    // None of these `<` may start generic arguments.
+    parse_text("fn f() { a < b - 1 >> c }")
+    parse_text("fn f() { (a) < b >> c }")
+    parse_text("fn f() { g(a < b, a <= b, a > b) }")
+    parse_text("fn f() { while a < b { c >> d } }")
+    parse_text("fn f() { if a < b { b } else if a > c { c } }")
+    parse_text("fn f() { a < b | c >> d }")
+}
+
+#[test]
+fn record_literal() {
+    // The record-literal rule of SPEC.md §3.4.
+    let d = parse_err("fn f() {\n    let a = b\n    { a }\n}")
+    assert!(d.code == P_RECORD_LITERAL)
+    assert!(d.pos == 27)
+    parse_text("fn f() {\n    let a = (b)\n    { a }\n}")
 }
 
 #[test]

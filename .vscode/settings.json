@@ -1,0 +1,7 @@
+{
+  // The reject programs are invalid on purpose. As plain text they do not go to Fe's
+  // language server, which would report their errors and a standalone-file warning.
+  "files.associations": {
+    "**/corpus/reject/*.fe": "plaintext"
+  }
+}

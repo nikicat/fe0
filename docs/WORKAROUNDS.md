@@ -3,6 +3,8 @@
 Known compiler issues and the shapes we use instead. The toolchain is **Fe 26.5.1**, as
 pinned in `.github/workflows/ci.yml`.
 Each entry says where it bites, what we do instead, and its upstream status.
+A bug is listed as open while Fe master still has it, and as fixed upstream once master
+passes it.
 
 ## Language idioms (not bugs, but they cost time)
 
@@ -25,25 +27,20 @@ Each entry says where it bites, what we do instead, and its upstream status.
 - An argument must be labelled unless its parameter is declared as `_ name`.
 - A unit `recv` arm needs `Name {}` before its body.
 - **Compile time:** `fe test -O 0` is about 3× faster than `-O 1` and 6× faster than the
-  default. Use `-O 0` while iterating. CI runs the default level, because that is what
-  deploys.
+  default. Use `-O 0` while iterating. CI runs `fe test` in `fe0/` at the default level,
+  because that is what deploys. The corpus and generated-programs steps run `tools/embed.py`
+  and `tools/gen.py`. These pass `-O 1` to `fe test` unless `-O` is given.
 
-## Open bugs (26.5.1, not checked on master)
+## Open bugs (26.5.1)
 
-Both were found by the random generator (DESIGN.md §11) and are not reported upstream yet.
-
-- **The backend panics on a shift by a large constant.** `x << C` or `x >> C`, where `x` is
-  not a constant and `C` is a constant of 2⁶⁴ or more, makes `fe build` and `fe test` panic
-  with "Integer overflow when casting to usize" (in `primitive-types`), at every `-O` level.
-  `fe check` accepts the program. `1 << C` folds and works.
-  - **Reproduction:** `fn h(_ x: u256) -> u256 { x << 0x10000000000000000 }`, called from an
-    arm with `h(x)` or `h(5)`.
-  - **Workaround:** `Gen.shift_amount` in `tools/gen.py` keeps every shift amount below 512
-    outside constant declarations, where the shift folds.
 - **`fe fmt` breaks long lines into code that Fe does not parse.** It moves a binary operator
   such as `<` or `<<` to the start of the next line. The parser then rejects that line with
-  "line-start `<` is ambiguous" (`1-0001`), even though `fe fmt` exits with 0.
+  "line-start `<` is ambiguous" (`1-0001`), even though `fe fmt` exits with 0. The random
+  generator (DESIGN.md §11) found it.
   - **Reproduction:** a `let y: bool = …` whose comparison is longer than the line width.
+  - **Upstream:** The bug is still on master `b182b0126`. The open PR argotorg/fe#1523
+    targets this class of bug, but we have not tested it. Our reproduction is in a comment on
+    that PR.
   - **Workaround:** `tools/embed.py` writes the program modules of its batch ingots without
     formatting them.
 
@@ -59,6 +56,27 @@ Both were found by the random generator (DESIGN.md §11) and are not reported up
     needs a port to the new API only if we leave 26.5.1.
 
 ## Fixed upstream (master only; we stay on 26.5.1)
+
+- **The optimizer drops the operand of an unused checked operation, but keeps its check.** At
+  `-O 1` and above, `var x: u256 = 2 - (a ^ 5)` with `x` unused and `a = 1` checks `2 - a`
+  instead of `2 - 4`. So the call succeeds where it should revert with `Panic(0x11)`. The
+  same bug can also add a spurious panic. Master `b182b0126` checks the right operand, and it
+  adds no spurious panic. The issue argotorg/fe#1853 is still open, and a comment there holds
+  our case.
+  - **Where it bites:** generated program seed 99 (`tools/gen.py --seed 99 -n 1`) fails at
+    `-O 1` and `-O 2`, and passes at `-O 0`. The tools use `-O 1` by default (see Compile
+    time). CI runs seeds 1–25, which do not hit it.
+  - **Workaround on 26.5.1:** none in the generator yet.
+
+- **The backend panics on a shift by a large constant.** `x << C` or `x >> C`, where `x` is
+  not a constant and `C` is a constant of 2⁶⁴ or more, makes `fe build` and `fe test` panic
+  with "Integer overflow when casting to usize" (in `primitive-types`), at every `-O` level.
+  `fe check` accepts the program. The random generator found it. Master `b182b0126` compiles
+  it at every level and gives 0, probably through its newer Sonatina, so it was not reported.
+  - **Reproduction:** `fn h(_ x: u256) -> u256 { x << 0x10000000000000000 }`, called from an
+    arm with `h(x)` or `h(5)`.
+  - **Workaround on 26.5.1:** `BodyWriter.shift_amount` in `tools/gen.py` keeps every shift amount
+    below 512 outside constant declarations, where the shift folds.
 
 - **Same-named contracts in two modules** crash codegen (argotorg/fe#1887, fixed by #1890).
   `fe test` fails with `InvalidCodeRegion`, and `fe build` fails with "duplicate root object

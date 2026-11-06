@@ -12,7 +12,7 @@
 use ingot::diag::Diag
 use ingot::lexer::{Lexed, Span, T_EOF, Tok, Token}
 
-// Kind of a node. The NODE_ constants below are its only values.
+// The kind of a node. The NODE_ constants below are its only values.
 pub struct Kind { code: u8 }
 
 impl Copy for Kind {}
@@ -496,5 +496,10 @@ impl Ast {
         }
         self.syms.push(t.span)
         self.syms.len() - 1
+    }
+
+    // Whether name `sym` starts with an uppercase letter.
+    pub fn starts_upper(self, _ sym: usize) -> bool {
+        self.lexed.text.starts_upper(self.syms[sym])
     }
 }

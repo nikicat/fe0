@@ -1,0 +1,7 @@
+// expect: P003 3:7
+// A constant cannot be named with a type name (SPEC §1).
+const usize: u256 = 1
+
+fn f() -> u256 {
+    usize
+}

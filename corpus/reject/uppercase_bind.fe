@@ -1,0 +1,14 @@
+// expect: N017 10:15
+// A bind in a `recv` arm may not start with an uppercase letter (SPEC §5.2).
+msg M {
+    #[selector = 1]
+    Get { x: u256 } -> u256,
+}
+
+contract C {
+    recv M {
+        Get { x: Option } -> u256 {
+            Option
+        }
+    }
+}

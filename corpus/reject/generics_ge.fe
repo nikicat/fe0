@@ -1,0 +1,10 @@
+// expect: P011 9:9
+// Fe0 takes `>=` as the end of generic arguments, although Fe does not (SPEC §3.2).
+// fe: accepts
+fn g(_ a: bool, _ b: bool) -> u256 {
+    0
+}
+
+fn f(_ x: u256, _ y: u256, _ z: u256) -> u256 {
+    g(x < y, z >= x)
+}

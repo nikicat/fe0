@@ -1,0 +1,9 @@
+// expect: P003 3:4
+// A function cannot be named with a type name (SPEC §1).
+fn String(_ a: u256) -> u256 {
+    a
+}
+
+fn f() -> u256 {
+    String(1)
+}

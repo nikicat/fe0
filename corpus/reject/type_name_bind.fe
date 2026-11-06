@@ -1,0 +1,14 @@
+// expect: P003 10:18
+// A bind cannot be named with a type name (SPEC §1).
+msg M {
+    #[selector = 1]
+    Get { x: u256 } -> u256,
+}
+
+contract C {
+    recv M {
+        Get { x: bool } -> u256 {
+            bool
+        }
+    }
+}

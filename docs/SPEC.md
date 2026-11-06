@@ -27,7 +27,7 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 | Whitespace | `[ \t]+` | Ignored |
 | Newline | `(\n \| \r\n \| \r)+` | Significant: it can end a statement (§3.4) |
 | Line comment | `//` up to the end of the line | `///` doc comments are lexed the same way and ignored |
-| Identifier | `[a-zA-Z_][a-zA-Z0-9_]*`, excluding keywords and a lone `_` | |
+| Identifier | `[a-zA-Z_][a-zA-Z0-9_]*`, excluding keywords, type names and a lone `_` | |
 | Decimal integer | `[0-9]+(_[0-9]+)*` | The value must fit in 256 bits |
 | Hex integer | `0[xX][0-9a-fA-F]+` | No `_` separators. Must fit in 256 bits |
 | String | `"` … `"` with escapes `\" \\ \n \r \t` | Only allowed as the message of `assert!`, and at most 31 bytes after decoding. Fe accepts longer messages **[✓]**; Fe0 v1 restricts them so `Error(string)` stays one data word |
@@ -46,6 +46,18 @@ own use extern unsafe ingot super`.
 
 `init`, `recv`, `assert` and `with` are contextual words in Fe, not keywords. Fe0 **also
 rejects them as identifiers**, which keeps the parser simple and is allowed by the subset rule.
+
+**Type names.** `u` or `i` followed by digits, `usize`, `isize`, `bool`, `String` and
+`Address` are type names, not identifiers. Fe0 rejects them wherever a name appears.
+
+Fe's rule is narrower than Fe0's. Its primitive types are `u8`, `u16`, `u32`, `u64`, `u128`
+and `u256`, the `i` types of the same widths, `usize`, `isize`, `bool` and `String`. Fe
+rejects a local, parameter, function or constant named after one of them, with `8-0030` at
+each use **[✓]**. A `let`, a `var` and a bind all count as locals. Fe accepts these names for
+fields. It also accepts them for msgs, variants and contracts, except `bool` and `u256`
+**[✓]**. Fe accepts `Address` as the name of a parameter, function or constant **[✓]**.
+Widths that Fe lacks, such as `u7` and `u24`, are plain names in Fe **[✓]**. Fe0 keeps one
+rule for every name, which the subset rule allows.
 
 ## 2. Types
 
@@ -147,6 +159,18 @@ tightest:
 - All binary operators associate to the left.
 - Comparisons do not chain: `a < b < c` is rejected. Fe rejects it too **[✓]**, with `8-0016`,
   because `bool` has no `Ord`.
+- **Generic arguments.** After a name, Fe reads `<` as the start of generic arguments when
+  a comma-separated list of arguments follows and `>` closes it. So it reads `x < y >> z` as
+  `x<y>` followed by `> z`, and rejects it with `2-0011` **[✓]**. An argument may be a name,
+  including a type name, a literal (an integer, `true` or `false`), a call, or a group in
+  `( )`, `[ ]` or `{ }`. A `>>` or `>>=` closes the list as `>` does **[✓]**. Any other
+  operator in an argument ends the list, so `x < y + 1 >> z` and `(x) < y >> z` are
+  comparisons **[✓]**. A name right after the closing `>` also makes Fe read comparisons, so
+  it accepts `g(x < y, z > x)` **[✓]**.
+  When a `<` after a name may start generic arguments, Fe0 rejects it with `P011`. Fe0's rule
+  is wider than Fe's. It ignores what follows the `>`, so it rejects `g(x < y, z > x)`. It also
+  takes `>=` as a closer. Fe does not close the list with `>=`, so it accepts
+  `g(x < y, z >= x)` **[✓]**.
 - Assignment is a statement in Fe0, not an expression.
 
 ### 3.3 Left out of Fe0 (all valid Fe)
@@ -170,6 +194,11 @@ A statement ends at a newline, right before the `}` that closes its block, as in
 - The `{` that opens a block must be on the same line as the header or condition before it.
   This holds for a function, `init`, arm, `recv`, `msg` and `contract` header, and for the
   condition of an `if` or `while`. `else` must be on the same line as the `}` before it.
+- A line that starts with `{` may not follow a statement that ends with a name. Fe can read
+  the two as a record literal of that name. So `let a: u256 = x` followed by `{ a }` is
+  rejected with `8-0006` **[✓]**. Fe0 rejects it with `P012`. Fe0's rule is wider than Fe's.
+  Fe accepts `1 + x` at the end of the line, and Fe0 rejects it. Both accept `(x)` and
+  `x + 1` there.
 
 So an expression may span lines only inside parentheses. Fe's automatic semicolon rule is more
 permissive, for example a line may start with `||`, so this is a valid subset.
@@ -229,6 +258,12 @@ ABI-encoded string.
    - A local's scope runs from after its declaration to the end of its block.
    - A local may not take the name of a storage field. Fe accepts this **[✓]**, but Fe0 rejects
      it, so a name never silently stops referring to storage.
+   - The name of a local or a parameter may not start with an uppercase letter (`N017`). This
+     covers `let`, `var`, a bind such as `x: Option` in a `recv` arm, and parameters.
+   - Fe's rule is narrower. Fe reads an uppercase local or bind that names a type or a variant
+     in scope, such as `let Some` or `x: Option`, as a pattern, and rejects it **[✓]**. Fe
+     accepts any other uppercase local, such as `let Foo` **[✓]**, and every uppercase
+     parameter **[✓]**. Fe0 rejects them all, so that one rule covers locals and parameters alike.
 3. **Constants** are evaluated at compile time with the §4 semantics. Overflow is a compile-time
    error (`3-0034`), and so is division by zero (`3-0025`) **[✓]**.
    - A constant may refer only to earlier constants and literals.

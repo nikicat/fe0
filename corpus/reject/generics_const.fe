@@ -1,0 +1,7 @@
+// expect: P011 6:7
+// A constant's name may take generic arguments too (SPEC §3.2).
+const K: u256 = 1
+
+fn f(_ x: u256, _ y: u256, _ z: u256) -> bool {
+    K < y >> z
+}

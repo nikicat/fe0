@@ -1,0 +1,16 @@
+// expect: N017 11:13
+// A `var` local may not start with an uppercase letter (SPEC §5.2).
+msg M {
+    #[selector = 1]
+    Get { x: u256 } -> u256,
+}
+
+contract C {
+    recv M {
+        Get { x } -> u256 {
+            var Evm: u256 = x
+            Evm += 1
+            Evm
+        }
+    }
+}

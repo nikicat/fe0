@@ -47,6 +47,11 @@ impl Tok {
         self == O_ASSIGN || (self.code >= A_PLUS.code && self.code <= A_SHR.code)
     }
 
+    // Whether this is a type name (SPEC.md §1).
+    pub fn is_type_name(self) -> bool {
+        self.code >= T_TYPE.code && self.code <= T_ADDRESS.code
+    }
+
     // Whether this is a comparison operator, such as `==` or `<`.
     pub fn is_comparison(self) -> bool {
         self == O_EQ || self == O_NE || self == O_LT || self == O_GT || self == O_LE || self == O_GE
@@ -60,6 +65,12 @@ pub const T_IDENT: Tok = Tok { code: 2 }
 pub const T_INT: Tok = Tok { code: 3 }
 pub const T_STR: Tok = Tok { code: 4 }
 pub const T_UNDERSCORE: Tok = Tok { code: 5 }
+// A type name other than the types Fe0 supports, such as `u8` (SPEC.md §1).
+pub const T_TYPE: Tok = Tok { code: 6 }
+// The names of the types Fe0 supports (SPEC.md §1).
+pub const T_U256: Tok = Tok { code: 7 }
+pub const T_BOOL: Tok = Tok { code: 8 }
+pub const T_ADDRESS: Tok = Tok { code: 9 }
 
 // Fe0 keywords and reserved words: SPEC.md §1.
 pub const K_FN: Tok = Tok { code: 10 }
@@ -172,7 +183,7 @@ impl Text {
         self.bytes.len()
     }
 
-    // Byte at offset `i`.
+    // Returns the byte at offset `i`.
     pub fn byte(self, _ i: usize) -> u8 {
         self.bytes[i]
     }
@@ -180,6 +191,11 @@ impl Text {
     // Whether span `s` spells `w`.
     pub fn spells<const N: usize>(self, _ s: Span, _ w: String<N>) -> bool {
         s.len == N && same_bytes(self.bytes, s.start, w.as_bytes(), 0, N)
+    }
+
+    // Whether span `s` starts with an uppercase letter.
+    pub fn starts_upper(self, _ s: Span) -> bool {
+        is_upper(self.bytes[s.start] as i32)
     }
 
     // Whether spans `a` and `b` hold the same text.
@@ -321,10 +337,12 @@ const C_UNDERSCORE: i32 = 95
 const C_LOWER_A: i32 = 97
 const C_LOWER_B: i32 = 98
 const C_LOWER_F: i32 = 102
+const C_LOWER_I: i32 = 105
 const C_LOWER_N: i32 = 110
 const C_LOWER_O: i32 = 111
 const C_LOWER_R: i32 = 114
 const C_LOWER_T: i32 = 116
+const C_LOWER_U: i32 = 117
 const C_LOWER_X: i32 = 120
 const C_LOWER_Z: i32 = 122
 const C_LBRACE: i32 = 123
@@ -341,8 +359,12 @@ fn is_newline(_ c: i32) -> bool {
     c == C_LF || c == C_CR
 }
 
+fn is_upper(_ c: i32) -> bool {
+    c >= C_UPPER_A && c <= C_UPPER_Z
+}
+
 fn is_ident_start(_ c: i32) -> bool {
-    (c >= C_LOWER_A && c <= C_LOWER_Z) || (c >= C_UPPER_A && c <= C_UPPER_Z) || c == C_UNDERSCORE
+    (c >= C_LOWER_A && c <= C_LOWER_Z) || is_upper(c) || c == C_UNDERSCORE
 }
 
 fn is_digit(_ c: i32) -> bool {
@@ -429,12 +451,12 @@ impl Lexer {
         self.text.spells(self.span(), w)
     }
 
-    // Span of the token read so far.
+    // Returns the span of the token read so far.
     fn span(self) -> Span {
         Span { start: self.start, len: self.text.len() - self.start }
     }
 
-    // Keyword kind of the token read so far, or T_IDENT.
+    // Returns the keyword kind of the token read so far, or T_IDENT.
     fn keyword(self) -> Tok {
         if self.word("fn") {
             return K_FN
@@ -526,6 +548,34 @@ impl Lexer {
             || self.word("with")
     }
 
+    // Kind of the token read so far when it is a type name, or T_IDENT when it is not (SPEC.md
+    // §1).
+    fn type_kind(self) -> Tok {
+        if self.word("u256") {
+            return T_U256
+        }
+        if self.word("bool") {
+            return T_BOOL
+        }
+        if self.word("Address") {
+            return T_ADDRESS
+        }
+        let c = self.text.byte(self.start) as i32
+        var i = self.start + 1
+        if (c == C_LOWER_U || c == C_LOWER_I) && i < self.text.len() {
+            while i < self.text.len() && is_digit(self.text.byte(i) as i32) {
+                i += 1
+            }
+            if i == self.text.len() {
+                return T_TYPE
+            }
+        }
+        if self.word("usize") || self.word("isize") || self.word("String") {
+            return T_TYPE
+        }
+        T_IDENT
+    }
+
     fn tok(self, _ kind: Tok) -> Token {
         Token { kind, span: self.span() }
     }
@@ -615,6 +665,10 @@ impl Lexer {
         }
         if self.is_reserved() {
             return self.err(L_RESERVED_WORD)
+        }
+        let ty = self.type_kind()
+        if ty != T_IDENT {
+            return Result::Ok(self.tok(ty))
         }
         Result::Ok(self.tok(self.keyword()))
     }
@@ -790,7 +844,7 @@ impl Lexer {
     }
 }
 
-// Lex everything `Source` provides. Stops at the first error.
+// Returns the tokens of everything `Source` provides. Stops at the first error.
 pub fn lex() -> Lexed uses (input: mut Source) {
     var lx = Lexer::new()
     var toks: MemVec<Token> = MemVec::new()

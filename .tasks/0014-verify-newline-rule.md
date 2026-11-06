@@ -10,14 +10,12 @@ The last [V] item in SPEC.md §3.4: does Fe read every line break Fe0 accepts th
 parser differential over the whole corpus, generated programs included.
 
 ## State
-The random generator (T0007) found one place where Fe reads a line break differently. After a
+The random generator (T0007) found one place where Fe reads a line break differently: after a
 line that ends with a name, Fe reads a line that starts with `{` as a record literal of that
-name. So `let a: u256 = x` followed by `{ a }` is rejected (`2-0006`, "expected type here,
-but found field"), and so is `s = t` followed by `{ … }`. Fe0 accepts both. Seeds 73, 86,
-148, 152, 181, 192 and 220 hit it. `let a: u256 = x + 1` or `= (x)` followed by `{ a }` is
-fine. `tools/gen.py` puts such a tail in parentheses until Fe0 rejects it.
+name. Fe0 now rejects that with `P012` (SPEC.md §3.4), and `corpus/reject/record_literal_*.fe`
+are its probes. `tools/gen.py` still puts such a tail in parentheses, so that its programs
+stay accepted.
 
 ## Next
-Make Fe0 reject a line that starts with `{` after a line that ends with a name, and add
-reject probes for it. Then look for more such cases with a parser differential, as the Goal
-says.
+Look for more such cases with a parser differential, as the Goal says: for each corpus and
+generated program, check that Fe and Fe0 split it into the same statements.

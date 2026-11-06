@@ -1,0 +1,6 @@
+// expect: P012 5:5
+// A line that starts with `{` after a `let` that ends with a name (SPEC §3.4).
+fn f(_ x: u256, _ y: u256, _ z: u256) -> u256 {
+    let a: u256 = x
+    { a }
+}

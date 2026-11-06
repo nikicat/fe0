@@ -70,8 +70,12 @@ fn keywords_and_idents() {
         ],
     )
     expect(
-        "x _y u256 Address fnord _",
-        [T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_UNDERSCORE, T_EOF],
+        "x _y fnord u u2x Bool _",
+        [T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_UNDERSCORE, T_EOF],
+    )
+    expect(
+        "u256 bool Address u8 i7 usize isize String",
+        [T_U256, T_BOOL, T_ADDRESS, T_TYPE, T_TYPE, T_TYPE, T_TYPE, T_TYPE, T_EOF],
     )
 }
 

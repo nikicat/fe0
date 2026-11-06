@@ -12,6 +12,9 @@ Guiding rules:
 ## 1. Repository layout (in the window)
 
 ```
+fe.toml         a workspace with fe0 as its member. Without it, Fe's language server loads
+                every .fe file outside an ingot as a standalone file and reports its errors.
+                With it, the server analyses fe0 only
 fe0/            ingot: the compiler as a library; no I/O, target-agnostic
   src/lexer.fe  tokens
   src/ast.fe    arena AST

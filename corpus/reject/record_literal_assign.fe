@@ -1,0 +1,10 @@
+// expect: P012 6:5
+// A line that starts with `{` after an assignment that ends with a name (SPEC §3.4).
+fn f(_ t: u256) -> u256 {
+    var s: u256 = 0
+    s = t
+    {
+        s += 1
+    }
+    s
+}

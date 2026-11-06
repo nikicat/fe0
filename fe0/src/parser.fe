@@ -14,7 +14,9 @@ use ingot::diag::{
     P_EXPECTED_TOKEN,
     P_EXPECTED_TYPE,
     P_FIELD_NOT_MUT,
+    P_GENERIC_ARGS,
     P_MESSAGE_TOO_LONG,
+    P_RECORD_LITERAL,
     P_TOO_DEEP,
 }
 use ingot::io::Source
@@ -63,12 +65,22 @@ struct Parser {
 }
 
 impl Parser {
+    // Token `i`.
+    fn tok_at(self, _ i: usize) -> Token {
+        self.ast.lexed.toks[i]
+    }
+
     fn tok(self) -> Token {
-        self.ast.lexed.toks[self.at]
+        self.tok_at(self.at)
+    }
+
+    // Kind of token `i`.
+    fn kind_at(self, _ i: usize) -> Tok {
+        self.tok_at(i).kind
     }
 
     fn peek(self) -> Tok {
-        self.tok().kind
+        self.kind_at(self.at)
     }
 
     // Kind of the token after the current one. The last token is T_EOF, so this stays in range.
@@ -76,7 +88,7 @@ impl Parser {
         if self.peek() == T_EOF {
             return T_EOF
         }
-        self.ast.lexed.toks[self.at + 1].kind
+        self.kind_at(self.at + 1)
     }
 
     fn bump(mut self) -> Token {
@@ -116,13 +128,23 @@ impl Parser {
         k == T_NEWLINE || k == P_RBRACE || k == T_EOF
     }
 
-    // Checks that the current token ends a statement, as SPEC.md §3.4 says. Errors with
-    // P_EXPECTED_END when it does not.
+    // Kind of the token before the current one. The parser calls this only after it has read a
+    // token.
+    fn prev(self) -> Tok {
+        self.kind_at(self.at - 1)
+    }
+
+    // Checks that the current token ends a statement. Errors with P_EXPECTED_END or
+    // P_RECORD_LITERAL when it does not end as SPEC.md §3.4 says.
     fn end_stmt(self) -> Result<Diag, ()> {
-        if self.at_stmt_end() {
-            return Result::Ok(())
+        if !self.at_stmt_end() {
+            return Result::Err(self.err(P_EXPECTED_END))
         }
-        Result::Err(self.err(P_EXPECTED_END))
+        if self.starts_record_literal() {
+            let brace = self.tok_at(self.at + 1)
+            return Result::Err(diag(P_RECORD_LITERAL, brace.span.start))
+        }
+        Result::Ok(())
     }
 
     // The rest of a comma-separated list, after its opening token, up to and including `close`.
@@ -187,16 +209,14 @@ impl Parser {
     }
 
     fn ty(mut self) -> Result<Diag, Ty> {
-        let t = self.tok()
+        let kind = self.peek()
         var ty = TY_NONE
-        if t.kind == T_IDENT {
-            if self.ast.lexed.text.spells(t.span, "u256") {
-                ty = TY_U256
-            } else if self.ast.lexed.text.spells(t.span, "bool") {
-                ty = TY_BOOL
-            } else if self.ast.lexed.text.spells(t.span, "Address") {
-                ty = TY_ADDRESS
-            }
+        if kind == T_U256 {
+            ty = TY_U256
+        } else if kind == T_BOOL {
+            ty = TY_BOOL
+        } else if kind == T_ADDRESS {
+            ty = TY_ADDRESS
         }
         if ty == TY_NONE {
             return Result::Err(self.err(P_EXPECTED_TYPE))
@@ -521,6 +541,9 @@ impl Parser {
             if power < min || power == 0 {
                 break
             }
+            if self.reads_as_generics() {
+                return Result::Err(self.err(P_GENERIC_ARGS))
+            }
             let t = self.bump()
             let rhs = self.binary(power + 1)?
             lhs = self.ast.add_node(Node::new_binary(t.span.start, op: t.kind, lhs, rhs))
@@ -530,6 +553,59 @@ impl Parser {
         }
         self.leave()
         Result::Ok(lhs)
+    }
+
+    // Checks whether the current token is a `<` that may start generic arguments, by Fe0's rule
+    // in SPEC.md §3.2. That rule is wider than Fe's, so this may return true where Fe reads a
+    // comparison.
+    fn reads_as_generics(self) -> bool {
+        if self.peek() != O_LT || self.prev() != T_IDENT {
+            return false
+        }
+        var i = self.at + 1
+        // Whether the next token must start an argument.
+        var arg = true
+        while true {
+            let k = self.kind_at(i)
+            if k == P_LPAREN || k == P_LBRACKET || (arg && k == P_LBRACE) {
+                i = self.after_group(i)
+                arg = false
+            } else if arg
+                && (k == T_IDENT || k.is_type_name() || k == T_INT || k == K_TRUE || k == K_FALSE) {
+                i += 1
+                arg = false
+            } else if !arg && (k == P_COMMA || k == O_LT) {
+                i += 1
+                arg = true
+            } else {
+                return !arg && (k == O_GT || k == O_SHR || k == O_GE || k == A_SHR)
+            }
+        }
+        false
+    }
+
+    // Whether the next line starts with `{` after a statement that ends with a name (SPEC.md §3.4).
+    fn starts_record_literal(self) -> bool {
+        self.peek() == T_NEWLINE && self.prev() == T_IDENT && self.peek2() == P_LBRACE
+    }
+
+    // Index of the token after the bracket group that opens at token `start`, or of the T_EOF
+    // token when the group does not close.
+    fn after_group(self, _ start: usize) -> usize {
+        var i = start
+        var depth: usize = 0
+        while true {
+            let k = self.kind_at(i)
+            if k == T_EOF { return i }
+            i += 1
+            if k == P_LPAREN || k == P_LBRACE || k == P_LBRACKET {
+                depth += 1
+            } else if k == P_RPAREN || k == P_RBRACE || k == P_RBRACKET {
+                depth -= 1
+                if depth == 0 { return i }
+            }
+        }
+        i
     }
 
     // unary = ( "!" | "~" ) unary | primary. Written as a loop, so a run of operators does not
@@ -544,7 +620,7 @@ impl Parser {
         var e = self.primary()?
         while op > first {
             op -= 1
-            let t = self.ast.lexed.toks[op]
+            let t = self.tok_at(op)
             e = self.ast.add_node(Node::new_unary(t.span.start, op: t.kind, operand: e))
         }
         Result::Ok(e)

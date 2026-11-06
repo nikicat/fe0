@@ -1,0 +1,5 @@
+// expect: P011 4:7
+// Generic arguments may be blocks (SPEC §3.2).
+fn f(_ x: u256, _ y: u256, _ z: u256) -> bool {
+    x < { y } >> z
+}

@@ -30,6 +30,7 @@ use ingot::diag::{
     N_UNKNOWN_FIELD,
     N_UNKNOWN_NAME,
     N_UNKNOWN_VARIANT,
+    N_UPPERCASE_LOCAL,
     T_ARG_COUNT,
     T_MISMATCH,
     T_NEEDS_TYPE,
@@ -49,14 +50,14 @@ fn checked(_ s: DynString) -> Checked {
     }
 }
 
-// Accepts `s` without warnings.
+// Asserts that the checker accepts `s` without warnings.
 fn accepts(_ s: DynString) {
     let c = checked(s)
     assert!(c.err.is_none())
     assert!(c.warns.len() == 0)
 }
 
-// Accepts `s` with one warning, of `code` at byte `pos`.
+// Asserts that the checker accepts `s` with one warning, of `code` at byte `pos`.
 fn warns(_ s: DynString, _ code: DiagCode, _ pos: usize) {
     let c = checked(s)
     assert!(c.err.is_none())
@@ -184,6 +185,18 @@ fn locals() {
         37,
     )
     rejects("fn f() { y = 1 }", N_UNKNOWN_NAME, 9)
+    accepts("const A: u256 = 1\nfn F() -> u256 { A }")
+    rejects(
+        "fn f() -> u256 {\n    let Some: u256 = 1\n    Some\n}",
+        N_UPPERCASE_LOCAL,
+        21,
+    )
+    rejects("fn f(_ X: u256) -> u256 { X }", N_UPPERCASE_LOCAL, 5)
+    rejects(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v: V } { }\n    }\n}\n",
+        N_UPPERCASE_LOCAL,
+        188,
+    )
 }
 
 #[test]

@@ -1,0 +1,9 @@
+// expect: P011 8:7
+// Generic arguments may be calls (SPEC §3.2).
+fn g(_ v: u256) -> u256 {
+    v
+}
+
+fn f(_ x: u256, _ y: u256, _ z: u256) -> bool {
+    x < g(y) >> z
+}

@@ -1,0 +1,5 @@
+// expect: P003 3:8
+// A parameter cannot be named with a type name (SPEC §1).
+fn f(_ i32: u256) -> u256 {
+    i32
+}
