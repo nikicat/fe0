@@ -339,7 +339,7 @@ The runtime dispatcher matches the official one (`mir/src/runtime/synthetic.rs:7
 
 - Fe0 stops at the first error. Warnings (unused `uses` entries) do not stop it.
 - It reports `line:col`, a stable error code (`L` lexical, `P` parse, `N` name, `T` type, `E`
-  effect, `C` const-eval) and a one-line message.
+  effect, `C` const-eval, `G` generation) and a one-line message.
 - Error codes are part of the test suite. Matching Fe's message wording is not a goal.
 
 ## 8. Conformance testing

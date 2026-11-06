@@ -50,6 +50,8 @@ pub struct Checked {
     // For LET, PARAM and BIND: the frame slot. For a contract FIELD: the storage slot. For CONST:
     // the index of its value in `ast.words`. For FN, INIT and ARM: the number of frame slots.
     pub slots: MemVec<usize>,
+    // The CONTRACT item, or 0.
+    pub the_contract: usize,
     pub err: Option<Diag>,
     // Warnings, in source order: unused `uses` entries (E_UNUSED_USE).
     pub warns: MemVec<Diag>,
@@ -73,12 +75,7 @@ struct Val { v: u256, ty: Ty }
 
 impl Copy for Val {}
 
-struct Checker {
-    c: Checked,
-    // The CONTRACT, or 0.
-    the_contract: usize,
-    body: Body,
-}
+struct Checker { c: Checked, body: Body }
 
 // The state of checking one FN, INIT or ARM body. `begin` replaces it for each body.
 struct Body {
@@ -208,10 +205,10 @@ impl Checker {
 
     // The contract FIELD named `sym`, or 0.
     fn field(self, _ sym: usize) -> usize {
-        if self.the_contract == 0 {
+        if self.c.the_contract == 0 {
             return 0
         }
-        self.find(self.node(self.the_contract).list(), sym)
+        self.find(self.node(self.c.the_contract).list(), sym)
     }
 
     // The item named `sym`, or 0.
@@ -361,8 +358,8 @@ impl Checker {
     fn program(mut self) -> Result<Diag, ()> {
         let items = self.c.ast.items
         self.unique(items, N_DUPLICATE)?
-        self.the_contract = self.find_contract()?
-        if self.the_contract != 0 {
+        self.c.the_contract = self.find_contract()?
+        if self.c.the_contract != 0 {
             self.fields()?
         }
         // Constants first, in source order, so that bodies can use their values.
@@ -385,7 +382,7 @@ impl Checker {
             }
             k += 1
         }
-        if self.the_contract != 0 {
+        if self.c.the_contract != 0 {
             self.contract_item()?
         }
         Result::Ok(())
@@ -393,7 +390,7 @@ impl Checker {
 
     // Gives each contract field its storage slot. Fields share the item namespace.
     fn fields(mut self) -> Result<Diag, ()> {
-        let l = self.node(self.the_contract).list()
+        let l = self.node(self.c.the_contract).list()
         self.unique(l, N_DUPLICATE)?
         var k: usize = 0
         while k < self.len(l) {
@@ -557,7 +554,7 @@ impl Checker {
     }
 
     fn contract_item(mut self) -> Result<Diag, ()> {
-        let n = self.node(self.the_contract)
+        let n = self.node(self.c.the_contract)
         if n.init() != 0 {
             let init = self.node(n.init())
             self.begin(TY_NONE, init.use_list())?
@@ -930,8 +927,7 @@ pub fn check(_ ast: own Ast) -> Checked {
     }
     let err = ast.err
     var c = Checker {
-        c: Checked { ast, types, res, slots, err, warns: MemVec::new() },
-        the_contract: 0,
+        c: Checked { ast, types, res, slots, the_contract: 0, err, warns: MemVec::new() },
         body: Body { locals: MemVec::new(), frame: 0, grant: NO_GRANT, ret: TY_UNIT, loops: 0 },
     }
     if c.c.err.is_none() {

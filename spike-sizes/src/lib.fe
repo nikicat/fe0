@@ -1,10 +1,11 @@
-// Probe contracts that measure the runtime bytecode size of each fe0 phase (task T0003).
+// Probe contracts that measure the runtime bytecode size of fe0 up to each phase (task T0003).
 // Each returns a count so that the phase is not optimized away.
 
 use std::abi::{Bytes, sol}
 use fe0::io::{Source, bytes}
 use fe0::lexer::lex
 use fe0::check::check
+use fe0::codegen::compile
 use fe0::parser::parse
 
 pub msg ProbeMsg {
@@ -45,6 +46,16 @@ pub contract CheckProbe {
         Run { src } -> u256 {
             with (Source = bytes(src)) {
                 check(parse()).slots.len() as u256
+            }
+        }
+    }
+}
+
+pub contract CompileProbe {
+    recv ProbeMsg {
+        Run { src } -> u256 {
+            with (Source = bytes(src)) {
+                compile().code.len() as u256
             }
         }
     }

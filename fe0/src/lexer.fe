@@ -27,11 +27,19 @@ impl core::ops::Eq for Tok {
     }
 }
 
+// How far each A_ kind's code is from its O_ kind's. O_ kinds span 60-80, so A_ kinds take
+// 90-110.
+const ASSIGN_OFFSET: u8 = 30
+
 impl Tok {
     // Returns the assignment form of this operator, such as A_PLUS for O_PLUS.
     const fn assign_form(self) -> Tok {
-        // O_ kinds span 60-80, so A_ kinds take 90-110.
-        Tok { code: self.code + 30 }
+        Tok { code: self.code + ASSIGN_OFFSET }
+    }
+
+    // Returns the operator of this assignment operator, such as O_PLUS for A_PLUS.
+    pub fn plain_form(self) -> Tok {
+        Tok { code: self.code - ASSIGN_OFFSET }
     }
 
     // Whether this is `=` or an assignment operator such as `+=`.

@@ -12,10 +12,13 @@ Runtime bytes:
 | empty (ABI decode only) | | | | 182 |
 | lexer | 18,441 | 7,583 | 7,580 | 7,511 |
 | lexer + parser | 54,014 | 27,365 | 27,301 | 26,456 |
+| lexer + parser + checker (Nov 5) | | | | 41,500 |
+| the whole compile, with code generation (Nov 5) | | | | 54,668 |
 
 Lexer and parser together are already over 24,576 bytes. On anvil the lexer probe deploys and
 the lexer + parser probe is rejected (status 0). So `Front` of [0008](0008-front-back-split.md)
-does not fit. The parser alone is about 19 KB.
+does not fit. The parser alone is about 19 KB, the checker about 15 KB and code generation
+about 13 KB.
 
 ## Decision
 Each phase is its own contract, and a `Compiler` contract calls them in turn
@@ -28,6 +31,9 @@ Each phase is its own contract, and a `Compiler` contract calls them in turn
 ## Consequences
 - The parser needs an entry point that takes a `Lexed`; `parse()` lexes for itself today.
 - Each boundary serializes the arrays as words, which costs gas for every phase.
+- An `Option` can cost the compiler's own bytecode. Code generation's label tables made the
+  compile probe 919 bytes larger as `Option<Label>` than as a one-word `LabelSlot` whose id 0
+  means empty (`fe0/src/asm.fe`).
 - If a phase outgrows 24 KB, the cheapest cut found so far is keyword matching: `word<N>` is
   instantiated once per keyword length, and `keyword` plus `is_reserved` are among the largest
   functions in the IR.

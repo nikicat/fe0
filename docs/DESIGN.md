@@ -17,8 +17,8 @@ fe0/            ingot: the compiler as a library; no I/O, target-agnostic
   src/ast.fe    arena AST
   src/parser.fe recursive descent
   src/check.fe  names, types, constants, effects
-  src/codegen.fe AST → EVM ops with labels
-  src/asm.fe    label resolution, initcode/runtime layout
+  src/codegen.fe AST → EVM ops with labels, laid out as initcode and runtime code
+  src/asm.fe    opcodes, pushes and label resolution
   src/diag.fe   error codes and positions
   src/io.fe     the `Source` effect and its adapter, BytesReader (`text` and `bytes`)
 fe0-cli/        ingot: native `main`, stdin → hex on stdout
@@ -123,7 +123,8 @@ Opcodes are emitted straight from the AST, with no IR
 - `[FP+64…]` parameters, then locals.
 
 Every local has a fixed slot assigned by the checker, with no slot reuse
-(`ponytail: frame size = all locals; reuse slots if gas matters`).
+(`ponytail: frame size = all locals; reuse slots if gas matters`). `init` and each arm run in
+the first frame, at `0x80`, since nothing calls them (`Gen.begin`).
 
 ### 6.2 Calling convention
 
@@ -134,11 +135,14 @@ Every local has a fixed slot assigned by the checker, with no slot reuse
    `[newFP+0]`.
 4. Set `FP = newFP` and `JUMP` to the callee.
 
-**Callee on return:** the result is on the stack. It restores `FP = [FP+0]` and jumps to the
-saved return address.
+**Callee on return:** the result is on the stack (§6.3, "Leaving early"). The callee restores
+`FP = [FP+0]` and jumps to the saved return address.
 
 This supports recursion, and memory grows with call depth. Gas bounds both recursion depth and
 memory cost.
+
+The initcode and the runtime code each hold a copy of the functions they call, after their own
+bodies (`Gen.functions` in `fe0/src/codegen.fe`).
 
 ### 6.3 Expressions
 
@@ -146,26 +150,32 @@ Each expression leaves exactly one word on the stack (unit-typed ones leave noth
 
 | Construct | Emitted |
 |---|---|
-| Literal | `PUSHn` (the minimal n) |
+| Literal | `PUSHn` (the minimal n), `PUSH0` for 0 |
 | Local | `MLOAD(FP + off)`: `PUSH1 0x40 MLOAD PUSHn off ADD MLOAD` |
 | Field *i* | `PUSHn i SLOAD` |
 | `a + b` | eval a, eval b, `DUP2 ADD`, `DUP1 SWAP2 GT` → `JUMPI panic_11` |
-| `a - b` | eval a, eval b, `DUP1 DUP3 LT` → `JUMPI panic_11`, `SWAP1 SUB` |
+| `a - b` | eval a, eval b, `DUP2 DUP2 GT` → `JUMPI panic_11`, `SWAP1 SUB` |
 | `a * b` | `MUL`, then if `a != 0 && r / a != b` → `panic_11` |
 | `a / b`, `a % b` | `b == 0` → `panic_12`, then `DIV`/`MOD` |
-| `<< >>` | `SHL`/`SHR` with operands swapped. They never fail (SPEC §4) |
+| `<< >>` | `SHL`/`SHR`, which take the shift amount `b` on top. They never fail (SPEC §4) |
 | `&& \|\|` | Short-circuit with `JUMPI` |
-| Comparisons | `LT GT EQ`, plus `ISZERO` for `<= >= !=` |
+| Comparisons | `b` is on top, so `a < b` is `GT` and `a > b` is `LT`. `ISZERO` negates for `<= >= !=` |
 | `!b` | `ISZERO`. `~a` is `NOT` |
 | `assert!(c)` | `c ISZERO JUMPI panic_01` |
-| `assert!(c, "m")` | `JUMPI` to an inline block that `MSTORE`s `Error(string)` and `REVERT`s |
+| `assert!(c, "m")` | `JUMPI` past an inline block that `MSTORE`s `Error(string)` and `REVERT`s |
 
-The stack sequences in this table are sketches. The exact sequences get pinned down by unit
-tests that run the emitted code.
+The table sketches each sequence. `Gen.apply` and its neighbours in `fe0/src/codegen.fe` emit the
+exact ones. The differential tests of §13 check their results against Fe, not the instructions.
 
-- **Panic stubs:** one shared block per code (`0x01`, `0x11`, `0x12`), emitted once per contract
-  and only if used. Each stores `0x4e487b71 << 224` at 0 and the code at 4, then
+- **Stubs:** one shared block per panic code (`0x01`, `0x11`, `0x12`), and one that reverts
+  with empty data. Each piece of code holds the ones it jumps to (`Stub` in
+  `fe0/src/codegen.fe`). A panic stub stores `0x4e487b71 << 224` at 0 and the code at 4, then
   `REVERT(0, 0x24)`.
+- **Leaving early:** a body can leave while it still has words on the stack, such as the `1`
+  pending in `1 + { return 2 }`. A function pops the words under its result before it returns
+  (`Gen.leave`). `break` and `continue` pop down to the depth at the start of the loop
+  (`Gen.drop_to`). Arms end in `RETURN` or `STOP`, and `init` jumps to the code that returns the
+  runtime code, so leftover words do not matter there.
 - **Control flow:** `if`, `while`, `break` and `continue` lower to labels and `JUMPI`. The
   codegen keeps a loop-label stack for `break` and `continue`.
 
@@ -207,15 +217,20 @@ The initcode:
 4. Runs the `init` body.
 5. `CODECOPY`s the runtime to memory 0 and `RETURN`s it.
 
-`init_len` and `rt_len` are constants filled in by the assembler.
+A contract without `init` skips steps 2–4, so extra bytes after the runtime are ignored.
+`init_len` and `rt_len` are constants that the layout fills in (§7).
 
 ## 7. Assembler
 
-- Code is emitted into a `MemVec<u8>`.
-- **Jumps** always use `PUSH2 <label>` (`ponytail: fixed 2-byte targets, so code must stay under
-  64 KB`). Each use is recorded as `(byte_offset, label)` in a fixup list.
-- **Labels** emit `JUMPDEST` and record their offset.
-- **Finish:** patch every fixup, then lay out the initcode and runtime as in §6.5.
+- `Asm` in `fe0/src/asm.fe` holds one piece of code in a `MemVec<u8>`.
+- **Jumps** always use `PUSH2 <label>` (see `MAX_CODE` in `fe0/src/asm.fe`). Each use is
+  recorded as `(byte_offset, label)` in a fixup list. `generate` in `fe0/src/codegen.fe` reports
+  code of 64 KB or more as `G002`.
+- **Labels** are bound with `JUMPDEST` (`Asm.bind`), or without one (`Asm.mark`) when they are
+  only pushed as a length.
+- **Finish:** patch every fixup.
+- **Layout:** `generate` assembles the runtime code first, so that the initcode can push its
+  length. The initcode's own length is the label marked at its end.
 
 There is a single pass with no relaxation, because the 2-byte targets keep offsets stable.
 
@@ -278,6 +293,7 @@ are numbered and printed. The message comes from a table indexed by code.
 | Types | mismatch, missing return path |
 | Effects | field not in `uses`, write without `mut`, unknown field, duplicate entry |
 | Constants | overflow (`C034`), division by zero (`C025`) |
+| Generation | no contract (`G001`), code too large (`G002`) |
 
 The CLI prints `file:line:col: CODE message`. On chain, the message is the code, the line and
 the column.
@@ -372,6 +388,6 @@ counts), which keeps the subset rule honest.
 | Lexer | Token streams for each token class; error positions |
 | Parser | Node-shape assertions for each grammar rule; a reject test for each `P` error |
 | Checker | One accept and one reject per rule in SPEC §5–6, with error code and position |
-| Codegen | Assemble small snippets, `create_raw` them, and check results (the `create_raw` probe pattern) |
-| Assembler | Fixups, and layout lengths against the bytes produced |
+| Codegen | Differential, as in §10. The tests are in `fe0/src/codegen_tests.fe`, generated by `tools/gen_codegen_tests.py` |
+| Assembler | Pushes, and fixups of labels bound before and after their use |
 | End-to-end | The §10 harness over `corpus/`, `corpus/reject/` and `corpus/gen/` |

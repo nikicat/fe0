@@ -1,0 +1,223 @@
+// Assembles EVM code: opcodes, minimal pushes, and jumps to labels that may be bound later.
+// The design is in DESIGN.md §7.
+
+// An EVM opcode. The OP_ constants below are the ones Fe0 emits.
+pub struct Op { code: u8 }
+
+impl Copy for Op {}
+
+pub const OP_STOP: Op = Op { code: 0x00 }
+pub const OP_ADD: Op = Op { code: 0x01 }
+pub const OP_MUL: Op = Op { code: 0x02 }
+pub const OP_SUB: Op = Op { code: 0x03 }
+pub const OP_DIV: Op = Op { code: 0x04 }
+pub const OP_MOD: Op = Op { code: 0x06 }
+pub const OP_LT: Op = Op { code: 0x10 }
+pub const OP_GT: Op = Op { code: 0x11 }
+pub const OP_EQ: Op = Op { code: 0x14 }
+pub const OP_ISZERO: Op = Op { code: 0x15 }
+pub const OP_AND: Op = Op { code: 0x16 }
+pub const OP_OR: Op = Op { code: 0x17 }
+pub const OP_XOR: Op = Op { code: 0x18 }
+pub const OP_NOT: Op = Op { code: 0x19 }
+pub const OP_SHL: Op = Op { code: 0x1b }
+pub const OP_SHR: Op = Op { code: 0x1c }
+pub const OP_CALLVALUE: Op = Op { code: 0x34 }
+pub const OP_CALLDATALOAD: Op = Op { code: 0x35 }
+pub const OP_CALLDATASIZE: Op = Op { code: 0x36 }
+pub const OP_CODESIZE: Op = Op { code: 0x38 }
+pub const OP_CODECOPY: Op = Op { code: 0x39 }
+pub const OP_POP: Op = Op { code: 0x50 }
+pub const OP_MLOAD: Op = Op { code: 0x51 }
+pub const OP_MSTORE: Op = Op { code: 0x52 }
+pub const OP_SLOAD: Op = Op { code: 0x54 }
+pub const OP_SSTORE: Op = Op { code: 0x55 }
+pub const OP_JUMP: Op = Op { code: 0x56 }
+// Jumps, label targets and pushes are emitted only by the methods of `Asm`, so that every label
+// push gets its fixup. PUSHn is OP_PUSH0 plus n.
+const OP_JUMPI: Op = Op { code: 0x57 }
+const OP_JUMPDEST: Op = Op { code: 0x5b }
+const OP_PUSH0: Op = Op { code: 0x5f }
+const OP_PUSH2: Op = Op { code: 0x61 }
+pub const OP_DUP1: Op = Op { code: 0x80 }
+pub const OP_DUP2: Op = Op { code: 0x81 }
+pub const OP_DUP3: Op = Op { code: 0x82 }
+pub const OP_DUP4: Op = Op { code: 0x83 }
+pub const OP_SWAP1: Op = Op { code: 0x90 }
+pub const OP_SWAP2: Op = Op { code: 0x91 }
+pub const OP_RETURN: Op = Op { code: 0xf3 }
+pub const OP_REVERT: Op = Op { code: 0xfd }
+
+// A code offset that `Asm.bind` or `Asm.mark` fixes, and that pushes may use before then.
+pub struct Label { id: usize }
+
+impl Copy for Label {}
+
+impl Label {
+    pub fn slot(self) -> LabelSlot {
+        LabelSlot { id: self.id }
+    }
+}
+
+// A label, or an empty slot that holds none. Code generation keeps its tables of labels as slots,
+// and makes each label the first time it is needed. Jumps take only a `Label`, so an empty slot
+// cannot become a jump target. ADR 0014 says why this is not an `Option<Label>`.
+pub struct LabelSlot { id: usize }
+
+impl Copy for LabelSlot {}
+
+pub const EMPTY_SLOT: LabelSlot = LabelSlot { id: 0 }
+
+impl LabelSlot {
+    pub fn is_empty(self) -> bool {
+        self.id == 0
+    }
+
+    // Returns the label in this slot. The slot must not be empty.
+    pub fn label(self) -> Label {
+        Label { id: self.id }
+    }
+}
+
+// ponytail: every label is pushed as a fixed 2-byte PUSH2, so code must stay under 64 KB.
+const MAX_CODE: usize = 0x10000
+
+// The 2-byte operand, at offset `at`, of a PUSH2 that pushes the offset of `label`.
+struct Fixup { at: usize, label: Label }
+
+impl Copy for Fixup {}
+
+// One piece of code, such as the initcode or the runtime code. Offsets of its labels start at
+// its first byte.
+pub struct Asm {
+    pub code: MemVec<u8>,
+    // The offset of each label, by id. No label gets id 0, so that EMPTY_SLOT can use it.
+    offsets: MemVec<usize>,
+    fixups: MemVec<Fixup>,
+}
+
+impl Asm {
+    pub fn new() -> Asm {
+        var offsets: MemVec<usize> = MemVec::new()
+        offsets.push(0)
+        Asm { code: MemVec::new(), offsets, fixups: MemVec::new() }
+    }
+
+    pub fn len(self) -> usize {
+        self.code.len()
+    }
+
+    // Checks whether the code is too long for its label pushes.
+    pub fn too_large(self) -> bool {
+        self.code.len() >= MAX_CODE
+    }
+
+    // Returns a new label, not yet bound.
+    pub fn label(mut self) -> Label {
+        self.offsets.push(0)
+        Label { id: self.offsets.len() - 1 }
+    }
+
+    // Binds `l` here as a jump target, with a JUMPDEST.
+    pub fn bind(mut self, _ l: Label) {
+        self.mark(l)
+        self.op(OP_JUMPDEST)
+    }
+
+    // Binds `l` here without a JUMPDEST, for a label that is pushed as a length or an offset,
+    // never jumped to.
+    pub fn mark(mut self, _ l: Label) {
+        self.offsets.set(l.id, self.code.len())
+    }
+
+    pub fn op(mut self, _ o: Op) {
+        self.code.push(o.code)
+    }
+
+    // Pushes `v` with the shortest PUSHn, which is PUSH0 for 0.
+    pub fn push(mut self, _ v: u256) {
+        var n: u256 = 0
+        var rest = v
+        while rest != 0 {
+            n += 1
+            rest = rest >> 8
+        }
+        self.code.push(OP_PUSH0.code + n.downcast_truncate())
+        while n > 0 {
+            n -= 1
+            self.code.push(((v >> (n * 8)) & 0xff).downcast_truncate())
+        }
+    }
+
+    // Pushes the offset of `l`, which `finish` fills in.
+    pub fn push_label(mut self, _ l: Label) {
+        self.fixups.push(Fixup { at: self.code.len() + 1, label: l })
+        self.op(OP_PUSH2)
+        self.code.push(0)
+        self.code.push(0)
+    }
+
+    pub fn jump(mut self, _ l: Label) {
+        self.push_label(l)
+        self.op(OP_JUMP)
+    }
+
+    // Jumps to `l` if the top word is not zero, and pops it either way.
+    pub fn jumpi(mut self, _ l: Label) {
+        self.push_label(l)
+        self.op(OP_JUMPI)
+    }
+
+    // Writes the offset of each label into the pushes of it. Every label must be bound.
+    pub fn finish(mut self) {
+        var k: usize = 0
+        while k < self.fixups.len() {
+            let f = self.fixups[k]
+            let at = self.offsets[f.label.id]
+            self.code.set(f.at, (at >> 8).downcast_truncate())
+            self.code.set(f.at + 1, (at & 0xff).downcast_truncate())
+            k += 1
+        }
+    }
+}
+
+#[test]
+fn shortest_pushes() {
+    var a = Asm::new()
+    a.push(0)
+    a.push(0xff)
+    a.push(0x100)
+    a.push(
+        0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+    )
+    assert!(a.len() == 1 + 2 + 3 + 33)
+    assert!(a.code[0] == OP_PUSH0.code)
+    assert!(a.code[1] == 0x60 && a.code[2] == 0xff)
+    assert!(
+        a.code[3] == 0x61 && a.code[4] == 0x01 && a.code[5] == 0x00,
+    )
+    assert!(a.code[6] == 0x7f && a.code[38] == 0xff)
+}
+
+#[test]
+fn labels_bound_before_and_after_use() {
+    var a = Asm::new()
+    let back = a.label()
+    let ahead = a.label()
+    let end = a.label()
+    a.bind(back)
+    a.jumpi(ahead)
+    a.jump(back)
+    a.push_label(end)
+    a.bind(ahead)
+    a.mark(end)
+    a.finish()
+    // JUMPDEST, PUSH2 ahead JUMPI, PUSH2 back JUMP, PUSH2 end, JUMPDEST
+    assert!(a.len() == 13)
+    assert!(a.code[0] == OP_JUMPDEST.code)
+    assert!(
+        a.code[1] == OP_PUSH2.code && a.code[2] == 0 && a.code[3] == 12,
+    )
+    assert!(a.code[6] == 0 && a.code[7] == 0)
+    assert!(a.code[10] == 0 && a.code[11] == 13)
+}

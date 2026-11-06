@@ -1,9 +1,9 @@
 // Error codes and the `Diag` that every phase reports.
 
 // An error code. It is `phase * 1000 + n` and prints as the phase letter and three digits, so
-// 6034 is `C034`. The phases, from 1 to 6, are lexer, parser, names, types, effects and
-// constants. A phase's letter is the first letter of its name. Codes are made only here, so
-// every code has a known phase.
+// 6034 is `C034`. The phases, from 1 to 7, are lexer, parser, names, types, effects,
+// constants and generation. A phase's letter is the first letter of its name. Codes are made
+// only here, so every code has a known phase.
 pub struct DiagCode { raw: u16 }
 
 impl Copy for DiagCode {}
@@ -14,7 +14,7 @@ impl core::ops::Eq for DiagCode {
     }
 }
 
-const PHASE_LETTERS: String<6> = "LPNTEC"
+const PHASE_LETTERS: String<7> = "LPNTECG"
 
 impl DiagCode {
     // Returns the ASCII phase letter, such as `C` for 6034.
@@ -114,6 +114,13 @@ pub const C_NOT_CONST: DiagCode = DiagCode { raw: 6001 }
 pub const C_DIV_ZERO: DiagCode = DiagCode { raw: 6025 }
 // Arithmetic overflow in a constant (SPEC §5.3).
 pub const C_OVERFLOW: DiagCode = DiagCode { raw: 6034 }
+
+// Generation
+
+// A program with no contract, so nothing to deploy.
+pub const G_NO_CONTRACT: DiagCode = DiagCode { raw: 7001 }
+// Initcode or runtime code of `asm::MAX_CODE` bytes or more, which is too long for the assembler.
+pub const G_CODE_TOO_LARGE: DiagCode = DiagCode { raw: 7002 }
 
 pub fn diag(_ code: DiagCode, _ pos: usize) -> Diag {
     Diag { code, pos }
