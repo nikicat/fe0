@@ -1,0 +1,13 @@
+Skip 0
+Skip 10
+Skip 49
+Skip 100
+Cube 0
+Cube 1
+Cube 5
+Cube 12
+Search 10 7
+Search 14 7
+Search 1 0               # x % b by zero
+Search 1 5000
+Search MAX 7             # x += 1 overflows

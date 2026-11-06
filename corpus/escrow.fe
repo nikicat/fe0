@@ -1,0 +1,67 @@
+// An escrow that moves through funded and shipped to done. It can be refunded while funded or
+// shipped.
+msg EscrowMsg {
+    #[selector = 10]
+    Fund { amount: u256 },
+    #[selector = 11]
+    Ship {},
+    #[selector = 12]
+    Confirm {} -> u256,
+    #[selector = 13]
+    Refund {} -> u256,
+    #[selector = 14]
+    State -> u256,
+}
+
+const EMPTY: u256 = 0
+const FUNDED: u256 = 1
+const SHIPPED: u256 = 2
+const DONE: u256 = 3
+const REFUNDED: u256 = 4
+
+// Returns the new state `to`. Errors with "bad step" when the escrow cannot move from `from`
+// to `to`.
+fn advance(_ from: u256, _ to: u256) -> u256 {
+    let ok = if to == FUNDED {
+        from == EMPTY
+    } else if to == SHIPPED {
+        from == FUNDED
+    } else if to == DONE {
+        from == SHIPPED
+    } else {
+        to == REFUNDED && (from == FUNDED || from == SHIPPED)
+    }
+    assert!(ok, "bad step")
+    to
+}
+
+contract Escrow {
+    mut state: u256,
+    mut held: u256,
+
+    recv EscrowMsg {
+        Fund { amount } uses (mut state, mut held) {
+            assert!(amount > 0)
+            state = advance(state, FUNDED)
+            held = amount
+        }
+        Ship {} uses (mut state) {
+            state = advance(state, SHIPPED)
+        }
+        Confirm {} -> u256 uses (mut state, mut held) {
+            state = advance(state, DONE)
+            let paid = held
+            held = 0
+            paid
+        }
+        Refund {} -> u256 uses (mut state, mut held) {
+            state = advance(state, REFUNDED)
+            let back = held
+            held = 0
+            back
+        }
+        State {} -> u256 uses (state) {
+            state
+        }
+    }
+}

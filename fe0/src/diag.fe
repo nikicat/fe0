@@ -90,6 +90,8 @@ pub const T_ARG_COUNT: DiagCode = DiagCode { raw: 4002 }
 pub const T_NO_VALUE: DiagCode = DiagCode { raw: 4003 }
 // A selector that does not fit in 32 bits (SPEC §6).
 pub const T_SELECTOR_TOO_LARGE: DiagCode = DiagCode { raw: 4004 }
+// An integer of type TY_INT where nothing gives it a type (SPEC §2).
+pub const T_NEEDS_TYPE: DiagCode = DiagCode { raw: 4005 }
 
 // Effects
 

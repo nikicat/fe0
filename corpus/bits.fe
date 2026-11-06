@@ -1,0 +1,58 @@
+// Bitwise operators and shifts. Only Byte can fail, when i * 8 overflows.
+msg BitsMsg {
+    #[selector = 0x10]
+    And { a: u256, b: u256 } -> u256,
+    #[selector = 0x11]
+    Or { a: u256, b: u256 } -> u256,
+    #[selector = 0x12]
+    Xor { a: u256, b: u256 } -> u256,
+    #[selector = 0x13]
+    Not { a: u256 } -> u256,
+    #[selector = 0x14]
+    Shl { a: u256, n: u256 } -> u256,
+    #[selector = 0x15]
+    Shr { a: u256, n: u256 } -> u256,
+    #[selector = 0x16]
+    Byte { a: u256, i: u256 } -> u256,
+    #[selector = 0x17]
+    Mask { n: u256 } -> u256,
+}
+
+// Byte `i` of `a`, counting from the least significant.
+fn byte_of(_ a: u256, _ i: u256) -> u256 {
+    (a >> (i * 8)) & 0xff
+}
+
+// A word with the low `n` bits set.
+fn low_mask(_ n: u256) -> u256 {
+    if n >= 256 { ~0 } else { (1 << n) - 1 }
+}
+
+contract Bits {
+    recv BitsMsg {
+        And { a, b } -> u256 {
+            a & b
+        }
+        Or { a, b } -> u256 {
+            a | b
+        }
+        Xor { a, b } -> u256 {
+            a ^ b
+        }
+        Not { a } -> u256 {
+            ~a
+        }
+        Shl { a, n } -> u256 {
+            a << n
+        }
+        Shr { a, n } -> u256 {
+            a >> n
+        }
+        Byte { a, i } -> u256 {
+            byte_of(a, i)
+        }
+        Mask { n } -> u256 {
+            low_mask(n)
+        }
+    }
+}

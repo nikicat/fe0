@@ -1,0 +1,74 @@
+// Decimal digits: their count, their sum, reversal and palindromes.
+msg DigitsMsg {
+    #[selector = 1]
+    Count { n: u256 } -> u256,
+    #[selector = 2]
+    Sum { n: u256 } -> u256,
+    #[selector = 3]
+    Reverse { n: u256 } -> u256,
+    #[selector = 4]
+    Palindrome { n: u256 } -> bool,
+    #[selector = 5]
+    Root { n: u256 } -> u256,
+}
+
+const BASE: u256 = 10
+
+fn count(_ n: u256) -> u256 {
+    var c: u256 = 1
+    var x = n / BASE
+    while x > 0 {
+        c += 1
+        x /= BASE
+    }
+    c
+}
+
+fn digit_sum(_ n: u256) -> u256 {
+    var s: u256 = 0
+    var x = n
+    while x > 0 {
+        s += x % BASE
+        x /= BASE
+    }
+    s
+}
+
+fn reverse(_ n: u256) -> u256 {
+    var r: u256 = 0
+    var x = n
+    while x > 0 {
+        r = r * BASE + x % BASE
+        x /= BASE
+    }
+    r
+}
+
+// The digital root: the digit sum, repeated down to one digit.
+fn root(_ n: u256) -> u256 {
+    var x = n
+    while x >= BASE {
+        x = digit_sum(x)
+    }
+    x
+}
+
+contract Digits {
+    recv DigitsMsg {
+        Count { n } -> u256 {
+            count(n)
+        }
+        Sum { n } -> u256 {
+            digit_sum(n)
+        }
+        Reverse { n } -> u256 {
+            reverse(n)
+        }
+        Palindrome { n } -> bool {
+            reverse(n) == n
+        }
+        Root { n } -> u256 {
+            root(n)
+        }
+    }
+}

@@ -1,0 +1,6 @@
+// expect: T005 4:7
+// Nothing fixes the type of two compared literals, so Fe and Fe0 both reject them (SPEC §2).
+fn f() -> u256 {
+    1 == 1
+    2
+}

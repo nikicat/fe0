@@ -1,0 +1,53 @@
+// The comparison operators on u256, bool and Address.
+msg CompareMsg {
+    #[selector = 1]
+    Order { a: u256, b: u256 } -> u256,
+    #[selector = 2]
+    SameBool { a: bool, b: bool } -> bool,
+    #[selector = 3]
+    SameAddr { a: Address, b: Address } -> bool,
+    #[selector = 4]
+    Max { a: u256, b: u256, c: u256 } -> u256,
+    #[selector = 5]
+    Median { a: u256, b: u256, c: u256 } -> u256,
+}
+
+// One bit for each comparison of `a` with `b`: <, <=, >, >=, ==, !=.
+fn order(_ a: u256, _ b: u256) -> u256 {
+    var r: u256 = 0
+    if a < b { r |= 1 }
+    if a <= b { r |= 2 }
+    if a > b { r |= 4 }
+    if a >= b { r |= 8 }
+    if a == b { r |= 16 }
+    if a != b { r |= 32 }
+    r
+}
+
+fn max2(_ a: u256, _ b: u256) -> u256 {
+    if a > b { a } else { b }
+}
+
+fn min2(_ a: u256, _ b: u256) -> u256 {
+    if a < b { a } else { b }
+}
+
+contract Compare {
+    recv CompareMsg {
+        Order { a, b } -> u256 {
+            order(a, b)
+        }
+        SameBool { a, b } -> bool {
+            a == b && !(a != b)
+        }
+        SameAddr { a, b } -> bool {
+            a == b
+        }
+        Max { a, b, c } -> u256 {
+            max2(max2(a, b), c)
+        }
+        Median { a, b, c } -> u256 {
+            max2(min2(a, b), min2(max2(a, b), c))
+        }
+    }
+}

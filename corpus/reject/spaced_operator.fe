@@ -1,0 +1,7 @@
+// expect: P005 5:9
+// The characters of `+=` must be adjacent (SPEC §1). Fe rejects the spaced form too.
+fn f(_ a: u256) -> u256 {
+    var x = a
+    x + = 1
+    x
+}

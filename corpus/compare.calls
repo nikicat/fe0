@@ -1,0 +1,19 @@
+Order 1 2
+Order 2 1
+Order 5 5
+Order 0 MAX
+SameBool true true
+SameBool true false
+SameBool false false
+SameBool 2 0             # not a bool
+SameAddr 0xaa 0xaa
+SameAddr 0xaa 0xbb
+SameAddr 2**160-1 2**160-1
+SameAddr 2**160 0        # dirty upper bits
+Max 1 2 3
+Max 3 2 1
+Max 2 3 1
+Median 1 2 3
+Median 3 1 2
+Median 2 3 1
+Median 7 7 1

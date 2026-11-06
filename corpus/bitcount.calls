@@ -1,0 +1,14 @@
+Popcount 0
+Popcount 0xff
+Popcount MAX
+Log2 1
+Log2 2
+Log2 1000
+Log2 MAX
+Log2 0
+TrailingZeros 0
+TrailingZeros 1
+TrailingZeros 2**255
+TrailingZeros 96
+Parity 7
+Parity 6

@@ -1,0 +1,5 @@
+// expect: N002 4:9
+// A name that no declaration in scope has.
+fn f(_ a: u256) -> u256 {
+    a + b
+}

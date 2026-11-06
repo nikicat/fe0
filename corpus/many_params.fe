@@ -1,0 +1,47 @@
+// Functions with many parameters and locals, which keep many words on the stack and in frames.
+msg ManyParamsMsg {
+    #[selector = 1]
+    Poly { a: u256, b: u256, c: u256, d: u256, e: u256, f: u256, g: u256, h: u256 } -> u256,
+    #[selector = 2]
+    Pick { k: u256, a: u256, b: u256, c: u256, d: u256, e: u256, f: u256 } -> u256,
+}
+
+// a + 2b + 3c + ... + 8h, with a local per step.
+fn poly(_ a: u256, _ b: u256, _ c: u256, _ d: u256, _ e: u256, _ f: u256, _ g: u256, _ h: u256) -> u256 {
+    let s1 = a
+    let s2 = s1 + 2 * b
+    let s3 = s2 + 3 * c
+    let s4 = s3 + 4 * d
+    let s5 = s4 + 5 * e
+    let s6 = s5 + 6 * f
+    let s7 = s6 + 7 * g
+    let s8 = s7 + 8 * h
+    s8
+}
+
+fn pick(_ k: u256, _ a: u256, _ b: u256, _ c: u256, _ d: u256, _ e: u256, _ f: u256) -> u256 {
+    if k == 0 {
+        a
+    } else if k == 1 {
+        b
+    } else if k == 2 {
+        c
+    } else if k == 3 {
+        d
+    } else if k == 4 {
+        e
+    } else {
+        f
+    }
+}
+
+contract ManyParams {
+    recv ManyParamsMsg {
+        Poly { a, b, c, d, e, f, g, h } -> u256 {
+            poly(a, b, c, d, e, f, g, h) + poly(h, g, f, e, d, c, b, a)
+        }
+        Pick { k, a, b, c, d, e, f } -> u256 {
+            pick(k, a, b, c, d, e, f) * 10 + pick(5 - k, a, b, c, d, e, f)
+        }
+    }
+}

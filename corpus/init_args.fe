@@ -1,0 +1,34 @@
+// Constructor arguments of each type, checked the way calldata is.
+msg InitArgsMsg {
+    #[selector = 1]
+    Get -> u256,
+    #[selector = 2]
+    Who -> Address,
+    #[selector = 3]
+    On -> bool,
+}
+
+contract InitArgs {
+    mut n: u256,
+    mut who: Address,
+    mut on: bool,
+
+    init(a: u256, b: Address, c: bool) uses (mut n, mut who, mut on) {
+        assert!(a != 13, "unlucky")
+        n = if c { a * 2 } else { a }
+        who = b
+        on = c
+    }
+
+    recv InitArgsMsg {
+        Get {} -> u256 uses (n) {
+            n
+        }
+        Who {} -> Address uses (who) {
+            who
+        }
+        On {} -> bool uses (on) {
+            on
+        }
+    }
+}

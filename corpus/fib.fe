@@ -1,0 +1,43 @@
+// Fibonacci numbers, by a loop and by recursion, and the first that overflows.
+msg FibMsg {
+    #[selector = 1]
+    Loop { n: u256 } -> u256,
+    #[selector = 2]
+    Rec { n: u256 } -> u256,
+    #[selector = 3]
+    Same { n: u256 } -> bool,
+}
+
+fn fib_loop(_ n: u256) -> u256 {
+    var a: u256 = 0
+    var b: u256 = 1
+    var i: u256 = 0
+    while i < n {
+        let t = a + b
+        a = b
+        b = t
+        i += 1
+    }
+    a
+}
+
+fn fib_rec(_ n: u256) -> u256 {
+    if n < 2 {
+        return n
+    }
+    fib_rec(n - 1) + fib_rec(n - 2)
+}
+
+contract Fib {
+    recv FibMsg {
+        Loop { n } -> u256 {
+            fib_loop(n)
+        }
+        Rec { n } -> u256 {
+            fib_rec(n)
+        }
+        Same { n } -> bool {
+            fib_loop(n) == fib_rec(n)
+        }
+    }
+}

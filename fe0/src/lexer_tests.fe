@@ -85,7 +85,7 @@ fn reserved_words_are_errors() {
 #[test]
 fn punctuation_and_operators() {
     expect(
-        "( ) { } [ ] : , -> # . ;",
+        "( ) { } [ ] : , -> # .",
         [
             P_LPAREN,
             P_RPAREN,
@@ -98,7 +98,6 @@ fn punctuation_and_operators() {
             P_ARROW,
             P_HASH,
             P_DOT,
-            P_SEMI,
             T_EOF,
         ],
     )
@@ -215,6 +214,8 @@ fn bad_characters() {
     assert!(lex_err("a ").code == L_UNEXPECTED_CHAR)
     assert!(lex_err("x ? y").code == L_UNEXPECTED_CHAR)
     assert!(lex_err("a @ b").code == L_UNEXPECTED_CHAR)
+    // `;` is not a token in Fe0 (SPEC §1).
+    assert!(lex_err("g();").code == L_UNEXPECTED_CHAR)
 }
 
 #[test]

@@ -1,0 +1,26 @@
+// Assert messages: empty, short, with escapes, and at the 31-byte limit.
+msg MessagesMsg {
+    #[selector = 1]
+    Check { code: u256 },
+}
+
+fn check(_ code: u256) {
+    assert!(code != 1)
+    assert!(code != 2, "")
+    assert!(code != 3, "x")
+    assert!(code != 4, "tab\tquote\"backslash\\")
+    assert!(code != 5, "line one\nline two\r")
+    assert!(code != 6, "0123456789012345678901234567890")
+    assert!(code < 100, "code too large")
+}
+
+contract Messages {
+    mut checked: u256,
+
+    recv MessagesMsg {
+        Check { code } uses (mut checked) {
+            checked += 1
+            check(code)
+        }
+    }
+}

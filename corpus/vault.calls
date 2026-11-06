@@ -1,0 +1,19 @@
+init 100 42
+deploy 0 42              # init asserts with a message
+deploy 100               # too short
+Balance
+Deposit 500
+Withdraw 50
+Withdraw 101
+Withdraw 100
+Withdraw 100
+Withdraw 300
+Withdraw 100
+Lock
+Deposit 1
+Withdraw 1
+Unlock 41
+Unlock 42
+Deposit MAX              # overflows
+Deposit 1
+Balance

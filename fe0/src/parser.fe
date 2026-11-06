@@ -113,13 +113,13 @@ impl Parser {
     // Whether the current token ends a statement (SPEC.md §3.4).
     fn at_stmt_end(self) -> bool {
         let k = self.peek()
-        k == P_SEMI || k == T_NEWLINE || k == P_RBRACE || k == T_EOF
+        k == T_NEWLINE || k == P_RBRACE || k == T_EOF
     }
 
-    // Ends the statement, as SPEC.md §3.4 says. It consumes a `;` or a newline and leaves a `}`
-    // or the end of input for the caller.
-    fn end_stmt(mut self) -> Result<Diag, ()> {
-        if self.eat(P_SEMI) || self.eat(T_NEWLINE) || self.at_stmt_end() {
+    // Checks that the current token ends a statement, as SPEC.md §3.4 says. Errors with
+    // P_EXPECTED_END when it does not.
+    fn end_stmt(self) -> Result<Diag, ()> {
+        if self.at_stmt_end() {
             return Result::Ok(())
         }
         Result::Err(self.err(P_EXPECTED_END))
@@ -445,29 +445,19 @@ impl Parser {
         self.skip_newlines()
         while !self.eat(P_RBRACE) {
             let s = self.stmt()?
-            let kind = self.ast.nodes[s].kind
-            if !kind.is_expr() || self.eat(P_SEMI) {
-                self.pending.push(s)
-            } else {
-                // An expression: the tail if `}` follows, else a statement ended by a newline.
-                let newline = self.peek() == T_NEWLINE
-                self.skip_newlines()
-                if self.peek() == P_RBRACE {
-                    tail = s
-                } else if newline {
-                    self.pending.push(s)
-                } else {
-                    return Result::Err(self.err(P_EXPECTED_END))
-                }
-            }
             self.skip_newlines()
+            if self.ast.nodes[s].kind.is_expr() && self.peek() == P_RBRACE {
+                tail = s
+            } else {
+                self.pending.push(s)
+            }
         }
         let stmts = self.ast.add_list(mut self.pending, mark)
         self.leave()
         Result::Ok(self.ast.add_node(Node::new_block(pos, stmts, tail)))
     }
 
-    // A statement, or an expression that the caller ends.
+    // A statement, ended as SPEC.md §3.4 says.
     fn stmt(mut self) -> Result<Diag, usize> {
         let k = self.peek()
         if k == K_LET || k == K_VAR {
@@ -508,7 +498,9 @@ impl Parser {
             let value = self.expr()?
             return self.finish_stmt(Node::new_assign(pos, name, op, value))
         }
-        self.expr()
+        let e = self.expr()?
+        self.end_stmt()?
+        Result::Ok(e)
     }
 
     fn finish_stmt(mut self, _ n: Node) -> Result<Diag, usize> {

@@ -32,13 +32,14 @@ use ingot::diag::{
     N_UNKNOWN_VARIANT,
     T_ARG_COUNT,
     T_MISMATCH,
+    T_NEEDS_TYPE,
     T_NO_VALUE,
     T_SELECTOR_TOO_LARGE,
     Diag,
     DiagCode,
 }
 use ingot::io::{Source, text}
-use ingot::parser::parse
+use ingot::parser::{MAX_DEPTH, parse}
 use ingot::parser_tests::{DEEPEST_BLOCKS, DEEPEST_PARENS, Nested}
 use std::abi::DynString
 
@@ -98,7 +99,7 @@ fn if_and_blocks() {
     )
     accepts("fn f(_ c: bool) { if c { f(c) } }")
     accepts(
-        "fn f(_ c: bool) -> u256 { let x = { let y = 2; y * 2 }; x }",
+        "fn f(_ c: bool) -> u256 {\n    let x = {\n        let y: u256 = 2\n        y * 2\n    }\n    x\n}",
     )
     rejects("fn f(_ c: bool) -> u256 { if c { 1 } }", T_MISMATCH, 31)
     rejects(
@@ -143,32 +144,78 @@ fn return_paths() {
 
 #[test]
 fn locals() {
-    accepts("fn f() -> u256 { let x = 1; let x = x + 1; x }")
-    accepts("fn f() -> u256 { var x: u256 = 1; x += 2; x = x * 3; x }")
-    rejects(
-        "fn f() -> u256 {\n    { let x = 1 }\n    x\n}",
-        N_UNKNOWN_NAME,
-        39,
+    accepts(
+        "fn f() -> u256 {\n    let x: u256 = 1\n    let x = x + 1\n    x\n}",
     )
-    rejects("fn f() -> u256 { let x = x; x }", N_UNKNOWN_NAME, 25)
+    accepts(
+        "fn f() -> u256 {\n    var x: u256 = 1\n    x += 2\n    x = x * 3\n    x\n}",
+    )
+    rejects(
+        "fn f() -> u256 {\n    { let x: u256 = 1 }\n    x\n}",
+        N_UNKNOWN_NAME,
+        45,
+    )
+    rejects(
+        "fn f() -> u256 {\n    let x = x\n    x\n}",
+        N_UNKNOWN_NAME,
+        29,
+    )
     rejects("fn f() { let x: bool = 1 }", T_MISMATCH, 23)
     rejects("fn g() {}\nfn f() { let x = g() }", T_NO_VALUE, 27)
-    rejects("fn f() { let x = 1; x = 2 }", N_ASSIGN_IMMUTABLE, 20)
+    rejects(
+        "fn f() {\n    let x: u256 = 1\n    x = 2\n}",
+        N_ASSIGN_IMMUTABLE,
+        33,
+    )
     rejects("fn f(_ p: u256) { p = 2 }", N_ASSIGN_IMMUTABLE, 18)
     rejects(
         "const A: u256 = 1\nfn f() { A = 2 }",
         N_ASSIGN_IMMUTABLE,
         27,
     )
-    rejects("fn f() { var b = true; b += true }", T_MISMATCH, 23)
-    rejects("fn f() { var x = 1; x = true }", T_MISMATCH, 24)
+    rejects(
+        "fn f() {\n    var b = true\n    b += true\n}",
+        T_MISMATCH,
+        30,
+    )
+    rejects(
+        "fn f() {\n    var x: u256 = 1\n    x = true\n}",
+        T_MISMATCH,
+        37,
+    )
     rejects("fn f() { y = 1 }", N_UNKNOWN_NAME, 9)
+}
+
+#[test]
+fn literal_types() {
+    accepts("fn f() -> u256 {\n    let x: u256 = 1 + 2\n    x << 3\n}")
+    accepts("fn f(_ a: u256) -> bool { 1 < a && a == 2 && ~0 != a }")
+    accepts("fn f(_ c: bool) -> u256 { if c { 1 } else { 2 } * 3 }")
+    accepts("fn g(_ a: u256) {}\nfn f() { g(1 + 1) }")
+    accepts("const A: u256 = 1\nfn f() -> bool { A == 1 }")
+    rejects("fn f() {\n    let x = 1\n}", T_NEEDS_TYPE, 21)
+    rejects(
+        "fn f() -> u256 {\n    var i = 0\n    i\n}",
+        T_NEEDS_TYPE,
+        29,
+    )
+    rejects("fn f() {\n    1 + 2\n    f()\n}", T_NEEDS_TYPE, 15)
+    rejects(
+        "fn f(_ c: bool) {\n    if c { 1 } else { 2 }\n    f(c)\n}",
+        T_NEEDS_TYPE,
+        22,
+    )
+    rejects("fn f() { 1 + 2 }", T_MISMATCH, 7)
+    rejects("fn f() -> bool { 1 == 1 }", T_NEEDS_TYPE, 19)
+    rejects("fn f() { assert!(~1 < 2) }", T_NEEDS_TYPE, 20)
+    rejects("const B: bool = 1 == 1", T_NEEDS_TYPE, 18)
+    rejects("const C: bool = 1 < 2", T_NEEDS_TYPE, 18)
 }
 
 #[test]
 fn loops() {
     accepts(
-        "fn f() -> u256 {\n    var i = 0\n    while i < 10 {\n        i += 1\n        if i == 5 { break }\n        continue\n    }\n    i\n}",
+        "fn f() -> u256 {\n    var i: u256 = 0\n    while i < 10 {\n        i += 1\n        if i == 5 { break }\n        continue\n    }\n    i\n}",
     )
     rejects("fn f() { break }", N_OUTSIDE_LOOP, 9)
     rejects("fn f() { continue }", N_OUTSIDE_LOOP, 9)
@@ -292,9 +339,9 @@ fn effects() {
         132,
     )
     rejects(
-        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 { let a = 1; a }\n        Set { v } { }\n    }\n}\n",
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 {\n            let a: u256 = 1\n            a\n        }\n        Set { v } { }\n    }\n}\n",
         N_SHADOWS_FIELD,
-        161,
+        173,
     )
     rejects(
         "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut a: bool\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut a) { a = v }\n    }\n}\n",
@@ -430,7 +477,7 @@ fn nested(_ brackets: String<2>, _ depth: usize) -> Option<Diag> {
 fn deep_nesting_and_long_chains() {
     assert!(nested("()", DEEPEST_PARENS).is_none())
     assert!(nested("{}", DEEPEST_BLOCKS).is_none())
-    // A chain longer than the parser's `MAX_DEPTH`.
+    assert!(40 > MAX_DEPTH)
     accepts(
         "fn f(_ c: bool) -> u256 { if c { 0 } else if c { 1 } else if c { 2 } else if c { 3 } else if c { 4 } else if c { 5 } else if c { 6 } else if c { 7 } else if c { 8 } else if c { 9 } else if c { 10 } else if c { 11 } else if c { 12 } else if c { 13 } else if c { 14 } else if c { 15 } else if c { 16 } else if c { 17 } else if c { 18 } else if c { 19 } else if c { 20 } else if c { 21 } else if c { 22 } else if c { 23 } else if c { 24 } else if c { 25 } else if c { 26 } else if c { 27 } else if c { 28 } else if c { 29 } else if c { 30 } else if c { 31 } else if c { 32 } else if c { 33 } else if c { 34 } else if c { 35 } else if c { 36 } else if c { 37 } else if c { 38 } else if c { 39 } else { 0 } }",
     )

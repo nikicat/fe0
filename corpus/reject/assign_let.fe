@@ -1,0 +1,7 @@
+// expect: N014 5:5
+// A `let` local cannot be assigned.
+fn f(_ a: u256) -> u256 {
+    let x = a
+    x = 2
+    x
+}

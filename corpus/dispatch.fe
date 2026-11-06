@@ -1,0 +1,31 @@
+// The dispatcher with selectors spread over the 32-bit range, and calldata of odd lengths.
+msg DispatchMsg {
+    #[selector = 0x00000001]
+    Low -> u256,
+    #[selector = 0x7fffffff]
+    Mid -> u256,
+    #[selector = 0xfffffffe]
+    High -> u256,
+    #[selector = 0x12345678]
+    Echo { a: u256, b: bool, c: Address } -> u256,
+    #[selector = 0x9abcdef0]
+    Nothing {},
+}
+
+contract Dispatch {
+    recv DispatchMsg {
+        Low {} -> u256 {
+            1
+        }
+        Mid {} -> u256 {
+            2
+        }
+        High {} -> u256 {
+            3
+        }
+        Echo { a, b, c } -> u256 {
+            if b && c == c { a } else { 0 }
+        }
+        Nothing {} {}
+    }
+}

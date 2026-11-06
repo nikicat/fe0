@@ -1,0 +1,42 @@
+// A ring buffer of four slots: push overwrites the oldest value once it is full.
+msg RingMsg {
+    #[selector = 1]
+    Push { v: u256 },
+    #[selector = 2]
+    At { i: u256 } -> u256,
+    #[selector = 3]
+    Len -> u256,
+    #[selector = 4]
+    Sum -> u256,
+}
+
+contract Ring {
+    mut s0: u256,
+    mut s1: u256,
+    mut s2: u256,
+    mut s3: u256,
+    mut head: u256,
+    mut len: u256,
+
+    recv RingMsg {
+        Push { v } uses (mut s0, mut s1, mut s2, mut s3, mut head, mut len) {
+            if head == 0 { s0 = v } else if head == 1 { s1 = v } else if head == 2 { s2 = v } else { s3 = v }
+            head = (head + 1) % 4
+            if len < 4 {
+                len += 1
+            }
+        }
+        // The i-th oldest value.
+        At { i } -> u256 uses (s0, s1, s2, s3, head, len) {
+            assert!(i < len, "out of range")
+            let k = (head + 4 - len + i) % 4
+            if k == 0 { s0 } else if k == 1 { s1 } else if k == 2 { s2 } else { s3 }
+        }
+        Len {} -> u256 uses (len) {
+            len
+        }
+        Sum {} -> u256 uses (s0, s1, s2, s3) {
+            s0 + s1 + s2 + s3
+        }
+    }
+}

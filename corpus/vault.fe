@@ -1,0 +1,50 @@
+// A vault with a balance, a limit per withdrawal and a lock, set up by `init`.
+msg VaultMsg {
+    #[selector = 0xb6b55f25]
+    Deposit { amount: u256 },
+    #[selector = 0x2e1a7d4d]
+    Withdraw { amount: u256 } -> u256,
+    #[selector = 0x12065fe0]
+    Balance -> u256,
+    #[selector = 0xf83d08ba]
+    Lock {},
+    #[selector = 0xa69df4b5]
+    Unlock { key: u256 },
+}
+
+contract Vault {
+    mut balance: u256,
+    mut limit: u256,
+    mut locked: bool,
+    mut key: u256,
+
+    init(limit_: u256, key_: u256) uses (mut limit, mut key) {
+        assert!(limit_ > 0, "zero limit")
+        limit = limit_
+        key = key_
+    }
+
+    recv VaultMsg {
+        Deposit { amount } uses (mut balance, locked) {
+            assert!(!locked, "locked")
+            balance += amount
+        }
+        Withdraw { amount } -> u256 uses (mut balance, limit, locked) {
+            assert!(!locked, "locked")
+            assert!(amount <= limit, "over the limit")
+            assert!(amount <= balance, "not enough")
+            balance -= amount
+            balance
+        }
+        Balance {} -> u256 uses (balance) {
+            balance
+        }
+        Lock {} uses (mut locked) {
+            locked = true
+        }
+        Unlock { key: k } uses (mut locked, key) {
+            assert!(k == key)
+            locked = false
+        }
+    }
+}

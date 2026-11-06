@@ -1,0 +1,36 @@
+// A counter that can be stepped up and down, and reset to its start value.
+msg CounterMsg {
+    #[selector = 0xd09de08a]
+    Increment {},
+    #[selector = 0x2baeceb7]
+    Decrement {},
+    #[selector = 0x6d4ce63c]
+    Get -> u256,
+    #[selector = 0xd826f88f]
+    Reset {},
+}
+
+contract Counter {
+    mut count: u256,
+    mut start: u256,
+
+    init(from: u256) uses (mut count, mut start) {
+        count = from
+        start = from
+    }
+
+    recv CounterMsg {
+        Increment {} uses (mut count) {
+            count += 1
+        }
+        Decrement {} uses (mut count) {
+            count -= 1
+        }
+        Get {} -> u256 uses (count) {
+            count
+        }
+        Reset {} uses (mut count, start) {
+            count = start
+        }
+    }
+}

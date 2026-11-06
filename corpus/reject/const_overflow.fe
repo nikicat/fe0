@@ -1,0 +1,3 @@
+// expect: C034 3:28
+// Constants are evaluated with checked arithmetic (SPEC §5.3).
+const A: u256 = (1 << 255) * 2

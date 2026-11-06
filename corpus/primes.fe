@@ -1,0 +1,65 @@
+// Primality by trial division, the n-th prime and the count of primes below a bound.
+msg PrimesMsg {
+    #[selector = 1]
+    IsPrime { n: u256 } -> bool,
+    #[selector = 2]
+    Nth { n: u256 } -> u256,
+    #[selector = 3]
+    CountBelow { n: u256 } -> u256,
+}
+
+fn is_prime(_ n: u256) -> bool {
+    if n < 2 {
+        return false
+    }
+    var d: u256 = 2
+    while d * d <= n {
+        if n % d == 0 {
+            return false
+        }
+        d += 1
+    }
+    true
+}
+
+// The n-th prime, counting 2 as the first.
+fn nth(_ n: u256) -> u256 {
+    assert!(n > 0, "n starts at 1")
+    var found: u256 = 0
+    var p: u256 = 1
+    while found < n {
+        p += 1
+        if is_prime(p) {
+            found += 1
+        }
+    }
+    p
+}
+
+fn count_below(_ n: u256) -> u256 {
+    var c: u256 = 0
+    var k: u256 = 2
+    while k < n {
+        if !is_prime(k) {
+            k += 1
+            continue
+        }
+        c += 1
+        k += 1
+    }
+    c
+}
+
+contract Primes {
+    recv PrimesMsg {
+        IsPrime { n } -> bool {
+            is_prime(n)
+        }
+        Nth { n } -> u256 {
+            nth(n)
+        }
+        CountBelow { n } -> u256 {
+            count_below(n)
+        }
+    }
+}

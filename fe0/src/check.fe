@@ -151,7 +151,7 @@ impl Checker {
     }
 
     fn set_ty(mut self, _ i: usize, _ t: Ty) {
-        self.c.types.set(i, t)
+        self.c.types.set(i, t.or_u256())
     }
 
     // The node in list `l` named `sym`, or 0.
@@ -411,7 +411,7 @@ impl Checker {
     fn constant(mut self, _ i: usize) -> Result<Diag, ()> {
         let n = self.node(i)
         let v = self.eval(n.value())?
-        if v.ty != n.ty() {
+        if !v.ty.fits(n.ty()) {
             return Result::Err(self.at(T_MISMATCH, n.value()))
         }
         self.c.slots.set(i, self.c.ast.add_word(v.v))
@@ -423,7 +423,7 @@ impl Checker {
     fn eval(mut self, _ i: usize) -> Result<Diag, Val> {
         let n = self.node(i)
         let k = n.kind
-        var v = Val { v: 0, ty: TY_U256 }
+        var v = Val { v: 0, ty: TY_INT }
         if k == NODE_INT {
             v.v = self.c.ast.word_value(i)
         } else if k == NODE_BOOL {
@@ -444,10 +444,7 @@ impl Checker {
             v = Val { v: self.c.ast.words[self.c.slots[d]], ty: self.c.types[d] }
         } else if k == NODE_UNARY {
             let a = self.eval(n.operand())?
-            v.ty = unary_ty(n.op())
-            if a.ty != v.ty {
-                return Result::Err(self.at(T_MISMATCH, n.operand()))
-            }
+            v.ty = self.fit(n.operand(), a.ty, unary_ty(n.op()))?
             v.v = if n.op() == O_BANG { a.v ^ 1 } else { ~a.v }
         } else if k == NODE_BINARY {
             v = self.eval_binary(i)?
@@ -465,18 +462,9 @@ impl Checker {
         let op = n.op()
         let a = self.eval(n.lhs())?
         let b = self.eval(n.rhs())?
+        let ty = self.binary_ty(i, a.ty, b.ty)?
         if is_equality(op) {
-            if b.ty != a.ty {
-                return Result::Err(self.at(T_MISMATCH, n.rhs()))
-            }
-            return Result::Ok(Val { v: bit((a.v == b.v) == (op == O_EQ)), ty: TY_BOOL })
-        }
-        let t = operand_ty(op)
-        if a.ty != t {
-            return Result::Err(self.at(T_MISMATCH, n.lhs()))
-        }
-        if b.ty != t {
-            return Result::Err(self.at(T_MISMATCH, n.rhs()))
+            return Result::Ok(Val { v: bit((a.v == b.v) == (op == O_EQ)), ty })
         }
         let x = a.v
         let y = b.v
@@ -524,7 +512,7 @@ impl Checker {
         } else if op == O_GE {
             r = bit(x >= y)
         }
-        Result::Ok(Val { v: r, ty: result_ty(op) })
+        Result::Ok(Val { v: r, ty })
     }
 
     fn fn_item(mut self, _ i: usize) -> Result<Diag, ()> {
@@ -665,13 +653,19 @@ impl Checker {
         self.finish(a, n.body())
     }
 
-    // Checks that the type of expression `i` fits `ty`.
-    fn want(mut self, _ i: usize, _ ty: Ty) -> Result<Diag, ()> {
+    // Checks that the type of expression `i` fits `ty`, and returns what fit returns for it.
+    fn want(mut self, _ i: usize, _ ty: Ty) -> Result<Diag, Ty> {
         let t = self.expr(i)?
-        if !t.fits(ty) {
+        self.fit(i, t, ty)
+    }
+
+    // Returns `want`, or TY_INT when `t`, the type of expression `i`, is TY_INT. Errors with
+    // T_MISMATCH when `t` does not fit `want`.
+    fn fit(self, _ i: usize, _ t: Ty, _ want: Ty) -> Result<Diag, Ty> {
+        if !t.fits(want) {
             return Result::Err(self.at(T_MISMATCH, i))
         }
-        Result::Ok(())
+        Result::Ok(if t == TY_INT { TY_INT } else { want })
     }
 
     // Checks expression `i` and returns its type, which must not be unit.
@@ -689,7 +683,7 @@ impl Checker {
         let k = n.kind
         var t = TY_UNIT
         if k == NODE_INT {
-            t = TY_U256
+            t = TY_INT
         } else if k == NODE_BOOL {
             t = TY_BOOL
         } else if k == NODE_NAME {
@@ -697,8 +691,7 @@ impl Checker {
         } else if k == NODE_BINARY {
             t = self.binary(i)?
         } else if k == NODE_UNARY {
-            t = unary_ty(n.op())
-            self.want(n.operand(), t)?
+            t = self.want(n.operand(), unary_ty(n.op()))?
         } else if k == NODE_CALL {
             t = self.call(i)?
         } else if k == NODE_IF {
@@ -706,7 +699,7 @@ impl Checker {
         } else if k == NODE_BLOCK {
             t = self.block(i)?
         } else if k == NODE_ASSERT {
-            self.want(n.cond(), TY_BOOL)?
+            let _ = self.want(n.cond(), TY_BOOL)?
         }
         self.set_ty(i, t)
         Result::Ok(t)
@@ -727,15 +720,35 @@ impl Checker {
 
     fn binary(mut self, _ i: usize) -> Result<Diag, Ty> {
         let n = self.node(i)
-        let op = n.op()
-        if is_equality(op) {
-            let t = self.value(n.lhs())?
-            self.want(n.rhs(), t)?
+        let a = if is_equality(n.op()) {
+            self.value(n.lhs())?
         } else {
-            self.want(n.lhs(), operand_ty(op))?
-            self.want(n.rhs(), operand_ty(op))?
+            self.expr(n.lhs())?
         }
-        Result::Ok(result_ty(op))
+        let b = self.expr(n.rhs())?
+        self.binary_ty(i, a, b)
+    }
+
+    // Returns the type of BINARY `i`, whose operands have types `a` and `b`. Errors when an
+    // operand does not fit the operator, or when it compares two TY_INT operands.
+    fn binary_ty(self, _ i: usize, _ a: Ty, _ b: Ty) -> Result<Diag, Ty> {
+        let n = self.node(i)
+        let op = n.op()
+        let want = if is_equality(op) {
+            a.or_u256()
+        } else {
+            operand_ty(op)
+        }
+        let lhs = self.fit(n.lhs(), a, want)?
+        let rhs = self.fit(n.rhs(), b, lhs.or_u256())?
+        if lhs != TY_INT || rhs != TY_INT {
+            return Result::Ok(result_ty(op))
+        }
+        if result_ty(op) == TY_U256 {
+            return Result::Ok(TY_INT)
+        }
+        // Nothing makes the operands of a comparison u256.
+        Result::Err(self.at(T_NEEDS_TYPE, i))
     }
 
     // Checks the arguments of CALL `i` against the parameters of its function (SPEC §5.4).
@@ -801,7 +814,7 @@ impl Checker {
     // Checks branch `b` and joins its type with `ty`, the type of the branches before it.
     fn join(mut self, _ ty: Ty, _ b: usize) -> Result<Diag, Ty> {
         let t = self.expr(b)?
-        if ty == TY_NEVER {
+        if ty.fits(t) {
             return Result::Ok(t)
         }
         if !t.fits(ty) {
@@ -844,7 +857,7 @@ impl Checker {
         }
         if k == NODE_RETURN {
             if n.value() != 0 {
-                self.want(n.value(), self.body.ret)?
+                let _ = self.want(n.value(), self.body.ret)?
             } else if self.body.ret != TY_UNIT {
                 return Result::Err(self.at(T_MISMATCH, i))
             }
@@ -860,10 +873,11 @@ impl Checker {
             self.assign(i)?
             return Result::Ok(TY_UNIT)
         }
-        if self.expr(i)? == TY_NEVER {
-            return Result::Ok(TY_NEVER)
+        let t = self.expr(i)?
+        if t == TY_INT {
+            return Result::Err(self.at(T_NEEDS_TYPE, i))
         }
-        Result::Ok(TY_UNIT)
+        Result::Ok(if t == TY_NEVER { TY_NEVER } else { TY_UNIT })
     }
 
     // Checks LET `i` and declares its local.
@@ -877,6 +891,8 @@ impl Checker {
             t = n.ty()
         } else if t == TY_NEVER {
             return Result::Err(self.at(T_NO_VALUE, n.value()))
+        } else if t == TY_INT {
+            return Result::Err(self.at(T_NEEDS_TYPE, n.value()))
         }
         // Declared after its value, so a local is not in scope in its own initializer.
         self.declare(n.name(), i, t)
@@ -909,7 +925,8 @@ impl Checker {
         if n.op() != O_ASSIGN && t != TY_U256 {
             return Result::Err(self.at(T_MISMATCH, i))
         }
-        self.want(n.value(), t)
+        self.want(n.value(), t)?
+        Result::Ok(())
     }
 }
 

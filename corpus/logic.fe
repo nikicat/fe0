@@ -1,0 +1,32 @@
+// `&&` and `||` short-circuit: the right operand runs only when it decides the result.
+msg LogicMsg {
+    #[selector = 1]
+    Xor { a: bool, b: bool } -> bool,
+    #[selector = 2]
+    Guard { d: u256 } -> bool,
+    #[selector = 3]
+    Either { d: u256 } -> bool,
+    #[selector = 4]
+    Implies { a: bool, b: bool } -> bool,
+}
+
+fn implies(_ a: bool, _ b: bool) -> bool {
+    !a || b
+}
+
+contract Logic {
+    recv LogicMsg {
+        Xor { a, b } -> bool {
+            (a || b) && !(a && b)
+        }
+        Guard { d } -> bool {
+            d != 0 && 10 / d > 2
+        }
+        Either { d } -> bool {
+            d == 0 || 10 / d > 2
+        }
+        Implies { a, b } -> bool {
+            implies(a, b) && implies(!b, !a)
+        }
+    }
+}

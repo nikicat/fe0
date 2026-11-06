@@ -1,0 +1,7 @@
+Shadow 0
+Shadow 7
+Shadow 2**254          # x * 2 fits, x * 10 does not
+Nested 3
+Nested MAX
+Scope 0                # a * 3 - 1 underflows
+Scope 5

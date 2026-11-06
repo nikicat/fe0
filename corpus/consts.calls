@@ -1,0 +1,11 @@
+Zero
+All
+Flags
+Scale 0
+Scale 12345
+Scale MAX//10**18
+Scale MAX//10**17
+raw 00000000
+raw ffffffff
+raw 7fffffff00
+raw 80000000

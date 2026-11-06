@@ -1,0 +1,15 @@
+Sqrt 0
+Sqrt 1
+Sqrt 2
+Sqrt 15
+Sqrt 16
+Sqrt 17
+Sqrt 2**200
+Sqrt MAX
+Cbrt 0
+Cbrt 26
+Cbrt 27
+Cbrt MAX
+IsSquare 144
+IsSquare 145
+IsSquare MAX

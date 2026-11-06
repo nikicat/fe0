@@ -1,0 +1,13 @@
+// expect: T005 7:13
+// A `var` of a literal needs a type in Fe0 (SPEC §2). Fe infers it here from `total += i`,
+// but Fe0 does not look at later uses.
+// fe: accepts
+fn f() -> u256 {
+    var total: u256 = 0
+    var i = 0
+    while i < 3 {
+        total += i
+        i += 1
+    }
+    total
+}

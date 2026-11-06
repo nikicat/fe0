@@ -1,0 +1,65 @@
+// Bit counting: set bits, the highest set bit, trailing zeros and the parity.
+msg BitcountMsg {
+    #[selector = 0x100]
+    Popcount { x: u256 } -> u256,
+    #[selector = 0x101]
+    Log2 { x: u256 } -> u256,
+    #[selector = 0x102]
+    TrailingZeros { x: u256 } -> u256,
+    #[selector = 0x103]
+    Parity { x: u256 } -> bool,
+}
+
+fn popcount(_ x: u256) -> u256 {
+    var n: u256 = 0
+    var v = x
+    while v != 0 {
+        v &= v - 1
+        n += 1
+    }
+    n
+}
+
+// The index of the highest set bit, by binary search over the shift.
+fn log2(_ x: u256) -> u256 {
+    assert!(x != 0, "log of zero")
+    var r: u256 = 0
+    var v = x
+    var s: u256 = 128
+    while s > 0 {
+        if v >> s != 0 {
+            v >>= s
+            r += s
+        }
+        s /= 2
+    }
+    r
+}
+
+fn trailing_zeros(_ x: u256) -> u256 {
+    if x == 0 {
+        return 256
+    }
+    var n: u256 = 0
+    while (x >> n) & 1 == 0 {
+        n += 1
+    }
+    n
+}
+
+contract Bitcount {
+    recv BitcountMsg {
+        Popcount { x } -> u256 {
+            popcount(x)
+        }
+        Log2 { x } -> u256 {
+            log2(x)
+        }
+        TrailingZeros { x } -> u256 {
+            trailing_zeros(x)
+        }
+        Parity { x } -> bool {
+            popcount(x) % 2 == 1
+        }
+    }
+}

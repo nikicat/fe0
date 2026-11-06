@@ -1,0 +1,42 @@
+// A xorshift random number generator over 64-bit words, kept in storage.
+msg XorshiftMsg {
+    #[selector = 1]
+    Seed { s: u256 },
+    #[selector = 2]
+    Next -> u256,
+    #[selector = 3]
+    Roll { sides: u256 } -> u256,
+}
+
+const MASK64: u256 = (1 << 64) - 1
+
+fn next(_ x: u256) -> u256 {
+    var v = x
+    v ^= (v << 13) & MASK64
+    v ^= v >> 7
+    v ^= (v << 17) & MASK64
+    v
+}
+
+contract Xorshift {
+    mut state: u256,
+
+    init() uses (mut state) {
+        state = 88172645463325252
+    }
+
+    recv XorshiftMsg {
+        Seed { s } uses (mut state) {
+            assert!(s != 0 && s <= MASK64, "seed")
+            state = s
+        }
+        Next {} -> u256 uses (mut state) {
+            state = next(state)
+            state
+        }
+        Roll { sides } -> u256 uses (mut state) {
+            state = next(state)
+            state % sides + 1
+        }
+    }
+}

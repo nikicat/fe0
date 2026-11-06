@@ -1,0 +1,19 @@
+Pow 2 10
+Pow 2 255
+Pow 2 256      # overflows
+Pow 3 161
+Pow 3 162
+Pow 0 0
+Pow 0 5
+Pow 1 MAX
+Pow 10 77
+Pow 10 78
+PowMod 2 10 1000
+PowMod 3 MAX 1000000007
+PowMod 5 0 1
+PowMod 5 3 0
+PowMod 5 3 2**128
+IsPowerOfTwo 0
+IsPowerOfTwo 1
+IsPowerOfTwo 96
+IsPowerOfTwo 2**255

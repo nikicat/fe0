@@ -1,0 +1,16 @@
+// expect: E116 13:13
+// An arm without `uses` reads a field (SPEC §6).
+msg M {
+    #[selector = 1]
+    Get -> u256,
+}
+
+contract C {
+    mut n: u256,
+
+    recv M {
+        Get {} -> u256 {
+            n
+        }
+    }
+}

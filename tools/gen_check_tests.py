@@ -5,14 +5,9 @@ A case accepts, warns or rejects. A reject or warn case marks the position of it
 with `|`, and the script turns the mark into a byte offset. Change the cases here and rerun
 it, so the offsets stay right.
 
-usage: gen_check_tests.py [path/to/fe]
+usage: [FE=path/to/fe] gen_check_tests.py
 """
-import subprocess
-import sys
-from pathlib import Path
-
-FE = sys.argv[1] if len(sys.argv) > 1 else Path.home() / ".fe/bin/fe"
-FE0 = Path(__file__).resolve().parent.parent / "fe0"
+from fegen import CHAIN_LEN, FE0, lit, write_formatted
 
 # The msg that every contract case receives.
 MSG = "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\n"
@@ -37,7 +32,7 @@ groups = {
 "if_and_blocks": [
     ("ok", "fn f(_ c: bool) -> u256 { if c { 1 } else if !c { 2 } else { 3 } }"),
     ("ok", "fn f(_ c: bool) { if c { f(c) } }"),
-    ("ok", "fn f(_ c: bool) -> u256 { let x = { let y = 2; y * 2 }; x }"),
+    ("ok", "fn f(_ c: bool) -> u256 {\n    let x = {\n        let y: u256 = 2\n        y * 2\n    }\n    x\n}"),
     ("err", "fn f(_ c: bool) -> u256 { if c |{ 1 } }", "T_MISMATCH"),
     ("err", "fn f(_ c: bool) -> u256 { if c { 1 } else if c { 2 } else |{ true } }", "T_MISMATCH"),
     ("err", "fn f(_ c: bool) -> u256 { if c { 1 } else if c |{ 2 } }", "T_MISMATCH"),
@@ -57,21 +52,40 @@ groups = {
     ("err", "fn f() |{ 1 }", "T_MISMATCH"),
 ],
 "locals": [
-    ("ok", "fn f() -> u256 { let x = 1; let x = x + 1; x }"),
-    ("ok", "fn f() -> u256 { var x: u256 = 1; x += 2; x = x * 3; x }"),
-    ("err", "fn f() -> u256 {\n    { let x = 1 }\n    |x\n}", "N_UNKNOWN_NAME"),
-    ("err", "fn f() -> u256 { let x = |x; x }", "N_UNKNOWN_NAME"),
+    ("ok", "fn f() -> u256 {\n    let x: u256 = 1\n    let x = x + 1\n    x\n}"),
+    ("ok", "fn f() -> u256 {\n    var x: u256 = 1\n    x += 2\n    x = x * 3\n    x\n}"),
+    ("err", "fn f() -> u256 {\n    { let x: u256 = 1 }\n    |x\n}", "N_UNKNOWN_NAME"),
+    ("err", "fn f() -> u256 {\n    let x = |x\n    x\n}", "N_UNKNOWN_NAME"),
     ("err", "fn f() { let x: bool = |1 }", "T_MISMATCH"),
     ("err", "fn g() {}\nfn f() { let x = |g() }", "T_NO_VALUE"),
-    ("err", "fn f() { let x = 1; |x = 2 }", "N_ASSIGN_IMMUTABLE"),
+    ("err", "fn f() {\n    let x: u256 = 1\n    |x = 2\n}", "N_ASSIGN_IMMUTABLE"),
     ("err", "fn f(_ p: u256) { |p = 2 }", "N_ASSIGN_IMMUTABLE"),
     ("err", "const A: u256 = 1\nfn f() { |A = 2 }", "N_ASSIGN_IMMUTABLE"),
-    ("err", "fn f() { var b = true; |b += true }", "T_MISMATCH"),
-    ("err", "fn f() { var x = 1; x = |true }", "T_MISMATCH"),
+    ("err", "fn f() {\n    var b = true\n    |b += true\n}", "T_MISMATCH"),
+    ("err", "fn f() {\n    var x: u256 = 1\n    x = |true\n}", "T_MISMATCH"),
     ("err", "fn f() { |y = 1 }", "N_UNKNOWN_NAME"),
 ],
+"literal_types": [
+    # Integers of type TY_INT (SPEC §2). Fe rejects each err case here with 8-0031 too, except
+    # `var i = 0`, whose type Fe infers from the later use of `i`.
+    ("ok", "fn f() -> u256 {\n    let x: u256 = 1 + 2\n    x << 3\n}"),
+    ("ok", "fn f(_ a: u256) -> bool { 1 < a && a == 2 && ~0 != a }"),
+    ("ok", "fn f(_ c: bool) -> u256 { if c { 1 } else { 2 } * 3 }"),
+    ("ok", "fn g(_ a: u256) {}\nfn f() { g(1 + 1) }"),
+    ("ok", "const A: u256 = 1\nfn f() -> bool { A == 1 }"),
+    ("err", "fn f() {\n    let x = |1\n}", "T_NEEDS_TYPE"),
+    ("err", "fn f() -> u256 {\n    var i = |0\n    i\n}", "T_NEEDS_TYPE"),
+    ("err", "fn f() {\n    1 |+ 2\n    f()\n}", "T_NEEDS_TYPE"),
+    ("err", "fn f(_ c: bool) {\n    |if c { 1 } else { 2 }\n    f(c)\n}", "T_NEEDS_TYPE"),
+    # As a body\'s tail, a literal integer is a value where none may be.
+    ("err", "fn f() |{ 1 + 2 }", "T_MISMATCH"),
+    ("err", "fn f() -> bool { 1 |== 1 }", "T_NEEDS_TYPE"),
+    ("err", "fn f() { assert!(~1 |< 2) }", "T_NEEDS_TYPE"),
+    ("err", "const B: bool = 1 |== 1", "T_NEEDS_TYPE"),
+    ("err", "const C: bool = 1 |< 2", "T_NEEDS_TYPE"),
+],
 "loops": [
-    ("ok", "fn f() -> u256 {\n    var i = 0\n    while i < 10 {\n        i += 1\n        if i == 5 { break }\n        continue\n    }\n    i\n}"),
+    ("ok", "fn f() -> u256 {\n    var i: u256 = 0\n    while i < 10 {\n        i += 1\n        if i == 5 { break }\n        continue\n    }\n    i\n}"),
     ("err", "fn f() { |break }", "N_OUTSIDE_LOOP"),
     ("err", "fn f() { |continue }", "N_OUTSIDE_LOOP"),
     ("err", "fn f() { while |1 { } }", "T_MISMATCH"),
@@ -121,7 +135,7 @@ groups = {
     ("warn", contract("    mut a: u256\n", ARMS_OK, "    init() uses (|mut a) { }\n"), "E_UNUSED_USE"),
     ("ok", contract("    mut a: u256\n", "        Get {} -> u256 uses (mut a) { a }\n        Set { v } uses (mut a) { a = v }\n")),
     ("err", contract("    mut a: u256\n", ARMS_OK, "    init(|a: u256) { }\n"), "N_SHADOWS_FIELD"),
-    ("err", contract("    mut a: u256\n", "        Get {} -> u256 { |let a = 1; a }\n        Set { v } { }\n"), "N_SHADOWS_FIELD"),
+    ("err", contract("    mut a: u256\n", "        Get {} -> u256 {\n            |let a: u256 = 1\n            a\n        }\n        Set { v } { }\n"), "N_SHADOWS_FIELD"),
     ("err", contract("    mut a: u256\n    mut |a: bool\n", ARMS_OK), "N_DUPLICATE"),
     ("err", "const a: u256 = 1\n" + contract("    mut |a: u256\n", ARMS_OK), "N_DUPLICATE"),
 ],
@@ -146,15 +160,13 @@ groups = {
     ("err", contract("    mut a: u256\n", "        Get {} -> u256 uses (a) { a }\n        Set { v } |{ true }\n"), "T_MISMATCH"),
 ],
 }
-def lit(s):
-    return '"' + s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n') + '"'
 codes = sorted({c[2] for g in groups.values() for c in g if c[0] != "ok"} | {"E_TOO_MANY_FIELDS"})
 out = ["// Generated by tools/gen_check_tests.py. Edit the cases there and rerun it.",
        "// Tests for the checker: cases per rule of SPEC §2 and §4–6, each of which accepts, warns or",
        "// rejects. A warn or reject case names the diagnostic's code and the byte offset it points at.", "",
        "use ingot::ast::{TY_BOOL, TY_U256}", "use ingot::check::{Checked, check}",
        "use ingot::diag::{", *[f"    {c}," for c in codes], "    Diag,", "    DiagCode,", "}",
-       "use ingot::io::{Source, text}", "use ingot::parser::parse",
+       "use ingot::io::{Source, text}", "use ingot::parser::{MAX_DEPTH, parse}",
        "use ingot::parser_tests::{DEEPEST_BLOCKS, DEEPEST_PARENS, Nested}", "use std::abi::DynString", "",
        "fn checked(_ s: DynString) -> Checked {", "    with (Source = text(s)) {", "        check(parse())", "    }", "}", "",
        "// Accepts `s` without warnings.", "fn accepts(_ s: DynString) {", "    let c = checked(s)",
@@ -180,7 +192,7 @@ for name, cases in groups.items():
 SIDE = ("const A: u256 = 6 * 7\nfn f(_ p: u256) -> u256 {\n    let x = p + A\n    var y = x\n    y\n}\n"
         + contract("    mut a: u256\n    mut b: bool\n",
                    "        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut b) { b = v == A }\n"))
-CHAIN = "fn f(_ c: bool) -> u256 { " + " else ".join(f"if c {{ {k} }}" for k in range(40)) + " else { 0 } }"
+CHAIN = "fn f(_ c: bool) -> u256 { " + " else ".join(f"if c {{ {k} }}" for k in range(CHAIN_LEN)) + " else { 0 } }"
 out += f"""
 // The side tables that code generation reads.
 #[test]
@@ -218,7 +230,7 @@ fn nested(_ brackets: String<2>, _ depth: usize) -> Option<Diag> {{
 fn deep_nesting_and_long_chains() {{
     assert!(nested("()", DEEPEST_PARENS).is_none())
     assert!(nested("{{}}", DEEPEST_BLOCKS).is_none())
-    // A chain longer than the parser's `MAX_DEPTH`.
+    assert!({CHAIN_LEN} > MAX_DEPTH)
     accepts({lit(CHAIN)})
 }}
 """.split("\n")
@@ -274,5 +286,4 @@ fn too_many_fields() {
     assert!(d.pos == 13 + 256 * 19 + 8)
 }
 '''.rstrip("\n").split("\n")
-(FE0 / "src/check_tests.fe").write_text("\n".join(out) + "\n")
-subprocess.run([FE, "fmt", "src/check_tests.fe"], cwd=FE0, check=True)
+write_formatted(FE0 / "src/check_tests.fe", "\n".join(out) + "\n")

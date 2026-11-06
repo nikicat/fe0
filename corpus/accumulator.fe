@@ -1,0 +1,51 @@
+// Running statistics over the values added: count, sum, minimum, maximum and mean.
+msg AccumulatorMsg {
+    #[selector = 1]
+    Add { v: u256 },
+    #[selector = 2]
+    Count -> u256,
+    #[selector = 3]
+    Min -> u256,
+    #[selector = 4]
+    Max -> u256,
+    #[selector = 5]
+    Mean -> u256,
+    #[selector = 6]
+    Range -> u256,
+}
+
+contract Accumulator {
+    mut count: u256,
+    mut sum: u256,
+    mut min: u256,
+    mut max: u256,
+
+    recv AccumulatorMsg {
+        Add { v } uses (mut count, mut sum, mut min, mut max) {
+            if count == 0 || v < min {
+                min = v
+            }
+            if count == 0 || v > max {
+                max = v
+            }
+            count += 1
+            sum += v
+        }
+        Count {} -> u256 uses (count) {
+            count
+        }
+        Min {} -> u256 uses (min) {
+            min
+        }
+        Max {} -> u256 uses (max) {
+            max
+        }
+        Mean {} -> u256 uses (count, sum) {
+            assert!(count > 0, "no values")
+            sum / count
+        }
+        Range {} -> u256 uses (min, max) {
+            max - min
+        }
+    }
+}

@@ -1,0 +1,16 @@
+// expect: N009 11:5
+// A `recv` block needs one arm per variant of its msg (SPEC §6).
+msg M {
+    #[selector = 1]
+    Get -> u256,
+    #[selector = 2]
+    Set { v: u256 },
+}
+
+contract C {
+    recv M {
+        Get {} -> u256 {
+            0
+        }
+    }
+}

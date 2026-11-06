@@ -1,0 +1,11 @@
+init 100
+Spend 10 30
+Spend 20 70
+Spend 30 1
+Left 40
+Left 3600
+Spend 3601 100
+Spend 100 1
+Spend 7200 MAX
+Spend 7300 0
+Left 7300

@@ -1,0 +1,16 @@
+init 2
+deploy                  # too short: no constructor argument
+deploy 2 value=1        # init is not payable
+deploy MAX
+Get
+Decrement
+Decrement
+Decrement               # underflow: Panic(0x11)
+Get
+Increment
+Increment
+Get
+Reset
+Get
+Increment value=1       # arms are not payable
+Get extra=5

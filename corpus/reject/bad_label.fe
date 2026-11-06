@@ -1,0 +1,8 @@
+// expect: N012 7:10
+// A labelled parameter needs its label (SPEC §5.4).
+fn area(width: u256, height: u256) -> u256 {
+    width * height
+}
+fn f() -> u256 {
+    area(3, height: 4)
+}

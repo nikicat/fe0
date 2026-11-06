@@ -1,0 +1,39 @@
+// A limit on the amount spent per period, where the caller passes the current time.
+msg RateLimitMsg {
+    #[selector = 1]
+    Spend { now: u256, amount: u256 } -> u256,
+    #[selector = 2]
+    Left { now: u256 } -> u256,
+}
+
+const PERIOD: u256 = 3600
+
+fn period_of(_ t: u256) -> u256 {
+    t / PERIOD
+}
+
+contract RateLimit {
+    mut cap: u256,
+    mut period: u256,
+    mut spent: u256,
+
+    init(cap_: u256) uses (mut cap) {
+        cap = cap_
+    }
+
+    recv RateLimitMsg {
+        Spend { now, amount } -> u256 uses (cap, mut period, mut spent) {
+            if period_of(now) != period {
+                assert!(period_of(now) > period, "time went back")
+                period = period_of(now)
+                spent = 0
+            }
+            assert!(spent + amount <= cap, "over the cap")
+            spent += amount
+            cap - spent
+        }
+        Left { now } -> u256 uses (cap, period, spent) {
+            if period_of(now) != period { cap } else { cap - spent }
+        }
+    }
+}

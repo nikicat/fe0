@@ -1,0 +1,16 @@
+Fact 0
+Fact 1
+Fact 20
+Fact 57
+Fact 58       # overflows
+Choose 10 3
+Choose 10 0
+Choose 10 10
+Choose 3 4
+Choose 100 50
+Choose 300 150  # the result does not fit
+Choose 2**86 3  # the result fits, but r * (n - i) overflows
+Range 1 5
+Range 5 1
+Range 0 3
+Range 2 2

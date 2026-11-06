@@ -1,0 +1,10 @@
+Bits 1 8
+Bits 0b1011 4
+Bits 0x80 8
+Bits 1 256
+Bits MAX 256
+Bits 5 0
+Bits 5 257
+Bytes 0x0102
+Bytes MAX
+Bytes 0

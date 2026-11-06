@@ -1,0 +1,168 @@
+// Support for differential tests, which build one program with Fe0 and with the official
+// compiler and check that both builds behave the same. DESIGN.md §10 describes the harness.
+
+use ingot::codegen::{Output, compile}
+use ingot::diag::Diag
+use ingot::io::{Source, text}
+use std::abi::DynString
+use std::evm::{Call, CallOutcome, Create, RawOps}
+
+// The largest runtime code that a chain accepts (EIP-170). The test EVM does not enforce it.
+const MAX_RUNTIME: u256 = 24576
+// The largest create input that a chain accepts (EIP-3860). The input is the deploy code
+// followed by the constructor arguments. The test EVM does not enforce this limit either.
+const MAX_INITCODE: usize = 49152
+// The gas for each call. Both builds get the same, so that only their code can differ.
+const CALL_GAS: u256 = 10000000
+// Added to a case code when Fe0's code is too large for a chain. It is `Kind.SIZE` less
+// `Kind.CASE` in tools/fegen.py, which decodes the sum.
+const TOO_LARGE: u256 = 2 << 32
+// The code of `rejects` when Fe0 accepts the program. It is `Kind.ACCEPTED` in tools/fegen.py.
+const ACCEPTED: u256 = 4 << 32
+
+// Checks whether a chain accepts a create input of `initcode_len` bytes, and the runtime code
+// that the create left at `runtime`.
+fn fits_chain(initcode_len: usize, runtime: Address) -> bool uses (evm: Evm) {
+    initcode_len <= MAX_INITCODE && evm.extcodesize(runtime) <= MAX_RUNTIME
+}
+
+// `d` as one word: letter << 40 | number << 24 | pos. These are the ASCII code of the phase
+// letter, the number within the phase and the byte offset, so E116 at offset 9 is
+// 0x45_0074_000009.
+pub fn diag_word(_ d: Diag) -> u256 {
+    let letter = d.code.letter() as u256
+    let number = d.code.number() as u256
+    letter << 40 | number << 24 | d.pos as u256
+}
+
+// Fe0's build of `s`.
+pub fn compiled(_ s: DynString) -> Output {
+    with (Source = text(s)) {
+        compile()
+    }
+}
+
+// Fe0's deploy code for `s`. Fails with Panic(`diag_word(d)`) when Fe0 rejects `s` with `d`.
+pub fn ours(_ s: DynString) -> MemVec<u8> {
+    let out = compiled(s)
+    match out.err {
+        Option::Some(d) => core::panic_code(diag_word(d)),
+        Option::None => {},
+    }
+    out.code
+}
+
+// Checks that Fe0 rejects `s` with the error whose `diag_word` is `expected`. Otherwise fails
+// with Panic(`diag_word`) of the error Fe0 gave, or Panic(`ACCEPTED`) when Fe0 accepted `s`.
+pub fn rejects(_ s: DynString, _ expected: u256) {
+    match compiled(s).err {
+        Option::Some(d) => {
+            let got = diag_word(d)
+            if got != expected {
+                core::panic_code(got)
+            }
+        },
+        Option::None => core::panic_code(ACCEPTED),
+    }
+}
+
+// The official deploy code of a contract. It is the `len` bytes at `offset` in the code of the
+// running test, as `C::init_code_offset()` and `C::init_code_len()` give them.
+pub fn theirs(_ offset: u256, _ len: u256) -> MemVec<u8> uses (evm: mut Evm) {
+    var buf = MemBuffer::alloc(len as usize)
+    evm.codecopy(dest: mut buf, dest_offset: 0, src_offset: offset, len)
+    var v: MemVec<u8> = MemVec::new()
+    v.extend_from_slice(buf.span())
+    v
+}
+
+// Appends the low `bytes` bytes of `x` to `v`, most significant first.
+pub fn push_be(_ v: mut MemVec<u8>, _ x: u256, bytes: u256) {
+    var i: u256 = 0
+    while i < bytes {
+        v.push(((x >> ((bytes - 1 - i) * 8)) & 0xff).downcast_truncate())
+        i += 1
+    }
+}
+
+// The deploy codes of one program from both compilers.
+pub struct Builds { pub ours: MemVec<u8>, pub theirs: MemVec<u8> }
+
+impl Builds {
+    // Deploys both builds with `args` and `value`. Fails with Panic(`case`) when only one build
+    // creates a contract, and with Panic(`case + TOO_LARGE`) when a chain would not accept
+    // Fe0's build (`fits_chain`).
+    pub fn deploy(self, _ args: MemVec<u8>, _ value: Wei, _ case: u256) -> Deployed
+    uses (evm: mut Evm)
+    {
+        let p = Deployed {
+            ours: create(self.ours, args, value),
+            theirs: create(self.theirs, args, value),
+        }
+        if (p.ours.word() == 0) != (p.theirs.word() == 0) {
+            core::panic_code(case)
+        }
+        if !fits_chain(
+            initcode_len: self.ours.len() + args.len(),
+            runtime: p.ours,
+        ) {
+            core::panic_code(case + TOO_LARGE)
+        }
+        p
+    }
+
+    // Deploys both builds as `deploy` does. Also fails with Panic(`case`) when neither creates
+    // a contract.
+    pub fn deploy_main(self, _ args: MemVec<u8>, _ value: Wei, _ case: u256) -> Deployed
+    uses (evm: mut Evm)
+    {
+        let p = self.deploy(args, value, case)
+        if p.ours.word() == 0 {
+            core::panic_code(case)
+        }
+        p
+    }
+}
+
+// Deploys `code` followed by `args`.
+fn create(_ code: MemVec<u8>, _ args: MemVec<u8>, _ value: Wei) -> Address
+uses (evm: mut Evm)
+{
+    var v: MemVec<u8> = MemVec::new()
+    v.extend_from_slice(code.as_slice())
+    v.extend_from_slice(args.as_slice())
+    evm.create_raw(value, init_code: v.into_array().span())
+}
+
+// One program deployed from both builds.
+pub struct Deployed { pub ours: Address, pub theirs: Address }
+
+impl Deployed {
+    // Calls both contracts with `data` and `value`. Fails with Panic(`case`) unless the success
+    // flags and the return data are the same.
+    pub fn call(self, _ data: own MemVec<u8>, _ value: Wei, _ case: u256)
+    uses (evm: mut Evm)
+    {
+        let args = data.into_array()
+        let a = evm.try_call_raw(addr: self.ours, gas: CALL_GAS, value, args: args.span())
+        let b = evm.try_call_raw(addr: self.theirs, gas: CALL_GAS, value, args: args.span())
+        if !same_outcome(a, b) {
+            core::panic_code(case)
+        }
+    }
+}
+
+// Checks whether both calls succeeded or both failed, with the same return data.
+fn same_outcome(_ a: CallOutcome, _ b: CallOutcome) -> bool {
+    if a.success() != b.success() || a.returndata_len() != b.returndata_len() {
+        return false
+    }
+    var i: usize = 0
+    while i < a.returndata_len() {
+        if a.returndata().byte_at(i) != b.returndata().byte_at(i) {
+            return false
+        }
+        i += 1
+    }
+    true
+}

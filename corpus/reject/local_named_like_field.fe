@@ -1,0 +1,18 @@
+// expect: N005 14:13
+// fe: accepts
+// A local may not take the name of a storage field (SPEC §5.2), although Fe allows it.
+msg M {
+    #[selector = 1]
+    Get -> u256,
+}
+
+contract C {
+    mut n: u256,
+
+    recv M {
+        Get {} -> u256 {
+            let n: u256 = 1
+            n
+        }
+    }
+}

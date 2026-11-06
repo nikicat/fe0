@@ -1,0 +1,8 @@
+Get
+Put 5
+Put 9
+Peek 0
+Peek 1
+Add 1
+Get
+5                      # Never is not received

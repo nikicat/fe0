@@ -1,0 +1,40 @@
+// A bool switch that counts its flips and can be set directly.
+msg ToggleMsg {
+    #[selector = 1]
+    Flip -> bool,
+    #[selector = 2]
+    Set { on: bool },
+    #[selector = 3]
+    State -> bool,
+    #[selector = 4]
+    Flips -> u256,
+}
+
+contract Toggle {
+    mut on: bool,
+    mut flips: u256,
+
+    init(start: bool) uses (mut on) {
+        on = start
+    }
+
+    recv ToggleMsg {
+        Flip {} -> bool uses (mut on, mut flips) {
+            on = !on
+            flips += 1
+            on
+        }
+        Set { on: v } uses (mut on, mut flips) {
+            if v != on {
+                flips += 1
+            }
+            on = v
+        }
+        State {} -> bool uses (on) {
+            on
+        }
+        Flips {} -> u256 uses (flips) {
+            flips
+        }
+    }
+}

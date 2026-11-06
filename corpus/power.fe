@@ -1,0 +1,55 @@
+// Powers by repeated squaring, with and without a modulus.
+msg PowerMsg {
+    #[selector = 1]
+    Pow { base: u256, exp: u256 } -> u256,
+    #[selector = 2]
+    PowMod { base: u256, exp: u256, m: u256 } -> u256,
+    #[selector = 3]
+    IsPowerOfTwo { x: u256 } -> bool,
+}
+
+fn pow(_ base: u256, _ exp: u256) -> u256 {
+    var r: u256 = 1
+    var b = base
+    var e = exp
+    while e > 0 {
+        if e & 1 == 1 {
+            r *= b
+        }
+        e >>= 1
+        if e > 0 {
+            b *= b
+        }
+    }
+    r
+}
+
+// The modulus must be below 2**128, so that no product overflows.
+fn pow_mod(_ base: u256, _ exp: u256, _ m: u256) -> u256 {
+    assert!(m != 0 && m < 1 << 128, "bad modulus")
+    var r: u256 = 1 % m
+    var b = base % m
+    var e = exp
+    while e != 0 {
+        if e % 2 == 1 {
+            r = r * b % m
+        }
+        b = b * b % m
+        e /= 2
+    }
+    r
+}
+
+contract Power {
+    recv PowerMsg {
+        Pow { base, exp } -> u256 {
+            pow(base, exp)
+        }
+        PowMod { base, exp, m } -> u256 {
+            pow_mod(base, exp, m)
+        }
+        IsPowerOfTwo { x } -> bool {
+            x != 0 && x & (x - 1) == 0
+        }
+    }
+}

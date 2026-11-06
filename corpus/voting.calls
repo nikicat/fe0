@@ -1,0 +1,15 @@
+init 20
+Vote true 5
+Vote false 3
+Vote true 11
+Vote true 0
+Vote 2 1
+Close
+Tally
+Vote true 10
+Vote false 4
+Close
+Close
+Passed
+Vote true 1
+Tally

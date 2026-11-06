@@ -1,0 +1,52 @@
+// Integer square and cube roots, by Newton's method and by bisection.
+msg IsqrtMsg {
+    #[selector = 1]
+    Sqrt { x: u256 } -> u256,
+    #[selector = 2]
+    Cbrt { x: u256 } -> u256,
+    #[selector = 3]
+    IsSquare { x: u256 } -> bool,
+}
+
+fn sqrt(_ x: u256) -> u256 {
+    if x < 2 { return x }
+    var r = x / 2 + 1
+    var next = (r + x / r) / 2
+    while next < r {
+        r = next
+        next = (r + x / r) / 2
+    }
+    r
+}
+
+// The largest r with r * r * r <= x, found by bisection over [0, 2**86).
+// It compares mid with x / (mid * mid), so that no cube overflows. mid is always at least 1,
+// so the division is safe.
+fn cbrt(_ x: u256) -> u256 {
+    var lo: u256 = 0
+    var hi: u256 = 1 << 86
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2
+        if mid <= x / (mid * mid) {
+            lo = mid
+        } else {
+            hi = mid
+        }
+    }
+    lo
+}
+
+contract Isqrt {
+    recv IsqrtMsg {
+        Sqrt { x } -> u256 {
+            sqrt(x)
+        }
+        Cbrt { x } -> u256 {
+            cbrt(x)
+        }
+        IsSquare { x } -> bool {
+            let r = sqrt(x)
+            r * r == x
+        }
+    }
+}

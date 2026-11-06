@@ -1,0 +1,16 @@
+// expect: E018 13:13
+// Assigning a field needs `mut` in `uses` (SPEC §6).
+msg M {
+    #[selector = 1]
+    Set { v: u256 },
+}
+
+contract C {
+    mut n: u256,
+
+    recv M {
+        Set { v } uses (n) {
+            n = v
+        }
+    }
+}

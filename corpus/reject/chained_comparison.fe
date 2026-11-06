@@ -1,0 +1,5 @@
+// expect: P007 4:11
+// Comparisons do not chain (SPEC §3.2).
+fn f(_ a: u256, _ b: u256, _ c: u256) -> bool {
+    a < b < c
+}

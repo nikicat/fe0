@@ -1,0 +1,46 @@
+// The number of Collatz steps to reach 1, and the largest value on the way.
+msg CollatzMsg {
+    #[selector = 1]
+    Steps { n: u256 } -> u256,
+    #[selector = 2]
+    Peak { n: u256 } -> u256,
+}
+
+fn step(_ n: u256) -> u256 {
+    if n % 2 == 0 { n / 2 } else { 3 * n + 1 }
+}
+
+fn steps(_ n: u256) -> u256 {
+    assert!(n != 0)
+    var x = n
+    var c: u256 = 0
+    while x != 1 {
+        x = step(x)
+        c += 1
+    }
+    c
+}
+
+fn peak(_ n: u256) -> u256 {
+    assert!(n != 0)
+    var x = n
+    var top = n
+    while x != 1 {
+        x = step(x)
+        if x > top {
+            top = x
+        }
+    }
+    top
+}
+
+contract Collatz {
+    recv CollatzMsg {
+        Steps { n } -> u256 {
+            steps(n)
+        }
+        Peak { n } -> u256 {
+            peak(n)
+        }
+    }
+}

@@ -1,0 +1,12 @@
+Loop 0
+Loop 1
+Loop 2
+Loop 10
+Loop 100
+Loop 369
+Loop 370      # b overflows one step before a would
+Loop 371
+Rec 0
+Rec 1
+Rec 15
+Same 12

@@ -1,0 +1,13 @@
+Gcd 12 18
+Gcd 18 12
+Gcd 0 5
+Gcd 5 0
+Gcd 0 0
+Gcd 2**200 2**100*3
+Gcd MAX MAX-1
+Lcm 4 6
+Lcm 0 6
+Lcm 2**255 3        # overflows
+Lcm 2**255 2**254
+Coprime 9 28
+Coprime 9 27

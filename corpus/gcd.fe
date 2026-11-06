@@ -1,0 +1,42 @@
+// Greatest common divisor and least common multiple, by Euclid's algorithm.
+msg GcdMsg {
+    #[selector = 0x01]
+    Gcd { a: u256, b: u256 } -> u256,
+    #[selector = 0x02]
+    Lcm { a: u256, b: u256 } -> u256,
+    #[selector = 0x03]
+    Coprime { a: u256, b: u256 } -> bool,
+}
+
+fn gcd(_ a: u256, _ b: u256) -> u256 {
+    var x = a
+    var y = b
+    while y != 0 {
+        let r = x % y
+        x = y
+        y = r
+    }
+    x
+}
+
+// Divides before it multiplies, so it overflows only when the result does not fit.
+fn lcm(_ a: u256, _ b: u256) -> u256 {
+    if a == 0 || b == 0 {
+        return 0
+    }
+    a / gcd(a, b) * b
+}
+
+contract Gcd {
+    recv GcdMsg {
+        Gcd { a, b } -> u256 {
+            gcd(a, b)
+        }
+        Lcm { a, b } -> u256 {
+            lcm(a, b)
+        }
+        Coprime { a, b } -> bool {
+            gcd(a, b) == 1
+        }
+    }
+}

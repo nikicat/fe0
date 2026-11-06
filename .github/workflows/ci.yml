@@ -26,10 +26,12 @@ jobs:
           chmod +x "$bin/fe"
           echo "$bin" >> "$GITHUB_PATH"
       - run: fe --version
-      # CI tests only fe0. tools/spikes.sh checks the spike-*/ probes, because
+      # CI tests fe0 and the corpus. tools/spikes.sh checks the spike-*/ probes, because
       # several of their tests fail on purpose to report values.
       - name: fe0
         working-directory: fe0
         run: |
           fe fmt --check
           fe test
+      - name: corpus
+        run: python3 tools/embed.py

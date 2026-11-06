@@ -1,0 +1,42 @@
+// Constants folded at compile time, used in code and in each other.
+msg ConstsMsg {
+    #[selector = 0x00000000]
+    Zero -> u256,
+    #[selector = 0xffffffff]
+    All -> u256,
+    #[selector = 0x7fffffff]
+    Flags -> bool,
+    #[selector = 0x80000000]
+    Scale { x: u256 } -> u256,
+}
+
+const WAD: u256 = 1000000000000000000
+const HALF_WAD: u256 = WAD / 2
+const TOP: u256 = 1 << 255
+const MASK: u256 = ~0 >> 128
+const MIXED: u256 = (TOP >> 200) ^ MASK & 0xffff | HALF_WAD % 7
+const ON: bool = true
+const OFF: bool = !ON
+const BOTH: bool = ON && !OFF || false
+
+// Returns x after a round trip through WAD fixed point. Errors when x * WAD overflows.
+fn scale(_ x: u256) -> u256 {
+    (x * WAD + HALF_WAD) / WAD
+}
+
+contract Consts {
+    recv ConstsMsg {
+        Zero {} -> u256 {
+            MIXED - MIXED
+        }
+        All {} -> u256 {
+            TOP | MASK | MIXED
+        }
+        Flags {} -> bool {
+            BOTH && ON != OFF
+        }
+        Scale { x } -> u256 {
+            scale(x)
+        }
+    }
+}

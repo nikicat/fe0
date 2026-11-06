@@ -1,0 +1,17 @@
+init 0x5e11 100 10
+deploy 0x5e11 100        # too short
+deploy 0x5e11 100 10 value=3
+Highest
+Bid 0xb1 105
+Bid 0xb1 110
+Bid 0xb2 119
+Bid 0xb2 120
+Leader
+Bids
+Bid 0xb3 MAX
+Bid 0xb4 MAX             # highest + step overflows
+Close 0xb1
+Close 0x5e11
+Close 0x5e11
+Bid 0xb5 1
+Highest

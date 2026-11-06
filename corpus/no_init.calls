@@ -1,0 +1,13 @@
+deploy 1 2 3          # extra bytes after the initcode are ignored
+deploy value=1
+Read
+Who
+Flag
+Write 7 0xabc true
+Read
+Who
+Flag
+Write 7 0xabc 2
+Write 7 2**160 true
+Write 7 0xabc
+Read

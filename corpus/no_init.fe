@@ -1,0 +1,34 @@
+// A contract without `init`, whose fields start at zero.
+msg NoInitMsg {
+    #[selector = 1]
+    Read -> u256,
+    #[selector = 2]
+    Who -> Address,
+    #[selector = 3]
+    Flag -> bool,
+    #[selector = 4]
+    Write { n: u256, w: Address, f: bool },
+}
+
+contract NoInit {
+    mut n: u256,
+    mut w: Address,
+    mut f: bool,
+
+    recv NoInitMsg {
+        Read {} -> u256 uses (n) {
+            n
+        }
+        Who {} -> Address uses (w) {
+            w
+        }
+        Flag {} -> bool uses (f) {
+            f
+        }
+        Write { n: a, w: b, f: c } uses (mut n, mut w, mut f) {
+            n = a
+            w = b
+            f = c
+        }
+    }
+}

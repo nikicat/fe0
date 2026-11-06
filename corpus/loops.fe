@@ -1,0 +1,77 @@
+// Loops with compound conditions, `break` and `continue` inside nested blocks, and loops in
+// loops in loops.
+msg LoopsMsg {
+    #[selector = 1]
+    Skip { n: u256 } -> u256,
+    #[selector = 2]
+    Cube { n: u256 } -> u256,
+    #[selector = 3]
+    Search { a: u256, b: u256 } -> u256,
+}
+
+// The sum of the numbers from 1 to n that are not multiples of 3, stopping at the first
+// multiple of 50.
+fn skip(_ n: u256) -> u256 {
+    var i: u256 = 0
+    var s: u256 = 0
+    while i < n && s < 100000 {
+        i += 1
+        {
+            if i % 50 == 0 {
+                break
+            }
+            if i % 3 == 0 {
+                continue
+            }
+        }
+        s += i
+    }
+    s
+}
+
+// The number of triples below n with i <= j <= k.
+fn cube(_ n: u256) -> u256 {
+    var c: u256 = 0
+    var i: u256 = 0
+    while i < n {
+        var j = i
+        while j < n {
+            var k = j
+            while k < n {
+                c += 1
+                k += 1
+            }
+            j += 1
+        }
+        i += 1
+    }
+    c
+}
+
+// The smallest x >= a with x % b == 0, or 0 when none is found in 1000 steps.
+fn search(_ a: u256, _ b: u256) -> u256 {
+    var x = a
+    var steps: u256 = 0
+    while !(x % b == 0) || steps == 1000 {
+        if steps == 1000 {
+            return 0
+        }
+        x += 1
+        steps += 1
+    }
+    x
+}
+
+contract Loops {
+    recv LoopsMsg {
+        Skip { n } -> u256 {
+            skip(n)
+        }
+        Cube { n } -> u256 {
+            cube(n)
+        }
+        Search { a, b } -> u256 {
+            search(a, b)
+        }
+    }
+}

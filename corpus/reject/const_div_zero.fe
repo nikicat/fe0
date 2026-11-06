@@ -1,0 +1,4 @@
+// expect: C025 4:19
+// Constant division by zero (SPEC §5.3).
+const ZERO: u256 = 0
+const A: u256 = 1 / ZERO

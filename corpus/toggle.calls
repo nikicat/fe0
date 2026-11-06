@@ -1,0 +1,13 @@
+init true
+deploy 2                 # not a bool
+deploy 0
+State
+Flip
+Flip
+State
+Set true
+Set true
+Set false
+Set 3
+Flips
+State

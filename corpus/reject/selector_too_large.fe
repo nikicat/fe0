@@ -1,0 +1,6 @@
+// expect: T004 4:5
+// A selector must fit in 32 bits (SPEC §6).
+msg M {
+    #[selector = 0x100000000]
+    Get -> u256,
+}

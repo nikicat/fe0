@@ -529,11 +529,9 @@ fn unary_and_primaries() {
 #[test]
 fn statements() {
     item_is(
-        "fn f(_ a: u256, b: bool) -> u256 {\n    let x = 1\n    var y: u256 = 2; y += x\n    while y < 9 { y = y + 1 }\n    if b { return y }\n    break\n    continue\n    return\n}",
+        "fn f(_ a: u256, b: bool) -> u256 {\n    let x = 1\n    var y: u256 = 2\n    y += x\n    while y < 9 { y = y + 1 }\n    if b { return y }\n    break\n    continue\n    return\n}",
         "(fn f (_a:u256 b:bool) u256 {(let x:? 1); (var y:u256 2); (+= y x); (while (< y 9) {(= y (+ y 1)); }); (if b {(return y); } ?); break; continue; (return ?); })",
     )
-    // A statement may end at `;` with the block's `}` right after it.
-    item_is("fn f() { g(); }", "(fn f () ? {(call g ()); })")
     item_is("fn f() { x = 1 }", "(fn f () ? {(= x 1); })")
 }
 

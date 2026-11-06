@@ -96,7 +96,7 @@ pub const NODE_BLOCK: Kind = Kind { code: 48 }
 pub const NODE_ASSERT: Kind = Kind { code: 49 }
 
 // A type. A node's ty() holds one written in the source, or TY_NONE when none is written.
-// The checker also uses TY_UNIT and TY_NEVER.
+// The checker also uses TY_UNIT, TY_NEVER and TY_INT.
 pub struct Ty { code: u8 }
 
 impl Copy for Ty {}
@@ -115,17 +115,25 @@ pub const TY_ADDRESS: Ty = Ty { code: 3 }
 pub const TY_UNIT: Ty = Ty { code: 4 }
 // The type of an expression that never completes.
 pub const TY_NEVER: Ty = Ty { code: 5 }
+// The type of an integer expression made only of literals, operators, if-expressions and
+// blocks, such as `1 + 2` or `{ 1 }`.
+pub const TY_INT: Ty = Ty { code: 6 }
 
 impl Ty {
     // Whether an expression of this type may stand where `want` is expected.
-    // TY_NEVER fits any type.
+    // TY_NEVER fits any type, and TY_INT fits TY_U256.
     pub fn fits(self, _ want: Ty) -> bool {
-        self == want || self == TY_NEVER
+        self == want || self == TY_NEVER || (self == TY_INT && want == TY_U256)
     }
 
     // Returns this written type, or TY_UNIT when none is written.
     pub fn or_unit(self) -> Ty {
         if self == TY_NONE { TY_UNIT } else { self }
+    }
+
+    // Returns this type, or TY_U256 when it is TY_INT.
+    pub fn or_u256(self) -> Ty {
+        if self == TY_INT { TY_U256 } else { self }
     }
 }
 

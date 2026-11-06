@@ -1,0 +1,54 @@
+// An auction: each bid must beat the last by a step, until the auction closes.
+msg AuctionMsg {
+    #[selector = 0x01]
+    Bid { who: Address, amount: u256 },
+    #[selector = 0x02]
+    Leader -> Address,
+    #[selector = 0x03]
+    Highest -> u256,
+    #[selector = 0x04]
+    Close { who: Address } -> u256,
+    #[selector = 0x05]
+    Bids -> u256,
+}
+
+contract Auction {
+    mut seller: Address,
+    mut step: u256,
+    mut leader: Address,
+    mut highest: u256,
+    mut bids: u256,
+    mut open: bool,
+
+    init(seller_: Address, reserve: u256, step_: u256) uses (mut seller, mut step, mut highest, mut open) {
+        seller = seller_
+        step = step_
+        highest = reserve
+        open = true
+    }
+
+    recv AuctionMsg {
+        Bid { who, amount } uses (step, mut leader, mut highest, mut bids, open) {
+            assert!(open, "closed")
+            assert!(amount >= highest + step, "too low")
+            leader = who
+            highest = amount
+            bids += 1
+        }
+        Leader {} -> Address uses (leader) {
+            leader
+        }
+        Highest {} -> u256 uses (highest) {
+            highest
+        }
+        Close { who } -> u256 uses (seller, highest, bids, mut open) {
+            assert!(who == seller)
+            assert!(open)
+            open = false
+            if bids == 0 { 0 } else { highest }
+        }
+        Bids {} -> u256 uses (bids) {
+            bids
+        }
+    }
+}

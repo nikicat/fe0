@@ -1,0 +1,45 @@
+// A vote with a quorum. It counts yes and no weights, and anyone can close it once the votes
+// reach the quorum.
+msg VotingMsg {
+    #[selector = 1]
+    Vote { yes: bool, weight: u256 },
+    #[selector = 2]
+    Close -> bool,
+    #[selector = 3]
+    Tally -> u256,
+    #[selector = 4]
+    Passed -> bool,
+}
+
+contract Voting {
+    mut yes: u256,
+    mut no: u256,
+    mut quorum: u256,
+    mut closed: bool,
+    mut passed: bool,
+
+    init(quorum_: u256) uses (mut quorum) {
+        quorum = quorum_
+    }
+
+    recv VotingMsg {
+        Vote { yes: y, weight } uses (mut yes, mut no, closed) {
+            assert!(!closed, "closed")
+            assert!(weight > 0 && weight <= 10, "weight")
+            if y { yes += weight } else { no += weight }
+        }
+        Close {} -> bool uses (yes, no, quorum, mut closed, mut passed) {
+            assert!(!closed)
+            assert!(yes + no >= quorum, "no quorum")
+            closed = true
+            passed = yes > no
+            passed
+        }
+        Tally {} -> u256 uses (yes, no) {
+            yes << 128 | no
+        }
+        Passed {} -> bool uses (closed, passed) {
+            closed && passed
+        }
+    }
+}

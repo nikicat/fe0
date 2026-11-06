@@ -1,0 +1,53 @@
+// A token with three fixed holders, picked by index.
+msg TokensMsg {
+    #[selector = 0xa9059cbb]
+    Transfer { from: u256, to: u256, amount: u256 },
+    #[selector = 0x70a08231]
+    BalanceOf { who: u256 } -> u256,
+    #[selector = 0x18160ddd]
+    TotalSupply -> u256,
+    #[selector = 0x40c10f19]
+    Mint { to: u256, amount: u256 },
+}
+
+contract Tokens {
+    mut b0: u256,
+    mut b1: u256,
+    mut b2: u256,
+    mut supply: u256,
+
+    init(initial: u256) uses (mut b0, mut supply) {
+        b0 = initial
+        supply = initial
+    }
+
+    recv TokensMsg {
+        Transfer { from, to, amount } uses (mut b0, mut b1, mut b2) {
+            assert!(from < 3 && to < 3, "no such holder")
+            let have = if from == 0 { b0 } else if from == 1 { b1 } else { b2 }
+            assert!(have >= amount, "balance too low")
+            if from == 0 { b0 -= amount } else if from == 1 { b1 -= amount } else { b2 -= amount }
+            if to == 0 { b0 += amount } else if to == 1 { b1 += amount } else { b2 += amount }
+        }
+        BalanceOf { who } -> u256 uses (b0, b1, b2) {
+            if who == 0 {
+                b0
+            } else if who == 1 {
+                b1
+            } else if who == 2 {
+                b2
+            } else {
+                0
+            }
+        }
+        TotalSupply {} -> u256 uses (supply) {
+            supply
+        }
+        Mint { to, amount } uses (mut b0, mut b1, mut b2, mut supply) {
+            supply += amount
+            if to == 0 { b0 += amount } else if to == 1 { b1 += amount } else if to == 2 { b2 += amount } else {
+                assert!(false, "no such holder")
+            }
+        }
+    }
+}

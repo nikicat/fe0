@@ -1,0 +1,38 @@
+// Labelled and positional parameters. An argument that is a name spelling the label needs no
+// label.
+msg LabelsMsg {
+    #[selector = 1]
+    Area { width: u256, height: u256 } -> u256,
+    #[selector = 2]
+    Clamp { x: u256, lo: u256, hi: u256 } -> u256,
+    #[selector = 3]
+    Lerp { a: u256, b: u256, t: u256 } -> u256,
+}
+
+fn area(width: u256, height: u256) -> u256 {
+    width * height
+}
+
+fn clamp(_ x: u256, lo: u256, hi: u256) -> u256 {
+    assert!(lo <= hi, "empty range")
+    if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+// The point at `t` per mille of the way from `a` to `b`.
+fn lerp(a: u256, b: u256, t: u256) -> u256 {
+    if b >= a { a + (b - a) * t / 1000 } else { a - (a - b) * t / 1000 }
+}
+
+contract Labels {
+    recv LabelsMsg {
+        Area { width, height } -> u256 {
+            area(width, height)
+        }
+        Clamp { x, lo, hi } -> u256 {
+            clamp(x, lo: lo, hi)
+        }
+        Lerp { a, b, t } -> u256 {
+            lerp(a, b: b, t)
+        }
+    }
+}

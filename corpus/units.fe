@@ -1,0 +1,41 @@
+// Functions without a value, called as statements, and an arm that returns a unit call.
+msg UnitsMsg {
+    #[selector = 1]
+    Run { a: u256 },
+    #[selector = 2]
+    Last -> u256,
+    #[selector = 3]
+    Tail { a: u256 },
+}
+
+fn require_small(_ a: u256) {
+    assert!(a < 1000, "too large")
+}
+
+fn require_even(_ a: u256) {
+    if a % 2 == 1 {
+        assert!(false, "odd")
+    }
+}
+
+fn both(_ a: u256) {
+    require_small(a)
+    require_even(a)
+}
+
+contract Units {
+    mut last: u256,
+
+    recv UnitsMsg {
+        Run { a } uses (mut last) {
+            both(a)
+            last = a
+        }
+        Last {} -> u256 uses (last) {
+            last
+        }
+        Tail { a } {
+            return both(a)
+        }
+    }
+}

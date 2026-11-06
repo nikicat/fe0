@@ -1,0 +1,45 @@
+// An owner and a pending owner, as addresses passed in by the caller.
+msg OwnerMsg {
+    #[selector = 1]
+    Owner -> Address,
+    #[selector = 2]
+    Offer { by: Address, to: Address },
+    #[selector = 3]
+    Accept { by: Address },
+    #[selector = 4]
+    Pending -> Address,
+    #[selector = 5]
+    IsOwner { who: Address } -> bool,
+}
+
+contract Owner {
+    mut owner: Address,
+    mut pending: Address,
+    mut has_pending: bool,
+
+    init(first: Address) uses (mut owner) {
+        owner = first
+    }
+
+    recv OwnerMsg {
+        Owner {} -> Address uses (owner) {
+            owner
+        }
+        Offer { by, to } uses (owner, mut pending, mut has_pending) {
+            assert!(by == owner, "not the owner")
+            pending = to
+            has_pending = true
+        }
+        Accept { by } uses (mut owner, pending, mut has_pending) {
+            assert!(has_pending && by == pending, "not offered")
+            owner = by
+            has_pending = false
+        }
+        Pending {} -> Address uses (pending) {
+            pending
+        }
+        IsOwner { who } -> bool uses (owner) {
+            who == owner
+        }
+    }
+}

@@ -1,0 +1,58 @@
+// Block expressions, shadowing and scopes.
+msg BlocksMsg {
+    #[selector = 1]
+    Shadow { a: u256 } -> u256,
+    #[selector = 2]
+    Nested { a: u256 } -> u256,
+    #[selector = 3]
+    Scope { a: u256 } -> u256,
+}
+
+fn shadow(_ a: u256) -> u256 {
+    let x = a
+    let x = x * 2
+    let y = {
+        let x = x + 1
+        x * 10
+    }
+    x + y
+}
+
+fn nested(_ a: u256) -> u256 {
+    {
+        {
+            let b = { a + 1 } * { a + 2 }
+            b - { { a } }
+        }
+    }
+}
+
+// Each block's `var` goes out of scope at its `}`.
+fn scope(_ a: u256) -> u256 {
+    var total: u256 = 0
+    {
+        var t = a
+        t += 1
+        total += t
+    }
+    {
+        var t = a * 3
+        t -= 1
+        total += t
+    }
+    total
+}
+
+contract Blocks {
+    recv BlocksMsg {
+        Shadow { a } -> u256 {
+            shadow(a)
+        }
+        Nested { a } -> u256 {
+            nested(a)
+        }
+        Scope { a } -> u256 {
+            scope(a)
+        }
+    }
+}

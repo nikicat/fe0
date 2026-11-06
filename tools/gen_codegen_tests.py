@@ -1,85 +1,19 @@
 #!/usr/bin/env python3
 """Generate fe0/src/codegen_tests.fe and format it with fe fmt.
 
-Each program is written once below. The script puts its text into the module twice: as Fe
-code for the official compiler, and as a string literal that Fe0 compiles inside the test.
+Each program is written once below, and gen_codegen_tests.py puts its text into the module
+twice: as Fe code for the official compiler and as a string literal for Fe0. DESIGN.md §10
+describes how a differential test compares the two builds.
 
 Contract and msg names must be unique across the fe0 ingot (WORKAROUNDS.md), so they start
 with `Cg`.
 
-usage: gen_codegen_tests.py [path/to/fe]
+usage: [FE=path/to/fe] gen_codegen_tests.py
 """
-import subprocess
-import sys
 import textwrap
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 
-FE = sys.argv[1] if len(sys.argv) > 1 else Path.home() / ".fe/bin/fe"
-FE0 = Path(__file__).resolve().parent.parent / "fe0"
-MAX = (1 << 256) - 1
-
-
-def lit(s):
-    return '"' + s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n') + '"'
-
-
-class Payload:
-    """Bytes sent to a contract, together with a value in wei."""
-
-    def __init__(self, value):
-        self.value = value
-
-    @property
-    def wei(self):
-        """The Fe expression for the value."""
-        return f"std::evm::wei({self.value})" if self.value else "Wei::zero()"
-
-    def build(self, var):
-        """Returns the Fe statements that declare `var` and fill it with the bytes."""
-        return [f"var {var}: MemVec<u8> = MemVec::new()"] + self.pushes(var)
-
-
-def push_words(var, words, extra):
-    """Returns the Fe statements that append 32-byte `words`, then `extra` bytes of 0x99."""
-    return [f"push_be(mut {var}, {w:#x}, bytes: 32)" for w in words] + [f"{var}.push(0x99)"] * extra
-
-
-class Deploy(Payload):
-    """Constructor arguments: words, then `extra` bytes."""
-
-    def __init__(self, *words, extra=0, value=0):
-        super().__init__(value)
-        self.words, self.extra = words, extra
-
-    def pushes(self, var):
-        return push_words(var, self.words, self.extra)
-
-
-class Call(Payload):
-    """Calldata: a 4-byte selector, words, then `extra` bytes."""
-
-    def __init__(self, sel, *words, extra=0, value=0):
-        super().__init__(value)
-        self.sel, self.words, self.extra = sel, words, extra
-
-    def pushes(self, var):
-        return [f"push_be(mut {var}, {self.sel:#x}, bytes: 4)"] + push_words(var, self.words, self.extra)
-
-
-class RawCall(Payload):
-    """Calldata given byte by byte."""
-
-    def __init__(self, *data, value=0):
-        super().__init__(value)
-        self.data = data
-
-    def pushes(self, var):
-        return [f"{var}.push({b})" for b in self.data]
-
-
-# Calls that reach the dispatcher's empty reverts. Every program gets them after its own calls.
-DISPATCH = [RawCall(), RawCall(0, 0, 1), Call(0x7777)]
+from fegen import CHAIN_LEN, FE0, MAX, Call, Case, Cases, Deploy, DiffTest, difftest_use, write_formatted
 
 
 @dataclass(frozen=True)
@@ -427,10 +361,8 @@ NO_RECV = """contract CgNoRecv {
     mut n: u256,
 }
 """
-# The else-if chain in CgChain is longer than the parser's MAX_DEPTH. The codegen reads such a
-# chain in a loop. The last branch holds the deepest nesting the parser accepts inside an arm.
+# The last branch of CgChain holds the deepest nesting that the parser accepts inside an arm.
 # One more level of either kind fails with P_TOO_DEEP.
-CHAIN_LEN = 40
 DEEPEST_PARENS_IN_ARM = 16
 DEEPEST_BLOCKS_IN_ARM = 7
 CHAIN_MSG = Msg("CgChainMsg", (Variant(1, "Pick", " { a: u256 } -> u256"),))
@@ -441,140 +373,53 @@ CHAIN = (CHAIN_MSG.source + "\ncontract CgChain {\n"
          + " + " + "{ " * DEEPEST_BLOCKS_IN_ARM + "1" + " }" * DEEPEST_BLOCKS_IN_ARM + " }\n        }\n    }\n}\n")
 
 
-@dataclass(frozen=True)
-class Program:
-    """One program and what its test sends to it."""
+# The case number of the main deployment. Smaller numbers name the other deployments, in order
+# from 1, and larger numbers name the calls. In hex, a failed test's panic code then ends in the
+# case: 0x1_0000_1003 is the third call (fegen.Kind).
+MAIN_CASE = 0x1000
 
-    test: str  # the test function's name
-    contract: str
-    source: str
-    calls: list  # sent to the main deployment, before DISPATCH
-    deploys: list = ()  # extra deployments, checked only for whether they create a contract
-    main: Deploy = field(default_factory=Deploy)
+
+def program(test, contract, source, calls, deploys=(), main=Deploy()):
+    """Returns the differential test of `source` that sends it `calls` and `deploys`, numbered
+    around MAIN_CASE."""
+    cases = Cases(Case(MAIN_CASE, main), [Case(n, d) for n, d in enumerate(deploys, start=1)],
+                  [Case(n, c) for n, c in enumerate(calls, start=MAIN_CASE + 1)])
+    return DiffTest(test, contract, source, cases)
 
 
 PROGRAMS = [
-    Program("counter", "CgCounter", COUNTER,
+    program("counter", "CgCounter", COUNTER,
             [COUNTER_MSG.call("Get"), COUNTER_MSG.call("Increment"), COUNTER_MSG.call("Increment"),
              COUNTER_MSG.call("Get"), COUNTER_MSG.call("Increment", value=1), COUNTER_MSG.call("Get", 5)],
             deploys=[Deploy(value=5), Deploy(extra=1)]),
-    Program("ops", "CgOps", ops_program(), ops_calls()),
-    Program("init", "CgInit", INIT, [INIT_MSG.call("Get"), INIT_MSG.call("Flag"), INIT_MSG.call("Who")],
+    program("ops", "CgOps", ops_program(), ops_calls()),
+    program("init", "CgInit", INIT, [INIT_MSG.call("Get"), INIT_MSG.call("Flag"), INIT_MSG.call("Who")],
             deploys=[Deploy(), Deploy(0xaa, 1), Deploy(0xaa, 2, 0xcc), Deploy(0xaa, 1, (1 << 200) | 0xcc),
                      Deploy(0xaa, 1, 0xcc, extra=7), Deploy(0xaa, 1, 0xcc, value=5)],
             main=Deploy(0xaa, 1, 0xcc)),
-    Program("misc", "CgMisc", MISC,
+    program("misc", "CgMisc", MISC,
             [MISC_MSG.call("Unit", a) for a in (0, 1, 6, 7, 9)]
             + [MISC_MSG.call("Pending", a) for a in (0, 5, 150)]
             + [MISC_MSG.call("Deep", 0), MISC_MSG.call("Deep", 300),
                MISC_MSG.call("Who", 0xaa, 0xbb), MISC_MSG.call("Who", 0xaa, 0xaa),
                MISC_MSG.call("Long", 0), MISC_MSG.call("Long", 1), MISC_MSG.call("Shadow", 4), MISC_MSG.call("Flag")]),
-    Program("chain", "CgChain", CHAIN,
+    program("chain", "CgChain", CHAIN,
             [CHAIN_MSG.call("Pick", k) for k in (0, 1, CHAIN_LEN // 2, CHAIN_LEN - 1, CHAIN_LEN, CHAIN_LEN + 1)]),
-    Program("no_recv", "CgNoRecv", NO_RECV, [Call(1)], deploys=[Deploy(5)]),
+    program("no_recv", "CgNoRecv", NO_RECV, [Call(1)], deploys=[Deploy(5)]),
 ]
 
 
 PRELUDE = """// Generated by tools/gen_codegen_tests.py. Edit the programs there and rerun it.
-// Differential tests for code generation. Fe compiles each program as a contract of this module,
-// and Fe0 compiles the same text inside the test. The test deploys both builds the same way and
-// sends both the same calls. Each deployment must create a contract from both builds or from
-// neither. Each call must give the same success flag and the same return or revert data.
+// Differential tests of code generation, which DESIGN.md §10 describes.
 
-use ingot::codegen::compile
 use ingot::diag::{Diag, G_NO_CONTRACT, T_MISMATCH}
-use ingot::io::{Source, text}
+""" + difftest_use("ingot") + """
 use std::abi::DynString
-use std::evm::{Call, Contract, Create, RawOps}
-
-// Fe0's deploy code for `s`. When Fe0 rejects `s`, fails with Panic(letter << 40 | number << 24
-// | pos): the ASCII code of the phase letter, the number within the phase and the byte offset.
-fn ours(_ s: DynString) -> MemVec<u8> {
-    let out = with (Source = text(s)) {
-        compile()
-    }
-    match out.err {
-        Option::Some(d) => {
-            let letter = d.code.letter() as u256
-            let number = d.code.number() as u256
-            core::panic_code(letter << 40 | number << 24 | d.pos as u256)
-        },
-        Option::None => {},
-    }
-    out.code
-}
-
-// The official deploy code of a contract of this module. It is the `len` bytes at `offset` in
-// this test's code.
-fn theirs(_ offset: u256, _ len: u256) -> MemVec<u8> uses (evm: mut Evm) {
-    var buf = MemBuffer::alloc(len as usize)
-    evm.codecopy(dest: mut buf, dest_offset: 0, src_offset: offset, len)
-    var v: MemVec<u8> = MemVec::new()
-    v.extend_from_slice(buf.span())
-    v
-}
-
-// Appends the low `bytes` bytes of `x` to `v`, most significant first.
-fn push_be(_ v: mut MemVec<u8>, _ x: u256, bytes: u256) {
-    var i: u256 = 0
-    while i < bytes {
-        v.push(((x >> ((bytes - 1 - i) * 8)) & 0xff).downcast_truncate())
-        i += 1
-    }
-}
-
-// The deploy codes of one program from both compilers.
-struct Builds { ours: MemVec<u8>, theirs: MemVec<u8> }
-
-impl Builds {
-    // Deploys both builds with `args` and `value`. Fails with Panic(`case`) unless both or
-    // neither create a contract.
-    fn deploy(self, _ args: MemVec<u8>, _ value: Wei, _ case: u256) -> Deployed uses (evm: mut Evm) {
-        let p = Deployed { ours: create(self.ours, args, value), theirs: create(self.theirs, args, value) }
-        if (p.ours.word() == 0) != (p.theirs.word() == 0) {
-            core::panic_code(case)
-        }
-        p
-    }
-}
-
-// Deploys `code` followed by `args`.
-fn create(_ code: MemVec<u8>, _ args: MemVec<u8>, _ value: Wei) -> Address uses (evm: mut Evm) {
-    var v: MemVec<u8> = MemVec::new()
-    v.extend_from_slice(code.as_slice())
-    v.extend_from_slice(args.as_slice())
-    evm.create_raw(value, init_code: v.into_array().span())
-}
-
-// One program deployed from both builds.
-struct Deployed { ours: Address, theirs: Address }
-
-impl Deployed {
-    // Calls both contracts with `data` and `value`. Fails with Panic(`case`) unless the success
-    // flags and the return data are the same.
-    fn call(self, _ data: own MemVec<u8>, _ value: Wei, _ case: u256) uses (evm: mut Evm) {
-        let args = data.into_array()
-        let a = evm.try_call_raw(addr: self.ours, gas: 10000000, value, args: args.span())
-        let b = evm.try_call_raw(addr: self.theirs, gas: 10000000, value, args: args.span())
-        if a.success() != b.success() || a.returndata_len() != b.returndata_len() {
-            core::panic_code(case)
-        }
-        var i: usize = 0
-        while i < a.returndata_len() {
-            if a.returndata().byte_at(i) != b.returndata().byte_at(i) {
-                core::panic_code(case)
-            }
-            i += 1
-        }
-    }
-}
 """
 
 ERRORS = """
 fn fails(_ s: DynString) -> Diag {
-    let out = with (Source = text(s)) {
-        compile()
-    }
+    let out = difftest::compiled(s)
     assert!(out.code.len() == 0)
     out.err.unwrap()
 }
@@ -591,40 +436,14 @@ fn errors() {
 
 
 
-# The case number of the main deployment. Panic codes below it name a side deployment, and
-# codes above it name a call.
-MAIN_CASE = 1000
-
-
-def test_fn(p):
-    """Returns the lines of the Fe test function for program `p`."""
-    out = ["", "#[test(balance = 1000)]", f"fn {p.test}() uses (evm: mut Evm) {{",
-           f"    let b = Builds {{ ours: ours({lit(p.source)}), "
-           f"theirs: theirs({p.contract}::init_code_offset(), {p.contract}::init_code_len()) }}"]
-    for case, d in enumerate(p.deploys, start=1):
-        out += block(d.build("a") + [f"let _ = b.deploy(a, {d.wei}, {case})"])
-    out += ["    " + s for s in p.main.build("a")]
-    out += [f"    let p = b.deploy(a, {p.main.wei}, {MAIN_CASE})", "    assert!(p.ours.word() != 0)"]
-    for case, c in enumerate(p.calls + DISPATCH, start=MAIN_CASE + 1):
-        out += block(c.build("d") + [f"p.call(d, {c.wei}, {case})"])
-    return out + ["}"]
-
-
-def block(statements):
-    """Returns `statements` as a braced block inside a test function."""
-    return ["    {"] + ["        " + s for s in statements] + ["    }"]
-
-
 def main():
     out = [PRELUDE]
     for p in PROGRAMS:
         out += ["", p.source]
     for p in PROGRAMS:
-        out += test_fn(p)
+        out += p.lines()
     out.append(ERRORS)
-    path = FE0 / "src/codegen_tests.fe"
-    path.write_text("\n".join(out) + "\n")
-    subprocess.run([str(FE), "fmt", str(path)], check=True)
+    write_formatted(FE0 / "src/codegen_tests.fe", "\n".join(out) + "\n")
 
 
 main()

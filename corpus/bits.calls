@@ -1,0 +1,20 @@
+And 0xf0f0 0xff00
+Or 0xf0f0 0x0f0f
+Xor MAX 0x1234
+Not 0
+Not MAX
+Shl 3 255
+Shl 1 256
+Shl 1 MAX
+Shr MAX 255
+Shr MAX 256
+Shr 2**255 254
+Byte 0x1122334455 0
+Byte 0x1122334455 4
+Byte 0x1122334455 40     # i * 8 = 320: shifts out everything
+Byte 1 2**253            # i * 8 overflows
+Mask 0
+Mask 8
+Mask 255
+Mask 256
+Mask 1000

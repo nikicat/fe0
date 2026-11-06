@@ -1,0 +1,6 @@
+// expect: P009 5:20
+// An assert message is at most 31 bytes in Fe0 (SPEC §1).
+// fe: accepts
+fn f(_ a: u256) {
+    assert!(a > 0, "this message is longer than 31 bytes")
+}

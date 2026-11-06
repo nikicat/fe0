@@ -1,0 +1,7 @@
+// expect: P006 5:28
+// A statement must end before the next one starts (SPEC §3.4).
+fn f() -> u256 {
+    var x: u256 = 0
+    while x < 3 { x += 1 } x = 1
+    x
+}

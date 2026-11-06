@@ -1,0 +1,51 @@
+// Factorials, binomial coefficients and the product of a range.
+msg FactorialMsg {
+    #[selector = 0x0a]
+    Fact { n: u256 } -> u256,
+    #[selector = 0x0b]
+    Choose { n: u256, k: u256 } -> u256,
+    #[selector = 0x0c]
+    Range { lo: u256, hi: u256 } -> u256,
+}
+
+fn fact(_ n: u256) -> u256 {
+    if n == 0 { 1 } else { n * fact(n - 1) }
+}
+
+// n choose k, in a loop whose every step divides exactly.
+fn choose(_ n: u256, _ k: u256) -> u256 {
+    if k > n {
+        return 0
+    }
+    var r: u256 = 1
+    var i: u256 = 0
+    while i < k {
+        r = r * (n - i) / (i + 1)
+        i += 1
+    }
+    r
+}
+
+fn range_product(lo: u256, hi: u256) -> u256 {
+    var p: u256 = 1
+    var i = lo
+    while i <= hi {
+        p *= i
+        i += 1
+    }
+    p
+}
+
+contract Factorial {
+    recv FactorialMsg {
+        Fact { n } -> u256 {
+            fact(n)
+        }
+        Choose { n, k } -> u256 {
+            choose(n, k)
+        }
+        Range { lo, hi } -> u256 {
+            range_product(lo, hi)
+        }
+    }
+}

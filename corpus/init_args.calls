@@ -1,0 +1,14 @@
+init 21 0xbeef true
+deploy
+deploy 21
+deploy 21 0xbeef
+deploy 21 0xbeef 2                  # not a bool
+deploy 21 2**160 true               # dirty address
+deploy 21 0xbeef true extra=31      # extra bytes are ignored
+deploy 21 0xbeef true value=1
+deploy 13 0xbeef false              # init reverts with a message
+deploy 2**255 0xbeef true           # a * 2 overflows
+deploy 2**255 0xbeef false
+Get
+Who
+On

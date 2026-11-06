@@ -1,0 +1,44 @@
+// A contract that receives two msgs, and a msg it does not receive.
+msg ReadMsg {
+    #[selector = 1]
+    Get -> u256,
+    #[selector = 2]
+    Peek { i: u256 } -> u256,
+}
+
+msg WriteMsg {
+    #[selector = 3]
+    Put { v: u256 },
+    #[selector = 4]
+    Add { v: u256 } -> u256,
+}
+
+msg UnusedMsg {
+    #[selector = 5]
+    Never,
+}
+
+contract TwoMsgs {
+    mut a: u256,
+    mut b: u256,
+
+    recv ReadMsg {
+        Get {} -> u256 uses (a) {
+            a
+        }
+        Peek { i } -> u256 uses (a, b) {
+            if i == 0 { a } else { b }
+        }
+    }
+
+    recv WriteMsg {
+        Put { v } uses (mut a, mut b) {
+            b = a
+            a = v
+        }
+        Add { v } -> u256 uses (mut a) {
+            a += v
+            a
+        }
+    }
+}

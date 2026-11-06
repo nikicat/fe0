@@ -1,0 +1,17 @@
+init 1000
+BalanceOf 0
+Transfer 0 1 300
+Transfer 1 2 100
+Transfer 1 2 201
+Transfer 2 0 100
+Transfer 0 3 1
+Transfer 1 1 200
+BalanceOf 0
+BalanceOf 1
+BalanceOf 2
+BalanceOf 3
+Mint 2 50
+Mint 5 50
+Mint 0 MAX
+TotalSupply
+BalanceOf 2

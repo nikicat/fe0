@@ -1,0 +1,80 @@
+// `return` from inside loops, blocks and operands, and `break` out of nested loops.
+msg EarlyReturnMsg {
+    #[selector = 1]
+    Find { target: u256, limit: u256 } -> u256,
+    #[selector = 2]
+    Pair { sum: u256 } -> u256,
+    #[selector = 3]
+    Operand { a: u256 } -> u256,
+    #[selector = 4]
+    Unit { a: u256 } -> u256,
+}
+
+// The first i below `limit` with i * i >= target, or `limit`.
+fn find(_ target: u256, _ limit: u256) -> u256 {
+    var i: u256 = 0
+    while i < limit {
+        if i * i >= target {
+            return i
+        }
+        i += 1
+    }
+    limit
+}
+
+// Returns the factor pair a <= b of sum with the smallest a, as a * 1000 + b. Both factors are
+// from 2 to 99. Returns 0 when there is no such pair.
+fn pair(_ sum: u256) -> u256 {
+    var a: u256 = 2
+    while a < 100 {
+        var b = a
+        while b < 100 {
+            if a * b == sum {
+                return a * 1000 + b
+            }
+            if a * b > sum { break }
+            b += 1
+        }
+        a += 1
+    }
+    0
+}
+
+fn operand(_ a: u256) -> u256 {
+    let x = 7 + {
+        if a > 100 { return 1 }
+        a
+    } * 2
+    x
+}
+
+fn check(_ a: u256) {
+    if a == 3 {
+        return
+    }
+    assert!(a < 10)
+}
+
+contract EarlyReturn {
+    mut calls: u256,
+
+    recv EarlyReturnMsg {
+        Find { target, limit } -> u256 {
+            find(target, limit)
+        }
+        Pair { sum } -> u256 {
+            pair(sum)
+        }
+        Operand { a } -> u256 {
+            operand(a)
+        }
+        Unit { a } -> u256 uses (mut calls) {
+            calls += 1
+            check(a)
+            if a == 0 {
+                return 0
+            }
+            calls
+        }
+    }
+}

@@ -1,0 +1,15 @@
+Count 0
+Count 9
+Count 10
+Count MAX
+Sum 12345
+Sum MAX
+Reverse 12345
+Reverse 1200
+Reverse MAX              # the reversal overflows
+Palindrome 12321
+Palindrome 1221
+Palindrome 1231
+Root 0
+Root 987654321
+Root MAX

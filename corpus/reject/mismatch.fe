@@ -1,0 +1,5 @@
+// expect: T001 4:5
+// `bool` has no arithmetic.
+fn f(_ b: bool) -> u256 {
+    b + 1
+}

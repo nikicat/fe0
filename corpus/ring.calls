@@ -1,0 +1,16 @@
+Len
+At 0
+Push 10
+Push 20
+At 0
+At 1
+At 2
+Push 30
+Push 40
+Push 50
+Len
+At 0
+At 3
+Sum
+Push MAX
+Sum

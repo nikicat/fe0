@@ -1,0 +1,38 @@
+// Checked arithmetic on u256: each operator, with its panics at the edges.
+msg ArithMsg {
+    #[selector = 1]
+    Add { a: u256, b: u256 } -> u256,
+    #[selector = 2]
+    Sub { a: u256, b: u256 } -> u256,
+    #[selector = 3]
+    Mul { a: u256, b: u256 } -> u256,
+    #[selector = 4]
+    Div { a: u256, b: u256 } -> u256,
+    #[selector = 5]
+    Mod { a: u256, b: u256 } -> u256,
+    #[selector = 6]
+    Mix { a: u256, b: u256, c: u256 } -> u256,
+}
+
+contract Arith {
+    recv ArithMsg {
+        Add { a, b } -> u256 {
+            a + b
+        }
+        Sub { a, b } -> u256 {
+            a - b
+        }
+        Mul { a, b } -> u256 {
+            a * b
+        }
+        Div { a, b } -> u256 {
+            a / b
+        }
+        Mod { a, b } -> u256 {
+            a % b
+        }
+        Mix { a, b, c } -> u256 {
+            a * b + c / (a - b) % 7
+        }
+    }
+}

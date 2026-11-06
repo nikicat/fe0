@@ -1,0 +1,10 @@
+Area 3 4
+Area 2**128 2**128
+Clamp 5 1 10
+Clamp 0 1 10
+Clamp 11 1 10
+Clamp 5 10 1
+Lerp 100 200 500
+Lerp 200 100 250
+Lerp 0 MAX 1000
+Lerp 0 MAX 2

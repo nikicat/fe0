@@ -1,0 +1,32 @@
+// Deep recursion: the Ackermann function on small inputs, and a recursive sum.
+msg AckermannMsg {
+    #[selector = 1]
+    Ack { m: u256, n: u256 } -> u256,
+    #[selector = 2]
+    Sum { n: u256 } -> u256,
+}
+
+fn ack(_ m: u256, _ n: u256) -> u256 {
+    if m == 0 {
+        return n + 1
+    }
+    if n == 0 {
+        return ack(m - 1, 1)
+    }
+    ack(m - 1, ack(m, n - 1))
+}
+
+fn sum(_ n: u256) -> u256 {
+    if n == 0 { 0 } else { n + sum(n - 1) }
+}
+
+contract Ackermann {
+    recv AckermannMsg {
+        Ack { m, n } -> u256 {
+            ack(m, n)
+        }
+        Sum { n } -> u256 {
+            sum(n)
+        }
+    }
+}

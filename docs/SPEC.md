@@ -11,8 +11,8 @@ and the official compiler disagree, the compiler wins and the document is fixed.
 Marks used below:
 - **[V]** — behaviour not yet confirmed against the official compiler. Each one becomes a
   differential test before it is relied on.
-- **[✓]** — confirmed by a probe. The probes are in `spike-*/`; the ADRs in `docs/adr/`
-  summarise what they found.
+- **[✓]** — confirmed by a probe. The probes are in `spike-*/`, and the ADRs in `docs/adr/`
+  summarise what they found. The reject programs in `corpus/reject/` are probes too (§8).
 
 Reference toolchain: Fe 26.5.1. Probes ran on master `d217a51bf`.
 
@@ -31,9 +31,9 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 | Decimal integer | `[0-9]+(_[0-9]+)*` | The value must fit in 256 bits |
 | Hex integer | `0[xX][0-9a-fA-F]+` | No `_` separators. Must fit in 256 bits |
 | String | `"` … `"` with escapes `\" \\ \n \r \t` | Only allowed as the message of `assert!`, and at most 31 bytes after decoding. Fe accepts longer messages **[✓]**; Fe0 v1 restricts them so `Error(string)` stays one data word |
-| Punctuation | `( ) { } [ ] : , -> # . ;` | |
+| Punctuation | `( ) { } [ ] : , -> # .` | `;` is not a token: Fe 26.5.1 rejects it after a statement, even at the end of a line **[✓]** |
 | Operators | `+ - * / % ~ ! ^ & \| && \|\| < > = == !=` | |
-| Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside, and rejects spaced forms. That is safe under the subset rule |
+| Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside, and rejects spaced forms. Fe 26.5.1 rejects `x + = 1` too **[✓]** |
 
 - **No block comments.** Fe's compiler lexer has none, even though the tree-sitter grammar does.
 - **Binary (`0b`) and octal (`0o`) literals** are left out of Fe0. They are valid Fe, so they
@@ -57,7 +57,14 @@ rejects them as identifiers**, which keeps the parser simple and is allowed by t
 
 - There are no other types: no signed integers or other widths, no tuples, arrays, structs,
   enums or references.
-- Integer literals have type `u256`.
+- Integer literals have type `u256`, but only where their context makes them one. Fe has no
+  default integer type. It rejects a literal whose type nothing fixes, with `8-0031` **[✓]**.
+- Fe0 gives `T005` for an integer whose type nothing fixes. Such an integer is built only from
+  literals, operators, if-expressions and blocks. Fe0 rejects it as an expression statement
+  and as the value of a `let` or `var` without a type. It also rejects a comparison of two
+  such integers, in constants too. So `var i: u256 = 0` needs its type, and `1 == 1` is an
+  error, as is `const B: bool = 1 == 1`.
+- Fe also infers the type of `let x = 1` from later uses of `x`. Fe0 does not.
 - Every expression has exactly one type, and there are no implicit conversions.
 
 ## 3. Syntax
@@ -104,7 +111,7 @@ stmt        = ( "let" | "var" ) IDENT [ ":" type ] "=" expr TERM
             | place AUGOP expr TERM
             | expr TERM ;
 place       = IDENT ;
-TERM        = ";" | NL | (* before "}" or at end of input *) ;   (* see §3.4 *)
+TERM        = NL | (* before "}" or at end of input *) ;   (* see §3.4 *)
 
 expr        = or ;
 or          = and { "||" and } ;
@@ -128,7 +135,7 @@ CMPOP       = "==" | "!=" | "<" | ">" | "<=" | ">=" ;
 AUGOP       = "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
 ```
 
-An expression right before `}` with no `;` is the block's tail expression, not a statement.
+An expression right before the `}` of its block is the block's tail expression, not a statement.
 
 ### 3.2 Precedence
 
@@ -153,7 +160,7 @@ tightest:
 
 ### 3.4 Statement termination
 
-A statement ends at `;`, at a newline, right before the `}` that closes its block, as in
+A statement ends at a newline, right before the `}` that closes its block, as in
 `{ x = 1 }`, or at the end of the file. Fe0 adopts a deliberately **strict** rule:
 - Inside `( … )`, newlines are ignored.
 - Anywhere else, a newline ends the statement if the tokens so far form a complete statement.
@@ -334,6 +341,8 @@ The runtime dispatcher matches the official one (`mir/src/runtime/synthetic.rs:7
     - Deploying with `value > 0` fails, because `init` is non-payable.
 - A contract without `init` gets a no-op one.
 - An ingot holds one contract.
+- A program must declare a contract. Fe accepts a module without one, so this rule is Fe0's
+  own.
 
 ## 7. Diagnostics
 
@@ -344,10 +353,20 @@ The runtime dispatcher matches the official one (`mir/src/runtime/synthetic.rs:7
 
 ## 8. Conformance testing
 
-Every rule above that has a [V] or [✓] mark has at least one differential test: the same source
-is compiled by Fe (`evm.create2<C>`) and by Fe0 (running on the EVM, then `create_raw`). Both
-contracts are sent the same calls, and the test asserts identical success/revert status, return
-data, revert data and storage reads. PLAN.md §5 describes the harness.
+The subset rule is tested two ways.
+
+- **Accepted programs.** A differential test compiles one source with Fe and with Fe0, the
+  latter running on the EVM, and deploys both builds with the same constructor arguments and
+  value. Either both deployments create a contract or neither does. Then both contracts get
+  the same calls, and each call must give the same success flag and the same return or
+  revert data, byte for byte. Storage effects show through the later calls that read them.
+- **Rejected programs.** Fe0 must give the expected error code at the expected position, and
+  Fe must reject the program too, unless the rule is one that Fe0 adds on top of Fe (such as
+  §5.2's ban on locals named like fields). Then Fe must accept it.
+
+The aim is a test of one of these kinds for every rule above that has a [✓] mark. The tests are
+in `corpus/`, `corpus/reject/` and `fe0/src/codegen_tests.fe`, and DESIGN.md §10 describes how
+the harness runs them.
 
 ## 9. Open questions
 

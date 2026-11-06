@@ -1,0 +1,26 @@
+// Mutual recursion between two functions, and a function declared after its use.
+msg ParityMsg {
+    #[selector = 1]
+    Even { n: u256 } -> bool,
+    #[selector = 2]
+    Odd { n: u256 } -> bool,
+}
+
+contract Parity {
+    recv ParityMsg {
+        Even { n } -> bool {
+            is_even(n)
+        }
+        Odd { n } -> bool {
+            is_odd(n)
+        }
+    }
+}
+
+fn is_even(_ n: u256) -> bool {
+    if n == 0 { true } else { is_odd(n - 1) }
+}
+
+fn is_odd(_ n: u256) -> bool {
+    if n == 0 { false } else { is_even(n - 1) }
+}
