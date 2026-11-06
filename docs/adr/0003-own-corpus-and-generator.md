@@ -23,4 +23,17 @@ The official compiler is the oracle for both.
 
 ## Consequences
 - The official repository has no fuzzing, so the generator is also something to offer back.
-- Throughput matters: the harness runs batch ingots of about 25 programs (DESIGN.md §11).
+- Throughput matters: the harness runs batch ingots of about 25 programs (see Measurements).
+
+## Measurements
+Measured on Oct 28 on 8 cores, with 200 small contracts of 3 recv arms each. Fe0's in-EVM
+compile did not exist yet.
+
+| Layout | Time for 200 |
+|---|---|
+| One ingot | 35.4 s (~175 ms each) |
+| 200 standalone files, `--jobs 0` | 39.7 s |
+| Same, `--jobs 1` | 96 s |
+| **8 ingots × 25, `--jobs 0`** | **18.4 s** |
+
+- Standalone files cannot depend on the `fe0` ingot, so they are not an option for the harness.

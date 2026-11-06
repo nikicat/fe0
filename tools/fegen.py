@@ -13,7 +13,9 @@ from enum import Enum
 from pathlib import Path
 from typing import NamedTuple
 
-FE = os.environ.get("FE") or str(Path.home() / ".fe/bin/fe")
+# The fe binary when the environment variable FE is not set.
+FE_DEFAULT = Path.home() / ".fe/bin/fe"
+FE = os.environ.get("FE") or str(FE_DEFAULT)
 ROOT = Path(__file__).resolve().parent.parent
 FE0 = ROOT / "fe0"
 MAX = (1 << 256) - 1
@@ -91,8 +93,10 @@ class RawCall(Payload):
         return [f"{var}.push({b})" for b in self.data]
 
 
+# A selector that DISPATCH sends as an unknown one.
+PROBE_SELECTOR = 0x7777
 # Calls that reach the dispatcher's empty reverts: no selector, a short one, and an unknown one.
-DISPATCH = [RawCall(), RawCall(0, 0, 1), Call(0x7777)]
+DISPATCH = [RawCall(), RawCall(0, 0, 1), Call(PROBE_SELECTOR)]
 
 
 def difftest_use(ingot):

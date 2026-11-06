@@ -1,0 +1,765 @@
+#!/usr/bin/env python3
+"""Generate random Fe0 programs and run them through the differential harness (DESIGN.md §11).
+
+Each seed gives one program, `corpus/gen/s<seed>.fe`, and its call script `s<seed>.calls`, in
+the format that tools/embed.py reads. The same seed always gives the same files, so a failure
+names the seed and `gen.py --seed <seed> -n 1` reproduces it.
+
+A program has 0–3 constants, 0–3 pure helper functions, one or two msgs and one contract with
+1–4 `mut` fields. Each arm lists the fields it uses, sometimes with unused extra entries. The
+expressions are random trees over u256, bool and Address that use every operator of SPEC.md §4,
+if-expressions, blocks and helper calls with positional and labelled arguments. Literals lean
+towards edge values such as 0, 2**255 and MAX, so that checked arithmetic fails now and then.
+They come in decimal, `_`-grouped and hex forms.
+
+The call script has an `init` line, 0–2 more `deploy` lines and 5–20 calls. Nearly a third of
+the deploy and call lines are malformed. They miss a word, give a bool word of 2 or MAX, set
+high bits in an Address word or send a value in wei. Some lines carry extra bytes.
+
+The generated programs never loop forever and never run out of gas:
+- A loop is `var n: u256 = 0` and `while n < K`, with K at most 8. Its body either ends with
+  `n += 1` or starts with it, and only the latter kind holds `continue`. Nothing else assigns n.
+- Loops nest at most two deep in an arm, and a helper has at most one loop.
+- A helper calls only helpers written before it, so there is no recursion. Inside a loop, code
+  calls only helpers without loops.
+- `init` leaves out the operators that can fail, asserts and helper calls, so the main
+  deployment always creates a contract.
+"""
+import random
+import re
+import shutil
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import Enum, StrEnum
+from typing import NamedTuple
+
+import embed
+from embed import Head, ScriptLine
+from fegen import MAX, PROBE_SELECTOR, ROOT
+
+GEN = ROOT / "corpus/gen"
+OUT = ROOT / "out/gen"
+
+
+class Ty(StrEnum):
+    """A Fe0 type. Its value is its name in Fe."""
+
+    U256 = "u256"
+    BOOL = "bool"
+    ADDRESS = "Address"
+
+
+# Binding powers, loosest first (SPEC.md §3.2). IF covers if-expressions and blocks, which are
+# put in parentheses wherever an operand stands.
+IF, OR, AND, CMP, BITOR, BITXOR, BITAND, SHIFT, ADD, MUL, UNARY, ATOM = range(12)
+
+
+def checked(v):
+    """`v`, or None when it is not a u256."""
+    return v if 0 <= v <= MAX else None
+
+
+class Op(NamedTuple):
+    """A binary u256 operator."""
+
+    symbol: str
+    prec: int
+    # Whether it can fail (SPEC.md §4).
+    fails: bool
+    # The value of `a op b`, or None when it fails.
+    evaluate: Callable[[int, int], int | None]
+
+    @property
+    def is_shift(self):
+        return self.prec == SHIFT
+
+
+OPS = [
+    Op("|", BITOR, False, lambda a, b: a | b),
+    Op("^", BITXOR, False, lambda a, b: a ^ b),
+    Op("&", BITAND, False, lambda a, b: a & b),
+    Op("<<", SHIFT, False, lambda a, b: (a << b) & MAX if b < 256 else 0),
+    Op(">>", SHIFT, False, lambda a, b: a >> b if b < 256 else 0),
+    Op("+", ADD, True, lambda a, b: checked(a + b)),
+    Op("-", ADD, True, lambda a, b: checked(a - b)),
+    Op("*", MUL, True, lambda a, b: checked(a * b)),
+    Op("/", MUL, True, lambda a, b: a // b if b else None),
+    Op("%", MUL, True, lambda a, b: a % b if b else None),
+]
+CMP_OPS = ["==", "!=", "<", ">", "<=", ">="]
+# Outside constant declarations, every shift amount that is not a literal is masked with this.
+SHIFT_MASK = 0x1ff
+EDGES = [0, 1, 2, 255, 256, 2**128, 2**255, MAX - 1, MAX]
+MAX_LOOP = 8
+# How deep loops nest in a helper, and in init or an arm.
+MAX_HELPER_LOOP_DEPTH = 1
+MAX_LOOP_DEPTH = 2
+
+
+class E(NamedTuple):
+    """An expression's text, with how tightly it binds."""
+
+    text: str
+    prec: int
+    # Whether it has a type of its own. A u256 expression of only literals, operators,
+    # if-expressions and blocks does not (SPEC.md §2), so it cannot be compared with another
+    # such expression.
+    typed: bool = True
+    # The value of a constant expression.
+    value: int | None = None
+
+    def at(self, prec):
+        """The text as an operand that must bind at least as tightly as `prec`."""
+        return f"({self.text})" if self.prec < prec else self.text
+
+
+class VarKind(StrEnum):
+    CONST = "const"
+    PARAM = "param"
+    LET = "let"
+    VAR = "var"
+    # A loop's counter.
+    COUNTER = "counter"
+    FIELD = "field"
+
+
+class Var(NamedTuple):
+    name: str
+    ty: Ty
+    kind: VarKind
+    # The value of a u256 constant.
+    value: int | None = None
+
+
+class Scope(list):
+    """The variables that code can use at one point."""
+
+    def of(self, ty, kinds=None):
+        """The variables of type `ty`, and of one of `kinds` when it is given."""
+        return [v for v in self if v.ty == ty and (kinds is None or v.kind in kinds)]
+
+    def assignable(self):
+        """The variables that code can assign to."""
+        return [v for ty in Ty for v in self.of(ty, (VarKind.VAR, VarKind.FIELD))]
+
+    def allows(self, ty):
+        """Whether an expression of type `ty` can be written here. An Address comes only from a
+        variable, so it needs one in scope."""
+        return ty != Ty.ADDRESS or bool(self.of(Ty.ADDRESS))
+
+    def types(self):
+        """The types that an expression can have here."""
+        return [ty for ty in Ty if self.allows(ty)]
+
+
+class Param(NamedTuple):
+    name: str
+    ty: Ty
+    # Whether a call passes it without its label.
+    positional: bool
+
+    def decl(self):
+        return f"{'_ ' if self.positional else ''}{self.name}: {self.ty}"
+
+    @property
+    def var(self):
+        return Var(self.name, self.ty, VarKind.PARAM)
+
+
+class Field(NamedTuple):
+    """A field of a msg variant."""
+
+    name: str
+    ty: Ty
+
+    def decl(self):
+        return f"{self.name}: {self.ty}"
+
+
+def decls(items):
+    """The declarations of params or fields, as a list in Fe."""
+    return ", ".join(item.decl() for item in items)
+
+
+class Helper(NamedTuple):
+    name: str
+    params: list[Param]
+    ret: Ty
+    # Whether calling it runs a loop.
+    heavy: bool
+
+
+class Variant(NamedTuple):
+    name: str
+    selector: int
+    fields: list[Field]
+    ret: Ty | None
+
+
+class Msg(NamedTuple):
+    name: str
+    variants: list[Variant]
+
+
+class BodyKind(Enum):
+    HELPER = "helper"
+    INIT = "init"
+    ARM = "arm"
+
+
+class LoopKind(Enum):
+    # The counter goes up at the end of the body.
+    END = "end"
+    # The counter goes up at the start of the body.
+    START = "start"
+
+
+@dataclass
+class Body:
+    """What the generator knows about the function body that it is writing."""
+
+    kind: BodyKind
+    ret: Ty | None
+    # Statements left to write.
+    budget: int
+    # The storage fields that the body reads and writes.
+    reads: set = field(default_factory=set)
+    writes: set = field(default_factory=set)
+    # The kind of each enclosing loop, innermost last.
+    loops: list[LoopKind] = field(default_factory=list)
+    # Whether it has a loop or calls a heavy helper.
+    heavy: bool = False
+
+    def may_fail(self):
+        """Whether the code here may fail."""
+        return self.kind != BodyKind.INIT
+
+    def may_return(self):
+        """Whether the body may return early."""
+        return self.kind != BodyKind.INIT
+
+    def may_loop(self):
+        """Whether a loop may start here."""
+        if self.kind == BodyKind.HELPER:
+            return len(self.loops) < MAX_HELPER_LOOP_DEPTH and not self.heavy
+        return len(self.loops) < MAX_LOOP_DEPTH
+
+    def may_continue(self):
+        """Whether `continue` may stand here."""
+        return bool(self.loops) and self.loops[-1] == LoopKind.START
+
+    def may_call(self, helper):
+        """Whether the code may call `helper` here."""
+        return self.may_fail() and not (helper.heavy and self.loops)
+
+
+def indent(lines):
+    return ["    " + s for s in lines]
+
+
+class Generated(NamedTuple):
+    """A generated program and its call script."""
+
+    program: str
+    calls: str
+
+
+class Gen:
+    """The generator of one program."""
+
+    def __init__(self, seed):
+        self.seed = seed
+        self.rng = random.Random(seed)
+        self.count = 0
+        self.consts = Scope()
+        self.helpers = []
+        self.body = None
+
+    def fresh(self, prefix):
+        self.count += 1
+        name = f"{prefix}{self.count}"
+        # Fe rejects a local named after a prelude type, such as i32 (task T3vdtj).
+        assert not re.fullmatch(r"[iu][0-9]+", name), name
+        return name
+
+    def chance(self, p):
+        return self.rng.random() < p
+
+    # Values and literals.
+
+    def value(self):
+        """A u256 value, biased towards small and edge values."""
+        r = self.rng.random()
+        if r < 0.5:
+            return self.rng.randrange(11)
+        if r < 0.8:
+            return self.rng.choice(EDGES)
+        return self.rng.getrandbits(self.rng.choice([8, 64, 160, 256]))
+
+    def literal(self, v):
+        """`v` as an integer literal, in one of the forms of SPEC.md §1."""
+        if v >= 2**64 or self.chance(0.15):
+            digits = f"{v:x}" if self.chance(0.7) else f"{v:X}"
+            return self.rng.choice(["0x", "0X"]) + digits
+        if v >= 1000 and self.chance(0.3):
+            return f"{v:_}"
+        return str(v)
+
+    # Expressions.
+
+    def use(self, v):
+        if v.kind == VarKind.FIELD:
+            self.body.reads.add(v.name)
+        return E(v.name, ATOM)
+
+    def callable(self, ty, sc):
+        """The helpers returning `ty` that the body may call here."""
+        return [h for h in self.helpers if h.ret == ty and self.body.may_call(h)
+                and all(sc.allows(p.ty) for p in h.params)]
+
+    def call(self, h, sc, d):
+        args = []
+        for p in h.params:
+            a = self.expr(p.ty, d, sc).text
+            args.append(a if p.positional else f"{p.name}: {a}")
+        if args and self.chance(0.1):
+            args[-1] += ","
+        if h.heavy:
+            self.body.heavy = True
+        return E(f"{h.name}({', '.join(args)})", ATOM)
+
+    def can_type(self, sc):
+        """Whether a u256 expression with a type of its own can be written in `sc`."""
+        return bool(sc.of(Ty.U256) or self.callable(Ty.U256, sc))
+
+    def typed_atom(self, sc):
+        vs = sc.of(Ty.U256)
+        if vs and (not self.callable(Ty.U256, sc) or self.chance(0.8)):
+            return self.use(self.rng.choice(vs))
+        return self.call(self.rng.choice(self.callable(Ty.U256, sc)), sc, 0)
+
+    def leaf(self, ty, sc, typed):
+        vs = sc.of(ty)
+        if ty == Ty.U256:
+            if typed:
+                return self.typed_atom(sc)
+            if vs and self.chance(0.6):
+                return self.use(self.rng.choice(vs))
+            return E(self.literal(self.value()), ATOM, typed=False)
+        if ty == Ty.BOOL:
+            if vs and self.chance(0.6):
+                return self.use(self.rng.choice(vs))
+            return E(self.rng.choice(["true", "false"]), ATOM)
+        return self.use(self.rng.choice(vs))
+
+    def expr(self, ty, d, sc, typed=False):
+        """An expression of type `ty` and depth at most `d` in the scope `sc`.
+
+        With `typed`, a u256 expression has a type of its own (`E.typed`), which needs
+        `can_type(sc)`. An Address expression needs an Address in `sc`.
+        """
+        e = self.compound(ty, d, sc, typed) if d > 0 and self.chance(0.7) else self.leaf(ty, sc, typed)
+        if e.prec > IF and e.prec < ATOM and self.chance(0.05):
+            e = E(f"({e.text})", ATOM, e.typed)
+        return e
+
+    def compound(self, ty, d, sc, typed):
+        rng = self.rng
+        forms = {"if": 2, "block": 1}
+        if self.callable(ty, sc):
+            forms["call"] = 2
+        if ty == Ty.U256:
+            forms |= {"binary": 8, "not": 1}
+        elif ty == Ty.BOOL:
+            forms |= {"logic": 4, "not": 2, "eq": 2}
+            if self.can_type(sc):
+                forms["cmp"] = 6
+            if sc.allows(Ty.ADDRESS):
+                forms["addr_eq"] = 1
+        form = rng.choices(list(forms), weights=forms.values())[0]
+        if form == "call":
+            return self.call(rng.choice(self.callable(ty, sc)), sc, d - 1)
+        if form == "if":
+            c = self.expr(Ty.BOOL, d - 1, sc)
+            first = rng.random() < 0.5
+            x = self.expr(ty, d - 1, sc, typed and first)
+            y = self.expr(ty, d - 1, sc, typed and not first)
+            text = f"if {c.at(OR)} {{ {x.text} }} else {{ {y.text} }}"
+            if self.chance(0.2):
+                c2 = self.expr(Ty.BOOL, d - 1, sc)
+                z = self.expr(ty, d - 1, sc)
+                text = f"if {c.at(OR)} {{ {x.text} }} else if {c2.at(OR)} {{ {z.text} }} else {{ {y.text} }}"
+            return E(text, IF, x.typed or y.typed)
+        if form == "block":
+            x = self.expr(ty, d - 1, sc, typed)
+            return E(f"{{ {x.text} }}", IF, x.typed)
+        if form == "not":
+            x = self.expr(ty, d - 1, sc, typed)
+            return E(("~" if ty == Ty.U256 else "!") + x.at(UNARY), UNARY, x.typed)
+        if form == "binary":
+            op = rng.choice(self.ops())
+            first = rng.random() < 0.5
+            x = self.expr(Ty.U256, d - 1, sc, typed and first)
+            y = self.operand(op, d - 1, sc, typed and not first)
+            return E(f"{x.at(op.prec)} {op.symbol} {y.at(op.prec + 1)}", op.prec, x.typed or y.typed)
+        if form == "logic":
+            op, p = rng.choice([("&&", AND), ("||", OR)])
+            x, y = self.expr(Ty.BOOL, d - 1, sc), self.expr(Ty.BOOL, d - 1, sc)
+            return E(f"{x.at(p)} {op} {y.at(p + 1)}", p)
+        if form == "cmp":
+            op = rng.choice(CMP_OPS)
+            first = rng.random() < 0.5
+            x = self.expr(Ty.U256, d - 1, sc, first)
+            y = self.expr(Ty.U256, d - 1, sc, not first)
+            left = x.at(CMP + 1)
+            if op == "<" and self.reads_as_generics(left):
+                left = f"({left})"
+            return E(f"{left} {op} {y.at(CMP + 1)}", CMP)
+        t = Ty.ADDRESS if form == "addr_eq" else Ty.BOOL
+        x, y = self.expr(t, d - 1, sc), self.expr(t, d - 1, sc)
+        return E(f"{x.at(CMP + 1)} {rng.choice(['==', '!='])} {y.at(CMP + 1)}", CMP)
+
+    def ops(self):
+        """The u256 operators that the current body may use."""
+        return [op for op in OPS if self.body.may_fail() or not op.fails]
+
+    def operand(self, op, d, sc, typed=False):
+        """A right operand of `op`, of depth at most `d`."""
+        if op.is_shift:
+            return self.shift_amount(d, sc, typed)
+        return self.expr(Ty.U256, d, sc, typed)
+
+    def shift_amount(self, d, sc, typed):
+        """A shift amount below 512, so that Fe's backend does not crash on it
+        (docs/WORKAROUNDS.md). Amounts of 256 and more still occur."""
+        if not typed and self.chance(0.6):
+            return E(self.literal(self.rng.choice([0, 1, 8, 128, 255, 256, 300])), ATOM, False)
+        e = self.expr(Ty.U256, d, sc, typed)
+        return E(f"{e.at(BITAND)} & {self.literal(SHIFT_MASK)}", BITAND, e.typed)
+
+    @staticmethod
+    def reads_as_generics(left):
+        """Whether Fe reads `left < y >> z` as generic arguments of `left`, so that `left` needs
+        parentheses (Tg88pz)."""
+        return left[-1].isalnum() or left[-1] == "_"
+
+    @staticmethod
+    def reads_as_record(tail):
+        """Whether Fe may read the line `tail` as a record literal. After a line that ends with a
+        name, Fe reads a line that starts with `{` as a record literal of that name (T0014)."""
+        return tail.startswith("{")
+
+    def depth(self):
+        return self.rng.choice([0, 1, 1, 2, 2, 3, 3, 4, 5])
+
+    def cond(self, sc):
+        return self.expr(Ty.BOOL, self.depth(), sc).at(OR)
+
+    # Statements.
+
+    def ty(self, sc):
+        """A type that an expression in `sc` can have."""
+        return self.rng.choice(sc.types())
+
+    def stmts(self, sc, nest, n):
+        """Up to `n` statements in a block that is `nest` blocks deep, in the scope `sc`."""
+        sc, lines = Scope(sc), []
+        for _ in range(n):
+            if self.body.budget <= 0:
+                break
+            self.body.budget -= 1
+            lines += self.stmt(sc, nest)
+        return lines
+
+    def stmt(self, sc, nest):
+        """One statement. A declaration adds its local to `sc`."""
+        rng, b = self.rng, self.body
+        targets = sc.assignable()
+        kinds = {"decl": 3}
+        if targets:
+            kinds["assign"] = 4
+        if nest < 3:
+            kinds["if"] = 2
+            if b.may_loop():
+                kinds["while"] = 1
+        if b.may_fail():
+            kinds["assert"] = 1
+        if b.may_return():
+            kinds["return"] = 1
+        if b.loops:
+            kinds["break"] = 1
+        if b.may_continue():
+            kinds["continue"] = 1
+        kind = rng.choices(list(kinds), weights=kinds.values())[0]
+        if kind == "decl":
+            ty = self.ty(sc)
+            e = self.expr(ty, self.depth(), sc)
+            v = Var(self.fresh("x"), ty, VarKind.VAR if self.chance(0.4) else VarKind.LET)
+            decl = f"{v.kind} {v.name}"
+            # A u256 without a type of its own needs the annotation (SPEC.md §2).
+            if e.typed and self.chance(0.3):
+                line = f"{decl} = {e.text}"
+            else:
+                line = f"{decl}: {ty} = {e.text}"
+            sc.append(v)
+            return [line]
+        if kind == "assign":
+            v = rng.choice(targets)
+            if v.kind == VarKind.FIELD:
+                b.writes.add(v.name)
+            if v.ty == Ty.U256 and self.chance(0.5):
+                op = rng.choice(self.ops())
+                return [f"{v.name} {op.symbol}= {self.operand(op, self.depth(), sc).text}"]
+            return [f"{v.name} = {self.expr(v.ty, self.depth(), sc).text}"]
+        if kind == "if":
+            out = [f"if {self.cond(sc)} {{"] + indent(self.stmts(sc, nest + 1, rng.randint(0, 3)))
+            while self.chance(0.3):
+                out += [f"}} else if {self.cond(sc)} {{"] + indent(self.stmts(sc, nest + 1, rng.randint(0, 2)))
+            if self.chance(0.5):
+                out += ["} else {"] + indent(self.stmts(sc, nest + 1, rng.randint(0, 3)))
+            return out + ["}"]
+        if kind == "while":
+            return self.loop(sc, nest)
+        if kind == "assert":
+            c = self.expr(Ty.BOOL, self.depth(), sc).text
+            if self.chance(0.4):
+                return [f'assert!({c}, "{rng.choice(["no", "bad value", "x" * 31])}")']
+            return [f"assert!({c})"]
+        if kind == "return":
+            value = f" {self.expr(b.ret, self.depth(), sc).text}" if b.ret else ""
+            return [f"if {self.cond(sc)} {{", f"    return{value}", "}"]
+        return [f"if {self.cond(sc)} {{", f"    {kind}", "}"]
+
+    def loop(self, sc, nest):
+        b = self.body
+        b.heavy = True
+        i = Var(self.fresh("n"), Ty.U256, VarKind.COUNTER)
+        k = self.literal(self.rng.randint(0, MAX_LOOP))
+        form = self.rng.choice(list(LoopKind))
+        b.loops.append(form)
+        cond = f"{i.name} < {k}"
+        if self.chance(0.3):
+            cond += f" && {self.expr(Ty.BOOL, 2, Scope([*sc, i])).at(AND + 1)}"
+        body = self.stmts([*sc, i], nest + 1, self.rng.randint(1, 4))
+        b.loops.pop()
+        step = [f"{i.name} += 1"]
+        body = step + body if form == LoopKind.START else body + step
+        return [f"var {i.name}: u256 = 0", f"while {cond} {{"] + indent(body) + ["}"]
+
+    def function_body(self, body, sc):
+        """Returns the statements of `body` in the scope `sc`, and its tail when it returns a value.
+        It also records in `body` the storage fields that the statements read and write, and
+        whether they loop."""
+        self.body, sc, lines = body, Scope(sc), []
+        while body.budget > 0:
+            body.budget -= 1
+            lines += self.stmt(sc, 0)
+        if body.ret:
+            tail = self.expr(body.ret, self.depth(), sc)
+            lines.append(tail.at(ATOM) if self.reads_as_record(tail.text) else tail.text)
+        return lines
+
+    # Items.
+
+    def constant(self):
+        """Declares a new constant, which later code may use, and returns its declaration line."""
+        ty = Ty.BOOL if self.consts and self.chance(0.25) else Ty.U256
+        name = self.fresh("K")
+        if ty == Ty.BOOL:
+            k = self.rng.choice(self.consts.of(Ty.U256))
+            op = self.rng.choice(CMP_OPS)
+            text, value = f"{k.name} {op} {self.literal(self.value())}", None
+        else:
+            e = self.const_expr(self.rng.randint(0, 3))
+            text, value = e.text, e.value
+        self.consts.append(Var(name, ty, VarKind.CONST, value))
+        return f"const {name}: {ty} = {text}"
+
+    def const_expr(self, d):
+        """A u256 expression of literals and earlier constants that does not fail, with its
+        value."""
+        rng = self.rng
+        u = self.consts.of(Ty.U256)
+        if d == 0 or self.chance(0.3):
+            if u and self.chance(0.4):
+                k = rng.choice(u)
+                return E(k.name, ATOM, value=k.value)
+            v = self.value()
+            return E(self.literal(v), ATOM, value=v)
+        for _ in range(10):
+            op = rng.choice([*OPS, "~"])
+            if op == "~":
+                x = self.const_expr(d - 1)
+                return E("~" + x.at(UNARY), UNARY, value=MAX ^ x.value)
+            x, y = self.const_expr(d - 1), self.const_expr(d - 1)
+            v = op.evaluate(x.value, y.value)
+            if v is not None:
+                return E(f"{x.at(op.prec)} {op.symbol} {y.at(op.prec + 1)}", op.prec, value=v)
+        return E("1", ATOM, value=1)
+
+    def helper(self):
+        rng = self.rng
+        name = self.fresh("h")
+        params = [Param(self.fresh("p"), rng.choice(list(Ty)), self.chance(0.5))
+                  for _ in range(rng.randint(0, 3))]
+        sc = Scope([*self.consts, *(p.var for p in params)])
+        ret = self.ty(sc)
+        body = Body(BodyKind.HELPER, ret, rng.randint(0, 5))
+        lines = self.function_body(body, sc)
+        self.helpers.append(Helper(name, params, ret, body.heavy))
+        return [f"fn {name}({decls(params)}) -> {ret} {{"] + indent(lines) + ["}"]
+
+    def uses(self, body, fields):
+        """The uses clause of `body`, with some unused entries."""
+        entries = []
+        for f in fields:
+            if f.name in body.writes or (f.name in body.reads and self.chance(0.1)):
+                entries.append(f"mut {f.name}")
+            elif f.name in body.reads or self.chance(0.15):
+                entries.append(f.name)
+        if not entries:
+            return ""
+        self.rng.shuffle(entries)
+        return f" uses ({', '.join(entries)}{',' if self.chance(0.1) else ''})"
+
+    def msgs(self, fields):
+        """The msgs that the contract with `fields` receives."""
+        used = {PROBE_SELECTOR}
+        msgs = []
+        for _ in range(self.rng.choice([1, 1, 1, 2])):
+            variants = [self.variant(used, fields) for _ in range(self.rng.randint(1, 6))]
+            msgs.append(Msg(self.fresh("M"), variants))
+        return msgs
+
+    def variant(self, used, fields):
+        """A msg variant with a selector that is not in `used`, which it adds to `used`."""
+        rng = self.rng
+        sel = rng.choice([rng.randrange(1, 64), rng.getrandbits(32)])
+        while sel in used:
+            sel = rng.getrandbits(32)
+        used.add(sel)
+        vfields = [Field(f"a{j}", rng.choice(list(Ty))) for j in range(rng.choice([0, 1, 1, 2, 3]))]
+        sc = Scope([*fields, *(Var(f.name, f.ty, VarKind.PARAM) for f in vfields)])
+        return Variant(self.fresh("V"), sel, vfields, rng.choice([None, *sc.types()]))
+
+    def contract(self, fields, init_params, msgs):
+        """The contract, with an init that takes `init_params` unless they are None."""
+        lines = indent([f"mut {f.name}: {f.ty}," for f in fields])
+        if init_params is not None:
+            body = Body(BodyKind.INIT, None, self.rng.randint(0, 4))
+            sc = [*self.consts, *fields, *(p.var for p in init_params)]
+            code = self.function_body(body, sc)
+            head = f"init({decls(init_params)}){self.uses(body, fields)} {{"
+            lines += [""] + indent([head] + indent(code) + ["}"])
+        for m in msgs:
+            arms = [line for v in m.variants for line in self.arm(v, fields)]
+            lines += [""] + indent([f"recv {m.name} {{"] + indent(arms) + ["}"])
+        return ["contract C {"] + lines + ["}"]
+
+    def arm(self, v, fields):
+        """The recv arm of the variant `v`."""
+        binds, locals_ = [], []
+        for f in v.fields:
+            local = f.name if self.chance(0.5) else self.fresh("b")
+            binds.append(f.name if local == f.name else f"{f.name}: {local}")
+            locals_.append(Var(local, f.ty, VarKind.PARAM))
+        body = Body(BodyKind.ARM, v.ret, self.rng.randint(0, 7))
+        lines = self.function_body(body, [*self.consts, *fields, *locals_])
+        ret = f" -> {v.ret}" if v.ret else ""
+        head = f"{v.name} {{ {', '.join(binds)} }}" if binds else f"{v.name} {{}}"
+        return [f"{head}{ret}{self.uses(body, fields)} {{"] + indent(lines) + ["}"]
+
+    def msg_item(self, m):
+        out = [f"msg {m.name} {{"]
+        for v in m.variants:
+            sel = f"{v.selector:#x}" if self.chance(0.7) else str(v.selector)
+            fs = f" {{ {decls(v.fields)} }}" if v.fields else ""
+            out += indent([f"#[selector = {sel}]", f"{v.name}{fs}{f' -> {v.ret}' if v.ret else ''},"])
+        return out + ["}"]
+
+    def order(self, consts, others):
+        """The items in a random order. Items may come in any order, except that a constant
+        refers only to earlier ones, so `consts` keep their order."""
+        self.rng.shuffle(others)
+        items = []
+        for item in others:
+            if consts and self.chance(0.5):
+                items.append(consts.pop(0))
+            items.append(item)
+        return items + consts
+
+    def program(self):
+        """Returns the program and its call script."""
+        rng = self.rng
+        consts = [[self.constant()] for _ in range(rng.choice([0, 0, 1, 2, 3]))]
+        helpers = [self.helper() for _ in range(rng.choice([0, 1, 1, 2, 3]))]
+        fields = [Var(self.fresh("s"), rng.choice(list(Ty)), VarKind.FIELD) for _ in range(rng.randint(1, 4))]
+        msgs = self.msgs(fields)
+        init_params = [Param(self.fresh("p"), rng.choice(list(Ty)), False)
+                       for _ in range(rng.randint(0, 3))] if self.chance(0.8) else None
+        contract = self.contract(fields, init_params, msgs)
+        items = self.order(consts, helpers + [self.msg_item(m) for m in msgs] + [contract])
+        text = f"// Generated by tools/gen.py with seed {self.seed}.\n" \
+            + "\n\n".join("\n".join(item) for item in items) + "\n"
+        return Generated(text, self.calls(init_params or [], [v for m in msgs for v in m.variants]))
+
+    # Call scripts.
+
+    def word(self, ty):
+        if ty == Ty.U256:
+            return self.value()
+        if ty == Ty.BOOL:
+            return self.rng.randrange(2)
+        return self.rng.choice([0, 0xb1, 0xcc, self.rng.getrandbits(160), (1 << 160) - 1])
+
+    def args(self, head, types):
+        """The entry `head` with argument words for `types`, sometimes malformed, and options."""
+        words = [self.word(t) for t in types]
+        value = extra = 0
+        r = self.rng.random()
+        if r < 0.08 and words:
+            words.pop()
+        elif r < 0.16 and Ty.BOOL in types:
+            words[types.index(Ty.BOOL)] = self.rng.choice([2, MAX])
+        elif r < 0.24 and Ty.ADDRESS in types:
+            words[types.index(Ty.ADDRESS)] |= 1 << self.rng.choice([160, 255])
+        elif r < 0.3:
+            value = self.rng.choice([1, 7])
+        if self.chance(0.1):
+            extra = self.rng.randint(1, 40)
+        return ScriptLine(head, tuple(words), value, extra)
+
+    def calls(self, init_params, variants):
+        types = [p.ty for p in init_params]
+        lines = [ScriptLine(Head.INIT, tuple(self.word(t) for t in types))]
+        for _ in range(self.rng.choice([0, 1, 2])):
+            lines.append(self.args(Head.DEPLOY, types))
+        for _ in range(self.rng.randint(5, 20)):
+            v = self.rng.choice(variants)
+            lines.append(self.args(v.name, [f.ty for f in v.fields]))
+        return "".join(line.render() + "\n" for line in lines)
+
+
+def write(seed):
+    """Writes the program of `seed` and its call script to GEN, and returns the program's path."""
+    generated = Gen(seed).program()
+    path = GEN / f"s{seed}.fe"
+    path.write_text(generated.program)
+    embed.calls_path(path).write_text(generated.calls)
+    return path
+
+
+def main():
+    ap = embed.parser(__doc__)
+    ap.add_argument("--seed", type=int, default=1, help="the first seed (default 1)")
+    ap.add_argument("-n", type=int, default=25, help="the number of programs (default 25)")
+    args = ap.parse_args()
+    shutil.rmtree(GEN, ignore_errors=True)
+    GEN.mkdir(parents=True)
+    paths = [write(s) for s in range(args.seed, args.seed + args.n)]
+    programs = [embed.Program.load(p) for p in paths]
+    embed.harness(programs, [], OUT, args)
+
+
+if __name__ == "__main__":
+    main()

@@ -28,6 +28,25 @@ Each entry says where it bites, what we do instead, and its upstream status.
   default. Use `-O 0` while iterating. CI runs the default level, because that is what
   deploys.
 
+## Open bugs (26.5.1, not checked on master)
+
+Both were found by the random generator (DESIGN.md §11) and are not reported upstream yet.
+
+- **The backend panics on a shift by a large constant.** `x << C` or `x >> C`, where `x` is
+  not a constant and `C` is a constant of 2⁶⁴ or more, makes `fe build` and `fe test` panic
+  with "Integer overflow when casting to usize" (in `primitive-types`), at every `-O` level.
+  `fe check` accepts the program. `1 << C` folds and works.
+  - **Reproduction:** `fn h(_ x: u256) -> u256 { x << 0x10000000000000000 }`, called from an
+    arm with `h(x)` or `h(5)`.
+  - **Workaround:** `Gen.shift_amount` in `tools/gen.py` keeps every shift amount below 512
+    outside constant declarations, where the shift folds.
+- **`fe fmt` breaks long lines into code that Fe does not parse.** It moves a binary operator
+  such as `<` or `<<` to the start of the next line. The parser then rejects that line with
+  "line-start `<` is ambiguous" (`1-0001`), even though `fe fmt` exits with 0.
+  - **Reproduction:** a `let y: bool = …` whose comparison is longer than the line width.
+  - **Workaround:** `tools/embed.py` writes the program modules of its batch ingots without
+    formatting them.
+
 ## Upstream API churn (master, unreleased)
 
 - **Master removes character I/O from `std::io`** (newsfragment `+native-io.removal`).

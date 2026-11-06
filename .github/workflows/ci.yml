@@ -35,3 +35,6 @@ jobs:
           fe test
       - name: corpus
         run: python3 tools/embed.py
+      # Fixed seeds, see DESIGN.md §11.
+      - name: generated programs
+        run: python3 tools/gen.py -n 25

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Run the corpus through the differential harness of DESIGN.md §10.
 
+It is also the library behind tools/gen.py, for call scripts and the harness.
+
 Each program `corpus/X.fe` comes with a call script `corpus/X.calls`, which lists what the test
 of the program deploys and sends. A call script has one entry per line, and `#` starts a comment:
 
@@ -29,12 +31,14 @@ import argparse
 import ast
 import itertools
 import operator
+import os
 import re
 import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import NamedTuple
 
@@ -43,7 +47,7 @@ from fegen import MAX, ROOT, Call, Case, Cases, Deploy, DiagWord, DiffTest, Fail
 
 CORPUS = ROOT / "corpus"
 OUT = ROOT / "out/difftest"
-# Programs per batch ingot. DESIGN.md §11 measured batches of about 25 as the fastest layout.
+# Programs per batch ingot (ADR 0003, Measurements).
 BATCH = 25
 
 
@@ -55,7 +59,8 @@ class ScriptError(Exception):
 OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Pow: operator.pow,
        ast.LShift: operator.lshift, ast.RShift: operator.rshift, ast.FloorDiv: operator.floordiv,
        ast.BitOr: operator.or_, ast.BitAnd: operator.and_, ast.BitXor: operator.xor}
-NAMES = {"MAX": MAX, "true": 1, "false": 0}
+_MAX_WORD = "MAX"
+NAMES = {_MAX_WORD: MAX, "true": 1, "false": 0}
 
 
 def word(text):
@@ -88,6 +93,82 @@ def selectors(source):
             for sel, name in re.findall(r"#\[selector\s*=\s*(\w+)\]\s*(\w+)", source)}
 
 
+class Head(Enum):
+    """A keyword that starts a call-script entry."""
+
+    INIT = "init"
+    DEPLOY = "deploy"
+    RAW = "raw"
+
+
+_OPTIONS = ("value", "extra")
+
+
+class ScriptLine(NamedTuple):
+    """One entry of a call script."""
+
+    # A keyword, a variant name, or a selector.
+    head: Head | str | int
+    # The argument words, or the bytes of a `raw` entry.
+    words: tuple[int, ...] = ()
+    # The wei sent with the entry.
+    value: int = 0
+    # The number of bytes appended after the words.
+    extra: int = 0
+
+    def render(self):
+        """The text of the entry, without a line end."""
+        if self.head is Head.RAW:
+            return f"{Head.RAW.value} {bytes(self.words).hex()}"
+        match self.head:
+            case Head():
+                head = self.head.value
+            case int(sel):
+                head = f"{sel:#x}"
+            case name:
+                head = name
+        opts = [f"{k}={_render_word(v)}" for k, v in zip(_OPTIONS, (self.value, self.extra)) if v]
+        return " ".join([head, *map(_render_word, self.words), *opts])
+
+    @classmethod
+    def parse(cls, text):
+        """Returns the entry that the line `text` gives, or None for a blank or comment line.
+
+        Errors when the line is not of the call-script form.
+        """
+        tokens = text.split("#", 1)[0].split()
+        if not tokens:
+            return None
+        head, args = tokens[0], tokens[1:]
+        if head == Head.RAW.value:
+            if len(args) > 1 or not re.fullmatch(r"([0-9a-fA-F]{2})*", "".join(args)):
+                raise ScriptError(f"{Head.RAW.value} takes one string of hex bytes")
+            return cls(Head.RAW, tuple(bytes.fromhex("".join(args))))
+        opts = {}
+        while args and re.fullmatch(rf"({'|'.join(_OPTIONS)})=.*", args[-1]):
+            k, v = args.pop().split("=", 1)
+            opts[k] = word(v)
+        if head in (Head.INIT.value, Head.DEPLOY.value):
+            head = Head(head)
+        elif re.fullmatch(r"0x[0-9a-fA-F]+|[0-9]+", head):
+            head = int(head, 0)
+        return cls(head, tuple(word(a) for a in args), **opts)
+
+
+def _render_word(w):
+    """The argument text of the word `w`: MAX by name, large words in hex, others in decimal."""
+    if w == MAX:
+        return _MAX_WORD
+    return f"{w:#x}" if w >= 2**64 else str(w)
+
+
+def check_script_line():
+    """Checks that rendered call-script entries parse back to the same entries."""
+    for line in [ScriptLine(Head.INIT, (5, 1)), ScriptLine(Head.DEPLOY, (2,), value=7, extra=3),
+                 ScriptLine("Set", (MAX, 2**200)), ScriptLine(0x2a), ScriptLine(Head.RAW, (0, 0x2a))]:
+        assert ScriptLine.parse(line.render()) == line, line
+
+
 def parse_calls(path, sels):
     """Returns what the call script `path` sends, with `sels` as the selectors by variant name.
 
@@ -95,36 +176,27 @@ def parse_calls(path, sels):
     Case(0, Deploy()).
     """
     main, deploys, calls = Case(0, Deploy()), [], []
-    for n, line in enumerate(path.read_text().splitlines(), start=1):
-        words = line.split("#", 1)[0].split()
-        if not words:
-            continue
+    for n, text in enumerate(path.read_text().splitlines(), start=1):
         try:
-            head, args = words[0], words[1:]
-            if head == "raw":
-                if len(args) > 1 or not re.fullmatch(r"([0-9a-fA-F]{2})*", "".join(args)):
-                    raise ScriptError("raw takes one string of hex bytes")
-                calls.append(Case(n, RawCall(*bytes.fromhex("".join(args)))))
+            line = ScriptLine.parse(text)
+            if line is None:
                 continue
-            kw = {}
-            while args and re.fullmatch(r"(value|extra)=.*", args[-1]):
-                k, v = args.pop().split("=", 1)
-                kw[k] = word(v)
-            vals = [word(a) for a in args]
-            if head in ("init", "deploy"):
-                d = Case(n, Deploy(*vals, **kw))
-                if head == "deploy":
-                    deploys.append(d)
-                elif main.number:
-                    raise ScriptError("a second init line")
-                else:
-                    main = d
-            elif head in sels:
-                calls.append(Case(n, Call(sels[head], *vals, **kw)))
-            elif re.fullmatch(r"0x[0-9a-fA-F]+|[0-9]+", head):
-                calls.append(Case(n, Call(int(head, 0), *vals, **kw)))
-            else:
-                raise ScriptError(f"{head} is no variant of the program")
+            words, opts = line.words, dict(value=line.value, extra=line.extra)
+            match line.head:
+                case Head.RAW:
+                    calls.append(Case(n, RawCall(*words)))
+                case Head.DEPLOY:
+                    deploys.append(Case(n, Deploy(*words, **opts)))
+                case Head.INIT if main.number:
+                    raise ScriptError(f"a second {Head.INIT.value} line")
+                case Head.INIT:
+                    main = Case(n, Deploy(*words, **opts))
+                case int(sel):
+                    calls.append(Case(n, Call(sel, *words, **opts)))
+                case name if name in sels:
+                    calls.append(Case(n, Call(sels[name], *words, **opts)))
+                case name:
+                    raise ScriptError(f"{name} is no variant of the program")
         except ScriptError as e:
             raise ScriptError(f"{path.relative_to(ROOT)}:{n}: {e}") from None
     return Cases(main, deploys, calls)
@@ -156,13 +228,18 @@ def rename(source, suffix):
                    [f"{name}_{suffix}" for kind, name in declared if kind == "contract"])
 
 
+def calls_path(program):
+    """Returns the path of the call script that lies beside the program at `program`."""
+    return program.with_suffix(".calls")
+
+
 @dataclass
 class Program:
-    """A corpus program and the test that embed.py writes for it."""
+    """A program with a call script, and the test that embed.py writes for it."""
 
-    # corpus/X.fe, relative to ROOT.
+    # The program, such as corpus/X.fe or corpus/gen/sN.fe, relative to ROOT.
     path: Path
-    # corpus/X.calls, relative to ROOT.
+    # Its call script, such as corpus/X.calls or corpus/gen/sN.calls, relative to ROOT.
     calls_path: Path
     # The program with its contracts and msgs renamed (`rename`), which Fe compiles.
     module: str
@@ -176,17 +253,17 @@ class Program:
         does not have exactly one contract.
         """
         path = path.relative_to(ROOT)
-        calls_path = path.with_suffix(".calls")
+        script = calls_path(path)
         if not re.fullmatch(r"[a-z][a-z0-9_]*", path.stem):
             raise ScriptError(f"Errors when embedding {path}: the name must be a lowercase identifier")
-        if not (ROOT / calls_path).exists():
-            raise ScriptError(f"Errors when embedding {path}: there is no {calls_path.name}")
+        if not (ROOT / script).exists():
+            raise ScriptError(f"Errors when embedding {path}: there is no {script.name}")
         source = (ROOT / path).read_text()
         module, contracts = rename(source, path.stem)
         if len(contracts) != 1:
             raise ScriptError(f"Errors when embedding {path}: it must have one contract")
-        cases = parse_calls(ROOT / calls_path, selectors(source))
-        return cls(path, calls_path, module, DiffTest(f"corpus_{path.stem}", contracts[0], source, cases))
+        cases = parse_calls(ROOT / script, selectors(source))
+        return cls(path, script, module, DiffTest(f"corpus_{path.stem}", contracts[0], source, cases))
 
     @property
     def test(self):
@@ -306,25 +383,28 @@ fe0 = {{ path = "{fe0}" }}
 """
 
 
-def write_ingot(name, modules):
-    """Writes the ingot `name` with `modules`, a dict from module name to text."""
-    d = OUT / name
+def write_ingot(d, modules):
+    """Writes an ingot named after the directory `d` into `d`, with `modules`, a dict from module
+    name to text."""
     (d / "src").mkdir(parents=True)
-    (d / "fe.toml").write_text(INGOT.format(name=name, fe0="../../../fe0"))
+    fe0 = Path(os.path.relpath(fegen.FE0, d)).as_posix()
+    (d / "fe.toml").write_text(INGOT.format(name=d.name, fe0=fe0))
     (d / "src/lib.fe").write_text("")
+    # The modules are not formatted: Fe must compile each program as written, and `fe fmt`
+    # breaks some long lines into code that Fe does not parse (docs/WORKAROUNDS.md).
     for m, text in modules.items():
-        fegen.write_formatted(d / f"src/{m}.fe", text)
+        (d / f"src/{m}.fe").write_text(text)
     return d
 
 
-def write_ingots(programs, rejects):
-    """Replaces OUT with batch ingots of `programs` and one ingot of `rejects`, and returns
-    their directories."""
-    shutil.rmtree(OUT, ignore_errors=True)
-    ingots = [write_ingot(f"batch{i:02}", {p.path.stem: p.module_text() for p in batch})
+def write_ingots(out, programs, rejects):
+    """Replaces the directory `out` with batch ingots of `programs` and one ingot of `rejects`,
+    and returns their directories."""
+    shutil.rmtree(out, ignore_errors=True)
+    ingots = [write_ingot(out / f"batch{i:02}", {p.path.stem: p.module_text() for p in batch})
               for i, batch in enumerate(itertools.batched(programs, BATCH), start=1)]
     if rejects:
-        ingots.append(write_ingot("reject", {"reject": reject_module(rejects)}))
+        ingots.append(write_ingot(out / "reject", {"reject": reject_module(rejects)}))
     return ingots
 
 
@@ -398,6 +478,53 @@ def report(tests, run):
     return failures
 
 
+class Written(NamedTuple):
+    """The batch ingots of the corpus and the programs in them."""
+
+    # The programs that the official compiler accepts.
+    programs: list[Program]
+    rejects: list[Reject]
+    ingots: list[Path]
+    # A message for each failure of `fe check`.
+    failures: list[str]
+
+    def run(self, opt):
+        """Runs `fe test` at the optimization level `opt` on the ingots, and returns a message
+        for each test that did not pass."""
+        run = run_tests(self.ingots, opt)
+        print(f"{len(run.passed)} tests passed")
+        return report({t.test: t for t in self.programs + self.rejects}, run)
+
+
+def write(programs, rejects, out):
+    """Writes to `out` the batch ingots of the programs that fe check accepts, and one ingot of
+    all of `rejects`. Returns them with a message for each failure of fe check."""
+    checked = check_official(programs, rejects)
+    ingots = write_ingots(out, checked.programs, rejects)
+    print(f"{len(checked.programs)} programs and {len(rejects)} reject programs in {out.relative_to(ROOT)}/")
+    return Written(checked.programs, rejects, ingots, checked.failures)
+
+
+def parser(doc):
+    """Returns a command-line parser with the options of the harness, -O and --no-run. The first
+    line of the module docstring `doc` is its description."""
+    ap = argparse.ArgumentParser(
+        description=doc.split("\n")[0],
+        epilog=f"The environment variable FE gives the path of the fe binary (default {fegen.FE_DEFAULT}).")
+    ap.add_argument("-O", dest="opt", default="1", help="the optimization level of fe test")
+    ap.add_argument("--no-run", action="store_true", help="skip fe test (fe check still runs)")
+    return ap
+
+
+def harness(programs, rejects, out, args):
+    """Runs `programs` and `rejects` through the differential harness, with the ingots in `out`,
+    and exits with a message for each failure. `args` holds the options of `parser`. When
+    `args.no_run` is set, fe test does not run, and only the failures of fe check are reported."""
+    written = write(programs, rejects, out)
+    failures = written.failures if args.no_run else written.failures + written.run(args.opt)
+    sys.exit("\n".join(failures) or None)
+
+
 def check_header():
     r"""Checks that both header lines end at `\r\n` and at a lone `\r`, as fe0 counts lines."""
     source = "// expect: E116 3:2\r\n// fe: accepts\rx\ryz"
@@ -409,10 +536,8 @@ def check_header():
 def main():
     fegen.check_diag_word()
     check_header()
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0],
-                                 epilog="The environment variable FE gives the path of the fe binary (default ~/.fe/bin/fe).")
-    ap.add_argument("-O", dest="opt", default="1", help="the optimization level of fe test")
-    ap.add_argument("--no-run", action="store_true", help="only write the batch ingots")
+    check_script_line()
+    ap = parser(__doc__)
     ap.add_argument("names", nargs="*", metavar="NAME",
                     help="restricts the run to corpus/NAME.fe and corpus/reject/NAME.fe")
     args = ap.parse_args()
@@ -425,16 +550,7 @@ def main():
         sys.exit(str(e))
     if not programs and not rejects:
         sys.exit("Errors when choosing programs: none matches " + " ".join(args.names))
-
-    checked = check_official(programs, rejects)
-    ingots = write_ingots(checked.programs, rejects)
-    print(f"{len(checked.programs)} programs and {len(rejects)} reject programs in {OUT.relative_to(ROOT)}/")
-    failures = checked.failures
-    if not args.no_run:
-        run = run_tests(ingots, args.opt)
-        failures += report({t.test: t for t in checked.programs + rejects}, run)
-        print(f"{len(run.passed)} tests passed")
-    sys.exit("\n".join(failures) or None)
+    harness(programs, rejects, OUT, args)
 
 if __name__ == "__main__":
     main()

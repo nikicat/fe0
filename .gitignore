@@ -6,3 +6,4 @@ spike-harness/
 # Private submission code and link (registration email); never commit
 docs/registration-confirmation.txt
 __pycache__/
+corpus/gen/
