@@ -186,7 +186,9 @@ tightest:
 
 A statement ends at a newline, right before the `}` that closes its block, as in
 `{ x = 1 }`, or at the end of the file. Fe0 adopts a deliberately **strict** rule:
-- Inside `( … )`, newlines are ignored.
+- A newline is ignored where the innermost open bracket is `(`. So it is ignored inside
+  `( … )`, but not on the lines of a `{ … }` block inside the parentheses. A `(` inside that
+  block makes newlines ignored again, until its `)`.
 - Anywhere else, a newline ends the statement if the tokens so far form a complete statement.
   Otherwise the program is a syntax error.
 - A statement must end before the next one starts, so `while c { } x = 1` on one line is
@@ -200,13 +202,20 @@ A statement ends at a newline, right before the `}` that closes its block, as in
   Fe accepts `1 + x` at the end of the line, and Fe0 rejects it. Both accept `(x)` and
   `x + 1` there.
 
-So an expression may span lines only inside parentheses. Fe's automatic semicolon rule is more
-permissive, for example a line may start with `||`, so this is a valid subset.
+So an expression may span lines only where the innermost open bracket is `(`. Fe's automatic
+semicolon rule is more permissive, for example a line may start with `||`, so this is a valid
+subset.
 
 Probed **[✓]**:
 - Fe accepts a parenthesised expression spread over several lines.
 - Fe also reads `let x = a` followed by `(a)` on the next line as two statements, not as the
   call `a(a)`, just as Fe0 does.
+- Fe reads a newline inside a `{ … }` block in parentheses as Fe0 does. The probe
+  `corpus/reject/newline_block_in_parens_call.fe` puts `g` and `(1)` on two lines of such a
+  block. Fe accepts it and reads them as the two statements `g` and `(1)`, not as the call
+  `g(1)`. The probe `corpus/reject/newline_block_in_parens_return.fe` puts `return` and `5`
+  on two lines of such a block. Fe rejects it with `8-0013`. Fe0 rejects both probes, because
+  `g` is not a value and that `return` has no value.
 - Fe accepts the `{` of an `if` or `while` on the next line.
 
 Still **[V]**: a systematic check that Fe reads every Fe0-accepted line break the same way.
@@ -418,8 +427,7 @@ the harness runs them.
 Answered by the probes in `spike-conform/` (Oct 28): shifts by 256 or more, left-to-right
 evaluation order, `uses` duplicates and unused entries, and extra calldata bytes. Still open:
 
-1. The **newline rule** (§3.4): does Fe read every Fe0-accepted line break the same way? Plan:
-   run a parser differential test over the whole corpus, including generated programs.
+1. The **newline rule**, the last [V] item of §3.4.
 
 Also answered (Oct 28): `init` with missing or malformed arguments, and `Address` storage
 alignment.

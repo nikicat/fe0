@@ -1,0 +1,13 @@
+// expect: N003 11:8
+// Inside a block, a newline ends the statement even when the block is in parentheses
+// (SPEC §3.4). Fe accepts this program. So it reads `g` and `(1)` as two statements,
+// because the call `g(1)` would lack an argument.
+// fe: accepts
+fn g(_ x: u256, _ y: u256) -> u256 {
+    x + y
+}
+
+fn f() -> u256 {
+    ({ g
+    (1) })
+}

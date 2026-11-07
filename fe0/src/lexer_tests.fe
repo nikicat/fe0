@@ -141,13 +141,29 @@ fn punctuation_and_operators() {
 }
 
 #[test]
-fn newlines_collapse_and_vanish_inside_parens() {
+fn newlines_collapse_and_vanish_where_parens_are_innermost() {
     expect("a\n\n  \n b", [T_IDENT, T_NEWLINE, T_IDENT, T_EOF])
     expect(
         "f(a,\n b)\nc",
         [T_IDENT, P_LPAREN, T_IDENT, P_COMMA, T_IDENT, P_RPAREN, T_NEWLINE, T_IDENT, T_EOF],
     )
     expect("{\n}", [P_LBRACE, T_NEWLINE, P_RBRACE, T_EOF])
+    // Inside a block, a newline counts even when the block is in parentheses.
+    expect(
+        "({ a\n(b\n) }\n)",
+        [
+            P_LPAREN,
+            P_LBRACE,
+            T_IDENT,
+            T_NEWLINE,
+            P_LPAREN,
+            T_IDENT,
+            P_RPAREN,
+            P_RBRACE,
+            P_RPAREN,
+            T_EOF,
+        ],
+    )
     expect("a // note\nb", [T_IDENT, T_NEWLINE, T_IDENT, T_EOF])
     // A newline before `/` is emitted before the `/` it had to read past.
     expect("a\n/ b", [T_IDENT, T_NEWLINE, O_SLASH, T_IDENT, T_EOF])

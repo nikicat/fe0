@@ -1,0 +1,8 @@
+// expect: T001 5:22
+// Inside a block, a newline ends the statement even when the block is in parentheses
+// (SPEC §3.4). So `return` here has no value.
+fn f() -> u256 {
+    let y: u256 = ({ return
+    5 })
+    y
+}

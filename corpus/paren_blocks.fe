@@ -1,0 +1,34 @@
+// Blocks and `if` expressions inside parentheses, split over lines (SPEC §3.4).
+msg ParenBlocksMsg {
+    #[selector = 1]
+    Sum { x: u256 } -> u256,
+    #[selector = 2]
+    Pick { c: bool } -> u256,
+}
+
+fn twice(_ x: u256) -> u256 {
+    x * 2
+}
+
+contract ParenBlocks {
+    recv ParenBlocksMsg {
+        Sum { x } -> u256 {
+            let y: u256 = ({
+                let a: u256 = x + 1
+                twice(
+                    a,
+                )
+            }
+                + 3)
+            y
+        }
+        Pick { c } -> u256 {
+            (if c {
+                10
+            } else {
+                20
+            }
+                + 1)
+        }
+    }
+}

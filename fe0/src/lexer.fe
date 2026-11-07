@@ -411,10 +411,35 @@ fn digit_value(_ c: i32) -> u256 {
     v.downcast_truncate()
 }
 
+// The stack of open `(` and `{` in the source, innermost last. It holds the innermost 256
+// levels. The parser rejects nesting that deep anyway (`MAX_DEPTH`).
+struct Brackets { bits: u256 }
+
+impl Copy for Brackets {}
+
+impl Brackets {
+    // Opens or closes a bracket if `kind` is one, and does nothing for other tokens.
+    fn track(mut self, _ kind: Tok) {
+        if kind == P_LPAREN {
+            self.bits = self.bits << 1 | 1
+        } else if kind == P_LBRACE {
+            self.bits = self.bits << 1
+        } else if kind == P_RPAREN || kind == P_RBRACE {
+            self.bits = self.bits >> 1
+        }
+    }
+
+    // Checks whether the innermost open bracket is `(`.
+    fn innermost_is_paren(self) -> bool {
+        self.bits & 1 == 1
+    }
+}
+
 struct Lexer {
     text: Text,
     peeked: i32,
-    paren_depth: usize,
+    // A newline is a token unless the innermost open bracket is `(` (SPEC §3.4).
+    open: Brackets,
     // Offset in `text` where the token being read starts.
     start: usize,
     // A `/` token read while skipping trivia, returned after the newline before it.
@@ -426,7 +451,7 @@ impl Lexer {
         Lexer {
             text: Text::new(),
             peeked: input.next_byte(),
-            paren_depth: 0,
+            open: Brackets { bits: 0 },
             start: 0,
             queued: Option::None,
         }
@@ -588,7 +613,7 @@ impl Lexer {
         if self.queued.is_none() {
             match self.skip_trivia() {
                 Option::Some(pos) => {
-                    if self.paren_depth == 0 {
+                    if !self.open.innermost_is_paren() {
                         return Result::Ok(
                             Token { kind: T_NEWLINE, span: Span { start: pos, len: 1 } },
                         )
@@ -621,7 +646,10 @@ impl Lexer {
             return self.string()
         }
         match self.punct() {
-            Option::Some(kind) => Result::Ok(self.tok(kind)),
+            Option::Some(kind) => {
+                self.open.track(kind)
+                Result::Ok(self.tok(kind))
+            },
             Option::None => self.err(L_UNEXPECTED_CHAR),
         }
     }
@@ -678,13 +706,9 @@ impl Lexer {
         let c = self.peeked
         self.bump()
         if c == C_LPAREN {
-            self.paren_depth += 1
             return Option::Some(P_LPAREN)
         }
         if c == C_RPAREN {
-            if self.paren_depth > 0 {
-                self.paren_depth -= 1
-            }
             return Option::Some(P_RPAREN)
         }
         if c == C_LBRACE {

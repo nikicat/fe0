@@ -45,8 +45,9 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
 - **Tokens** are spans of the source buffer, so the lexer never copies the text. `Token` is
   declared in `fe0/src/lexer.fe`.
 - **Keywords:** compared against `String<N>` constants (`s.as_bytes()[i]`).
-- **Newline tokens** are kept. Inside parentheses the lexer drops them, since it already tracks
-  paren depth; anywhere else the parser decides whether a newline ends a statement (SPEC §3.4).
+- **Newline tokens** are kept, except where the innermost open bracket is `(` (SPEC §3.4).
+  `Lexer.open` tracks the open brackets. Where a newline is kept, the parser decides whether
+  it ends a statement.
 - **Positions:** line and column are computed only when an error is reported, by scanning the
   source buffer up to the error offset.
 
