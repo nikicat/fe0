@@ -26,6 +26,7 @@ use ingot::diag::{
     N_NOT_A_VALUE,
     N_OUTSIDE_LOOP,
     N_SHADOWS_FIELD,
+    N_SHADOWS_ITEM,
     N_TWO_CONTRACTS,
     N_UNKNOWN_FIELD,
     N_UNKNOWN_NAME,
@@ -196,6 +197,31 @@ fn locals() {
         "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v: V } { }\n    }\n}\n",
         N_UPPERCASE_LOCAL,
         188,
+    )
+    rejects(
+        "const n: u256 = 5\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v: n } { }\n    }\n}\n",
+        N_SHADOWS_ITEM,
+        206,
+    )
+    rejects(
+        "const n: u256 = 5\nfn f() -> u256 {\n    let n: u256 = 2\n    n\n}",
+        N_SHADOWS_ITEM,
+        39,
+    )
+    rejects(
+        "fn g() -> u256 { 1 }\nfn f(_ g: u256) -> u256 { g }",
+        N_SHADOWS_ITEM,
+        26,
+    )
+    rejects(
+        "msg m {\n    #[selector = 0x01]\n    A {},\n}\nfn f(_ m: u256) -> u256 { m }",
+        N_SHADOWS_ITEM,
+        48,
+    )
+    rejects(
+        "contract k {\n}\nfn f(_ k: u256) -> u256 { k }",
+        N_SHADOWS_ITEM,
+        20,
     )
 }
 

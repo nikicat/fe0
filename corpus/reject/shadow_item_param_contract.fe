@@ -1,0 +1,8 @@
+// expect: N018 6:6
+// A parameter may not take the contract's name (SPEC §5.2).
+// fe: accepts
+contract c {}
+
+fn f(_ c: u256) -> u256 {
+    c
+}

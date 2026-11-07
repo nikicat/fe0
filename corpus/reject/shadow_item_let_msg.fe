@@ -1,0 +1,12 @@
+// expect: N018 10:5
+// A `let` local may not take a msg's name (SPEC §5.2).
+// fe: accepts
+msg m {
+    #[selector = 1]
+    Get -> u256,
+}
+
+fn f() -> u256 {
+    let m: u256 = 2
+    m
+}

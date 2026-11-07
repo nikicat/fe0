@@ -1,0 +1,17 @@
+// expect: N018 12:13
+// A `let` local may not take the contract's name (SPEC §5.2).
+msg M {
+    #[selector = 1]
+    Get -> u256,
+    #[selector = 2]
+    Set { a: u256 } -> u256,
+}
+contract c {
+    recv M {
+        Get {} -> u256 {
+            let c: u256 = 2
+            c
+        }
+        Set { a } -> u256 { a }
+    }
+}

@@ -88,6 +88,8 @@ pub const N_TWO_CONTRACTS: DiagCode = DiagCode { raw: 3015 }
 pub const N_DUPLICATE_SELECTOR: DiagCode = DiagCode { raw: 3016 }
 // A local or parameter whose name starts with an uppercase letter (SPEC §5.2).
 pub const N_UPPERCASE_LOCAL: DiagCode = DiagCode { raw: 3017 }
+// A local or parameter named like an item (SPEC §5.2).
+pub const N_SHADOWS_ITEM: DiagCode = DiagCode { raw: 3018 }
 
 // Types
 pub const T_MISMATCH: DiagCode = DiagCode { raw: 4001 }

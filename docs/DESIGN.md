@@ -89,7 +89,8 @@ Constants are evaluated before any body, in source order (`Checker.program`).
   `TY_NEVER` fits any type, `if c { return 1 } else { x }` has the type of `x`.
 - **Scopes:** a stack of locals, innermost last (`Body.locals`). Lookup scans it from the
   top, then the contract fields, then the items. A block truncates the stack back to where it
-  started. A local named like a storage field is an error (SPEC §5.2).
+  started. `Checker.declare` rejects a local or parameter named like a storage field or an
+  item (SPEC §5.2).
 - **Constants:** evaluated during checking with the same checked arithmetic as run time.
   Overflow gives `C034` and division by zero `C025`.
   - Only earlier constants may be referenced.

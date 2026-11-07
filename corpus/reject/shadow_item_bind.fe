@@ -1,0 +1,17 @@
+// expect: N018 15:15
+// A bind may not take a constant's name (SPEC §5.2).
+// fe: accepts
+msg M {
+    #[selector = 1]
+    Get -> u256,
+    #[selector = 2]
+    Set { a: u256 } -> u256,
+}
+const n: u256 = 5
+
+contract C {
+    recv M {
+        Get {} -> u256 { n }
+        Set { a: n } -> u256 { n + 100 }
+    }
+}

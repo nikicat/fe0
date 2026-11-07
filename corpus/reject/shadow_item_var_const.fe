@@ -1,0 +1,9 @@
+// expect: N018 6:5
+// A `var` local may not take a constant's name (SPEC §5.2).
+const n: u256 = 5
+
+fn f() -> u256 {
+    var n: u256 = 2
+    n += 1
+    n
+}

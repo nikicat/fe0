@@ -251,15 +251,25 @@ ABI-encoded string.
 
 1. **Items** (`const`, `fn`, `msg`, `contract`) form one namespace and may be declared in any
    order. Duplicates are an error.
-2. **Locals.**
+2. **Locals.** `let`, `var` and the binds of a `recv` arm declare locals. The name rules below
+   apply to locals and to parameters.
    - `let` declares an immutable local and `var` a mutable one. Assigning to a `let` local is an
      error, as in Fe (`8-0018`) **[✓]**.
    - Shadowing with a new `let`/`var` is allowed **[✓]**.
    - A local's scope runs from after its declaration to the end of its block.
-   - A local may not take the name of a storage field. Fe accepts this **[✓]**, but Fe0 rejects
-     it, so a name never silently stops referring to storage.
-   - The name of a local or a parameter may not start with an uppercase letter (`N017`). This
-     covers `let`, `var`, a bind such as `x: Option` in a `recv` arm, and parameters.
+   - The name of a local or a parameter may not be a storage field's name (`N005`), so a name
+     never silently stops referring to storage. Fe accepts a local named like a storage field
+     **[✓]**.
+   - The name of a local or a parameter may not be the name of any item (`N018`), so a name in a
+     body always means one declaration.
+   - Fe's rule is narrower, and it differs by the kind of name. Fe reads a `let`, `var` or
+     bind name that names a contract as a pattern, and rejects it (`8-0000`) **[✓]**. It
+     reads a `let` or `var` name that names a constant as a pattern too, and rejects it as
+     refutable (`8-0101`) **[✓]**. It accepts a bind `a: n` for a constant `n` **[✓]**. It
+     probably reads that bind as a pattern as well and matches the field against `n`. Then a
+     plain local there would change what the program does **[V]**. Fe accepts a parameter
+     named like any item, and a local named like a function or a msg **[✓]**.
+   - The name of a local or a parameter may not start with an uppercase letter (`N017`).
    - Fe's rule is narrower. Fe reads an uppercase local or bind that names a type or a variant
      in scope, such as `let Some` or `x: Option`, as a pattern, and rejects it **[✓]**. Fe
      accepts any other uppercase local, such as `let Foo` **[✓]**, and every uppercase

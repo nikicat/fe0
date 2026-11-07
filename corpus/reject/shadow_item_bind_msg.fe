@@ -1,0 +1,20 @@
+// expect: N018 18:15
+// A bind may not take a msg's name (SPEC §5.2).
+// fe: accepts
+msg M {
+    #[selector = 1]
+    Get -> u256,
+    #[selector = 2]
+    Set { a: u256 } -> u256,
+}
+msg m {
+    #[selector = 3]
+    Q -> u256,
+}
+
+contract C {
+    recv M {
+        Get {} -> u256 { 0 }
+        Set { a: m } -> u256 { m }
+    }
+}

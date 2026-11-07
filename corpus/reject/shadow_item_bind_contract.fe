@@ -1,0 +1,14 @@
+// expect: N018 12:15
+// A bind may not take the contract's name (SPEC §5.2).
+msg M {
+    #[selector = 1]
+    Get -> u256,
+    #[selector = 2]
+    Set { a: u256 } -> u256,
+}
+contract c {
+    recv M {
+        Get {} -> u256 { 0 }
+        Set { a: c } -> u256 { c }
+    }
+}

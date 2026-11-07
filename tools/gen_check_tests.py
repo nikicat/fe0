@@ -11,13 +11,15 @@ from fegen import CHAIN_LEN, FE0, lit, write_formatted
 
 # The msg that every contract case receives.
 MSG = "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\n"
+# The field that GET_OK and ARMS_OK read and write.
+FIELD_A = "    mut a: u256\n"
+GET_OK = "        Get {} -> u256 uses (a) { a }\n"
+ARMS_OK = GET_OK + "        Set { v } uses (mut a) { a = v }\n"
 # `msgs` go after MSG and `recvs` after `recv M`.
-def contract(body_fields, arms, init="", msgs="", recvs=""):
+def contract(arms, body_fields=FIELD_A, init="", msgs="", recvs=""):
     return (MSG + msgs + "contract K {\n" + body_fields + init + "    recv M {\n" + arms + "    }\n"
             + recvs + "}\n")
 RECV_N = "    recv N {\n        O {} { }\n    }\n"
-GET_OK = "        Get {} -> u256 uses (a) { a }\n"
-ARMS_OK = GET_OK + "        Set { v } uses (mut a) { a = v }\n"
 groups = {
 "types_of_operators": [
     ("ok", "fn f(_ a: u256, _ b: bool, _ c: Address, _ d: Address) -> bool {\n    a + 1 * 2 / 3 % 4 & 5 | 6 ^ 7 << 8 >> 9 > 0 && !b || c == d && ~a != 0\n}"),
@@ -68,7 +70,12 @@ groups = {
     ("ok", "const A: u256 = 1\nfn F() -> u256 { A }"),
     ("err", "fn f() -> u256 {\n    |let Some: u256 = 1\n    Some\n}", "N_UPPERCASE_LOCAL"),
     ("err", "fn f(|_ X: u256) -> u256 { X }", "N_UPPERCASE_LOCAL"),
-    ("err", contract("    mut a: u256\n", GET_OK + "        Set { |v: V } { }\n"), "N_UPPERCASE_LOCAL"),
+    ("err", contract(GET_OK + "        Set { |v: V } { }\n"), "N_UPPERCASE_LOCAL"),
+    ("err", "const n: u256 = 5\n" + contract(GET_OK + "        Set { |v: n } { }\n"), "N_SHADOWS_ITEM"),
+    ("err", "const n: u256 = 5\nfn f() -> u256 {\n    |let n: u256 = 2\n    n\n}", "N_SHADOWS_ITEM"),
+    ("err", "fn g() -> u256 { 1 }\nfn f(|_ g: u256) -> u256 { g }", "N_SHADOWS_ITEM"),
+    ("err", "msg m {\n    #[selector = 0x01]\n    A {},\n}\nfn f(|_ m: u256) -> u256 { m }", "N_SHADOWS_ITEM"),
+    ("err", "contract k {\n}\nfn f(|_ k: u256) -> u256 { k }", "N_SHADOWS_ITEM"),
 ],
 "literal_types": [
     # Integers of type TY_INT (SPEC §2). Fe rejects each err case here with 8-0031 too, except
@@ -129,40 +136,40 @@ groups = {
     ("err", "const A: u256 = 1 + |true", "T_MISMATCH"),
 ],
 "effects": [
-    ("ok", contract("    mut a: u256\n", ARMS_OK, "    init(x: u256) uses (mut a) { a = x }\n")),
-    ("err", contract("    mut a: u256\n", "        Get {} -> u256 { |a }\n        Set { v } uses (mut a) { a = v }\n"), "E_NOT_IN_USES"),
-    ("err", contract("    mut a: u256\n", GET_OK + "        Set { v } uses (a) { |a = v }\n"), "E_NOT_MUT"),
-    ("err", contract("    mut a: u256\n", GET_OK + "        Set { v } uses (a) { |a += v }\n"), "E_NOT_MUT"),
-    ("err", contract("    mut a: u256\n", "        Get {} -> u256 uses (|b) { 1 }\n        Set { v } { }\n"), "E_UNKNOWN_FIELD"),
-    ("err", contract("    mut a: u256\n", "        Get {} -> u256 uses (a, |mut a) { a }\n        Set { v } { }\n"), "E_DUPLICATE_USE"),
-    ("err", contract("    mut a: u256\n", ARMS_OK) + "fn f() -> u256 { |a }", "E_NOT_IN_USES"),
-    ("warn", contract("    mut a: u256\n    mut b: u256\n", "        Get {} -> u256 uses (a, |b) { a }\n        Set { v } uses (mut a) { a = v }\n"), "E_UNUSED_USE"),
-    ("warn", contract("    mut a: u256\n", ARMS_OK, "    init() uses (|mut a) { }\n"), "E_UNUSED_USE"),
-    ("ok", contract("    mut a: u256\n", "        Get {} -> u256 uses (mut a) { a }\n        Set { v } uses (mut a) { a = v }\n")),
-    ("err", contract("    mut a: u256\n", ARMS_OK, "    init(|a: u256) { }\n"), "N_SHADOWS_FIELD"),
-    ("err", contract("    mut a: u256\n", "        Get {} -> u256 {\n            |let a: u256 = 1\n            a\n        }\n        Set { v } { }\n"), "N_SHADOWS_FIELD"),
-    ("err", contract("    mut a: u256\n    mut |a: bool\n", ARMS_OK), "N_DUPLICATE"),
-    ("err", "const a: u256 = 1\n" + contract("    mut |a: u256\n", ARMS_OK), "N_DUPLICATE"),
+    ("ok", contract(ARMS_OK, init="    init(x: u256) uses (mut a) { a = x }\n")),
+    ("err", contract("        Get {} -> u256 { |a }\n        Set { v } uses (mut a) { a = v }\n"), "E_NOT_IN_USES"),
+    ("err", contract(GET_OK + "        Set { v } uses (a) { |a = v }\n"), "E_NOT_MUT"),
+    ("err", contract(GET_OK + "        Set { v } uses (a) { |a += v }\n"), "E_NOT_MUT"),
+    ("err", contract("        Get {} -> u256 uses (|b) { 1 }\n        Set { v } { }\n"), "E_UNKNOWN_FIELD"),
+    ("err", contract("        Get {} -> u256 uses (a, |mut a) { a }\n        Set { v } { }\n"), "E_DUPLICATE_USE"),
+    ("err", contract(ARMS_OK) + "fn f() -> u256 { |a }", "E_NOT_IN_USES"),
+    ("warn", contract("        Get {} -> u256 uses (a, |b) { a }\n        Set { v } uses (mut a) { a = v }\n", FIELD_A + "    mut b: u256\n"), "E_UNUSED_USE"),
+    ("warn", contract(ARMS_OK, init="    init() uses (|mut a) { }\n"), "E_UNUSED_USE"),
+    ("ok", contract("        Get {} -> u256 uses (mut a) { a }\n        Set { v } uses (mut a) { a = v }\n")),
+    ("err", contract(ARMS_OK, init="    init(|a: u256) { }\n"), "N_SHADOWS_FIELD"),
+    ("err", contract("        Get {} -> u256 {\n            |let a: u256 = 1\n            a\n        }\n        Set { v } { }\n"), "N_SHADOWS_FIELD"),
+    ("err", contract(ARMS_OK, FIELD_A + "    mut |a: bool\n"), "N_DUPLICATE"),
+    ("err", "const a: u256 = 1\n" + contract(ARMS_OK, "    mut |a: u256\n"), "N_DUPLICATE"),
 ],
 "selectors": [
     ("ok", "msg N {\n    #[selector = 0xffffffff]\n    A {},\n    #[selector = 0]\n    B {},\n}"),
     ("err", "msg N {\n    |#[selector = 0x100000000]\n    A {},\n}", "T_SELECTOR_TOO_LARGE"),
     ("err", "msg N {\n    #[selector = 1]\n    A {},\n    |#[selector = 0x01]\n    B {},\n}", "N_DUPLICATE_SELECTOR"),
-    ("ok", contract("    mut a: u256\n", ARMS_OK, msgs="msg N {\n    #[selector = 0x03]\n    O {},\n}\n", recvs=RECV_N)),
-    ("err", contract("    mut a: u256\n", ARMS_OK, msgs="msg N {\n    |#[selector = 0x02]\n    O {},\n}\n", recvs=RECV_N), "N_DUPLICATE_SELECTOR"),
+    ("ok", contract(ARMS_OK, msgs="msg N {\n    #[selector = 0x03]\n    O {},\n}\n", recvs=RECV_N)),
+    ("err", contract(ARMS_OK, msgs="msg N {\n    |#[selector = 0x02]\n    O {},\n}\n", recvs=RECV_N), "N_DUPLICATE_SELECTOR"),
 ],
 "messages": [
-    ("ok", contract("    mut a: u256\n", "        Set { v: w } uses (mut a) { a = w }\n" + GET_OK)),
-    ("err", contract("    mut a: u256\n", GET_OK) .replace("    recv M", "    |recv M"), "N_MISSING_ARM"),
-    ("err", contract("    mut a: u256\n", ARMS_OK + "        |Get {} -> u256 { 1 }\n"), "N_DUPLICATE"),
-    ("err", contract("    mut a: u256\n", ARMS_OK + "        |Put {} { }\n"), "N_UNKNOWN_VARIANT"),
-    ("err", contract("    mut a: u256\n", "        |Get {} uses (a) { }\n        Set { v } uses (mut a) { a = v }\n"), "T_MISMATCH"),
-    ("err", contract("    mut a: u256\n", GET_OK + "        Set { |w } { }\n"), "N_UNKNOWN_FIELD"),
-    ("err", contract("    mut a: u256\n", GET_OK + "        |Set {} { }\n"), "N_MISSING_BIND"),
-    ("err", contract("    mut a: u256\n", GET_OK + "        Set { |v: a } { }\n"), "N_SHADOWS_FIELD"),
+    ("ok", contract("        Set { v: w } uses (mut a) { a = w }\n" + GET_OK)),
+    ("err", contract(GET_OK) .replace("    recv M", "    |recv M"), "N_MISSING_ARM"),
+    ("err", contract(ARMS_OK + "        |Get {} -> u256 { 1 }\n"), "N_DUPLICATE"),
+    ("err", contract(ARMS_OK + "        |Put {} { }\n"), "N_UNKNOWN_VARIANT"),
+    ("err", contract("        |Get {} uses (a) { }\n        Set { v } uses (mut a) { a = v }\n"), "T_MISMATCH"),
+    ("err", contract(GET_OK + "        Set { |w } { }\n"), "N_UNKNOWN_FIELD"),
+    ("err", contract(GET_OK + "        |Set {} { }\n"), "N_MISSING_BIND"),
+    ("err", contract(GET_OK + "        Set { |v: a } { }\n"), "N_SHADOWS_FIELD"),
     ("err", "fn N() {}\n" + contract("", "").replace("recv M", "|recv N"), "N_NOT_A_MSG"),
-    ("err", contract("    mut a: u256\n", ARMS_OK, recvs="    |recv M {\n" + ARMS_OK + "    }\n"), "N_DUPLICATE"),
-    ("err", contract("    mut a: u256\n", GET_OK + "        Set { v } |{ true }\n"), "T_MISMATCH"),
+    ("err", contract(ARMS_OK, recvs="    |recv M {\n" + ARMS_OK + "    }\n"), "N_DUPLICATE"),
+    ("err", contract(GET_OK + "        Set { v } |{ true }\n"), "T_MISMATCH"),
 ],
 }
 codes = sorted({c[2] for g in groups.values() for c in g if c[0] != "ok"} | {"E_TOO_MANY_FIELDS"})
@@ -195,8 +202,8 @@ for name, cases in groups.items():
             out.append(f"    {helper}({lit(src)}, {c[2]}, {i})")
     out.append("}")
 SIDE = ("const A: u256 = 6 * 7\nfn f(_ p: u256) -> u256 {\n    let x = p + A\n    var y = x\n    y\n}\n"
-        + contract("    mut a: u256\n    mut b: bool\n",
-                   GET_OK + "        Set { v } uses (mut b) { b = v == A }\n"))
+        + contract(GET_OK + "        Set { v } uses (mut b) { b = v == A }\n",
+                   FIELD_A + "    mut b: bool\n"))
 CHAIN = "fn f(_ c: bool) -> u256 { " + " else ".join(f"if c {{ {k} }}" for k in range(CHAIN_LEN)) + " else { 0 } }"
 out += f"""
 // The side tables that code generation reads.
