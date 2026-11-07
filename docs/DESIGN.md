@@ -282,7 +282,7 @@ Measured Oct 28 on master `d217a51bf` (`spike-limits/`, 30M gas per call):
   - **A real node does enforce it.** Local `anvil` (Foundry 1.8.4, hardfork BPO1) deploys a
     24,576-byte runtime and rejects 24,577 bytes (status 0).
   - So the final gate is a deploy script: `anvil` plus `cast send --create`, run in CI and before
-    any Sepolia deploy. A Fe-built `.bin` deploys and works there: the spec Counter returns
+    any Arbitrum One deploy. A Fe-built `.bin` deploys and works there: the spec Counter returns
     `get() = 2` after two increments, and its on-chain runtime size equals `fe build`'s
     `.runtime.bin` (99 bytes).
 
