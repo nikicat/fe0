@@ -24,6 +24,12 @@ It runs them through `embed.harness` as its `rejects`, and CI runs a fixed set o
   `tools/embed.py`): Fe0's code and position, and Fe's `fe check` verdict against the
   header.
 
+- A peer review proposed a cheaper oracle that needs no EVM run: mutate accepted programs,
+  ask `fe check` for each mutant, and report every mutant that Fe rejects but Fe0 accepts.
+  Mutations: re-flow whitespace, newlines and comments; wrap subexpressions in parentheses or
+  blocks; reuse item names as locals and binds; insert unreachable code. Each of these found
+  a real bug by hand (Tbb99s, Tcz2ax, T929gb, Tawfan).
+
 ## Next
 - List the mutations, one or more per rule:
   - **Type names (§1):** rename a local, parameter, function or constant to a type name.
