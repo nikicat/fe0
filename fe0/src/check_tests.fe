@@ -141,6 +141,17 @@ fn return_paths() {
     )
     rejects("fn f() { return 1 }", T_MISMATCH, 16)
     rejects("fn f() -> u256 { return }", T_MISMATCH, 17)
+    accepts("fn f() -> u256 {\n    return 1\n    2\n}")
+    rejects(
+        "fn f() -> u256 {\n    return 1\n    true\n}",
+        T_MISMATCH,
+        15,
+    )
+    rejects(
+        "fn f() {\n    while true {\n        break\n        5\n    }\n}",
+        T_MISMATCH,
+        24,
+    )
     rejects("fn f() { 1 }", T_MISMATCH, 7)
 }
 

@@ -831,7 +831,8 @@ impl Checker {
         Result::Ok(ty)
     }
 
-    // A block's type is its tail's, or TY_NEVER if a statement never completes, or unit.
+    // A block's type is its tail's, even after a statement that never completes (SPEC §5).
+    // Without a tail, it is TY_NEVER if a statement never completes, else unit.
     fn block(mut self, _ i: usize) -> Result<Diag, Ty> {
         let n = self.node(i)
         let mark = self.body.locals.len()
@@ -844,8 +845,7 @@ impl Checker {
             k += 1
         }
         if n.value() != 0 {
-            let tail = self.expr(n.value())?
-            if t != TY_NEVER { t = tail }
+            t = self.expr(n.value())?
         }
         self.body.locals.truncate(mark)
         Result::Ok(t)

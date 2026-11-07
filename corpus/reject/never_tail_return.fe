@@ -1,0 +1,7 @@
+// expect: T001 4:16
+// A block's tail gives the block its type, even after `return` (SPEC §5). So this body has
+// type bool, not u256.
+fn f() -> u256 {
+    return 1
+    true
+}

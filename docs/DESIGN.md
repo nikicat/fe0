@@ -106,7 +106,8 @@ Constants are evaluated before any body, in source order (`Checker.program`).
   `N016`), and `Checker.distinct_received_selectors` checks them across the msgs the contract
   receives (`N016`).
 - **Return paths:** a body must have the type of its return type. A body that ends in `return`
-  on every path has type `TY_NEVER`, so no separate "always returns" analysis is needed.
+  on every path has type `TY_NEVER`, so no separate "always returns" analysis is needed. A
+  block with a final expression has that expression's type, even after `return` (SPEC §5).
 - **Recursion:** the checker recurses over the AST as the parser does, so the parser's
   `MAX_DEPTH` bounds it too, as `check_tests::deep_nesting_and_long_chains` checks. An
   `else if` chain is checked in a loop.

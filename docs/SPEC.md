@@ -298,6 +298,15 @@ ABI-encoded string.
 6. **Return paths.** A function with `-> T` must produce a `T` on every path, either through its
    final expression or through `return`. Otherwise it is an error (`8-0000`, type mismatch)
    **[✓]**.
+7. **A tail after a diverging statement.** A block with a final expression has that
+   expression's type, even when `return`, `break` or `continue` comes before it and the
+   expression is never reached. A block without a final expression has unit type. When one
+   of its statements diverges, the block diverges too, and then it fits any type.
+   - Fe rejects `return 1` followed by `true` in a function `-> u256` (`8-0000`) **[✓]**. The
+     probe is `corpus/reject/never_tail_return.fe`.
+   - Fe rejects `break` followed by `5` in a loop body (`8-0031`) **[✓]**. The probe is
+     `corpus/reject/never_tail_break.fe`.
+   - Fe accepts `return 1` followed by `2` in a function `-> u256`, and so does Fe0 **[V]**.
 
 ## 6. Contracts and effects
 

@@ -1,0 +1,9 @@
+// expect: T001 5:16
+// A block's tail gives the block its type, even after `break` (SPEC §5). So this loop body has
+// a value, which a loop body may not have.
+fn f() {
+    while true {
+        break
+        5
+    }
+}

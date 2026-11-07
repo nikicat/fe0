@@ -52,6 +52,10 @@ groups = {
     ("err", "fn f() -> u256 |{ while true { return 1 } }", "T_MISMATCH"),
     ("err", "fn f() { return |1 }", "T_MISMATCH"),
     ("err", "fn f() -> u256 { |return }", "T_MISMATCH"),
+    # A tail after a diverging statement still gives the block its type (SPEC §5).
+    ("ok", "fn f() -> u256 {\n    return 1\n    2\n}"),
+    ("err", "fn f() -> u256 |{\n    return 1\n    true\n}", "T_MISMATCH"),
+    ("err", "fn f() {\n    while true |{\n        break\n        5\n    }\n}", "T_MISMATCH"),
     ("err", "fn f() |{ 1 }", "T_MISMATCH"),
 ],
 "locals": [
