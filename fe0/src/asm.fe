@@ -82,8 +82,25 @@ impl LabelSlot {
 // ponytail: every label is pushed as a fixed 2-byte PUSH2, so code must stay under 64 KB.
 const MAX_CODE: usize = 0x10000
 
-// The 2-byte operand, at offset `at`, of a PUSH2 that pushes the offset of `label`.
-struct Fixup { at: usize, label: Label }
+// A byte offset in a piece of code.
+struct CodeOffset { at: usize }
+
+impl Copy for CodeOffset {}
+
+impl CodeOffset {
+    // Returns the first byte of this offset as a PUSH2 operand.
+    fn high_byte(self) -> u8 {
+        (self.at >> 8).downcast_truncate()
+    }
+
+    // Returns the second byte of this offset as a PUSH2 operand.
+    fn low_byte(self) -> u8 {
+        (self.at & 0xff).downcast_truncate()
+    }
+}
+
+// The 2-byte operand, at offset `operand`, of a PUSH2 that pushes the offset of `label`.
+struct Fixup { operand: CodeOffset, label: Label }
 
 impl Copy for Fixup {}
 
@@ -92,14 +109,14 @@ impl Copy for Fixup {}
 pub struct Asm {
     pub code: MemVec<u8>,
     // The offset of each label, by id. No label gets id 0, so that EMPTY_SLOT can use it.
-    offsets: MemVec<usize>,
+    offsets: MemVec<CodeOffset>,
     fixups: MemVec<Fixup>,
 }
 
 impl Asm {
     pub fn new() -> Asm {
-        var offsets: MemVec<usize> = MemVec::new()
-        offsets.push(0)
+        var offsets: MemVec<CodeOffset> = MemVec::new()
+        offsets.push(CodeOffset { at: 0 })
         Asm { code: MemVec::new(), offsets, fixups: MemVec::new() }
     }
 
@@ -114,7 +131,7 @@ impl Asm {
 
     // Returns a new label, not yet bound.
     pub fn label(mut self) -> Label {
-        self.offsets.push(0)
+        self.offsets.push(CodeOffset { at: 0 })
         Label { id: self.offsets.len() - 1 }
     }
 
@@ -127,7 +144,12 @@ impl Asm {
     // Binds `l` here without a JUMPDEST, for a label that is pushed as a length or an offset,
     // never jumped to.
     pub fn mark(mut self, _ l: Label) {
-        self.offsets.set(l.id, self.code.len())
+        self.offsets.set(l.id, self.here())
+    }
+
+    // Returns the offset of the next byte.
+    fn here(self) -> CodeOffset {
+        CodeOffset { at: self.code.len() }
     }
 
     pub fn op(mut self, _ o: Op) {
@@ -151,8 +173,8 @@ impl Asm {
 
     // Pushes the offset of `l`, which `finish` fills in.
     pub fn push_label(mut self, _ l: Label) {
-        self.fixups.push(Fixup { at: self.code.len() + 1, label: l })
         self.op(OP_PUSH2)
+        self.fixups.push(Fixup { operand: self.here(), label: l })
         self.code.push(0)
         self.code.push(0)
     }
@@ -173,9 +195,9 @@ impl Asm {
         var k: usize = 0
         while k < self.fixups.len() {
             let f = self.fixups[k]
-            let at = self.offsets[f.label.id]
-            self.code.set(f.at, (at >> 8).downcast_truncate())
-            self.code.set(f.at + 1, (at & 0xff).downcast_truncate())
+            let target = self.offsets[f.label.id]
+            self.code.set(f.operand.at, target.high_byte())
+            self.code.set(f.operand.at + 1, target.low_byte())
             k += 1
         }
     }

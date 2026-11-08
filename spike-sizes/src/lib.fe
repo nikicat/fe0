@@ -27,7 +27,7 @@ pub contract ParseProbe {
     recv ProbeMsg {
         Run { src } -> u256 {
             with (Source = bytes(src)) {
-                parse().nodes.len() as u256
+                parse().node_count() as u256
             }
         }
     }
@@ -45,7 +45,7 @@ pub contract CheckProbe {
     recv ProbeMsg {
         Run { src } -> u256 {
             with (Source = bytes(src)) {
-                check(parse()).slots.len() as u256
+                check(parse()).node_count() as u256
             }
         }
     }

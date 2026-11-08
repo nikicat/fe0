@@ -145,15 +145,57 @@ pub const A_PIPE: Tok = O_PIPE.assign_form()
 pub const A_SHL: Tok = O_SHL.assign_form()
 pub const A_SHR: Tok = O_SHR.assign_form()
 
+// A byte offset in the source text. A length is a plain count. An offset plus a length is an
+// offset. The distance between two offsets is a length.
+pub struct Pos { off: usize }
+
+impl Copy for Pos {}
+
+impl core::ops::Eq for Pos {
+    fn eq(self, _ other: Pos) -> bool {
+        self.off == other.off
+    }
+}
+
+// The start of the source.
+pub const SOURCE_START: Pos = Pos { off: 0 }
+
+impl Pos {
+    // Returns the position `off` bytes from the start of the source.
+    pub fn at(_ off: usize) -> Pos {
+        Pos { off }
+    }
+
+    // Returns the offset as a number of bytes from the start of the source.
+    pub fn offset(self) -> usize {
+        self.off
+    }
+
+    // Returns the position `n` bytes after this one.
+    pub fn plus(self, _ n: usize) -> Pos {
+        Pos { off: self.off + n }
+    }
+
+    // Returns the position `n` bytes before this one.
+    pub fn minus(self, _ n: usize) -> Pos {
+        Pos { off: self.off - n }
+    }
+
+    // Returns the number of bytes from `start` to this position.
+    pub fn since(self, _ start: Pos) -> usize {
+        self.off - start.off
+    }
+}
+
 // `len` bytes of the source from offset `start`.
-pub struct Span { pub start: usize, pub len: usize }
+pub struct Span { pub start: Pos, pub len: usize }
 
 impl Copy for Span {}
 
 impl Span {
-    // Offset just past the last byte.
-    pub fn end(self) -> usize {
-        self.start + self.len
+    // Returns the offset just past the last byte.
+    pub fn end(self) -> Pos {
+        self.start.plus(self.len)
     }
 }
 
@@ -182,41 +224,61 @@ impl Text {
         self.bytes.push(b)
     }
 
-    pub fn len(self) -> usize {
-        self.bytes.len()
+    // Returns the offset just past the last byte read so far.
+    fn end(self) -> Pos {
+        Pos { off: self.bytes.len() }
     }
 
-    // Returns the byte at offset `i`.
-    pub fn byte(self, _ i: usize) -> u8 {
-        self.bytes[i]
+    // Returns byte `k` of span `s`.
+    pub fn span_byte(self, _ s: Span, _ k: usize) -> u8 {
+        self.bytes[s.start.plus(k).off]
     }
 
     // Whether span `s` spells `w`.
     pub fn spells<const N: usize>(self, _ s: Span, _ w: String<N>) -> bool {
-        s.len == N && same_bytes(self.bytes, s.start, w.as_bytes(), 0, N)
+        s.len == N && self.holds(s, w.as_bytes())
     }
 
     // Whether span `s` starts with an uppercase letter.
     pub fn starts_upper(self, _ s: Span) -> bool {
-        is_upper(self.bytes[s.start] as i32)
+        is_upper(self.bytes[s.start.off] as i32)
     }
 
     // Whether spans `a` and `b` hold the same text.
     pub fn same(self, _ a: Span, _ b: Span) -> bool {
-        a.len == b.len && same_bytes(self.bytes, a.start, self.bytes, b.start, a.len)
+        a.len == b.len && self.holds(a, self.span_bytes(b))
+    }
+
+    // Whether span `s` holds the first `s.len` bytes of `b`.
+    fn holds<B: core::ops::Index<usize, Output = u8>>(self, _ s: Span, _ b: B) -> bool
+    uses B::E
+    {
+        var k: usize = 0
+        while k < s.len {
+            if self.span_byte(s, k) != b[k] {
+                return false
+            }
+            k += 1
+        }
+        true
+    }
+
+    // The bytes of span `s`.
+    fn span_bytes(self, _ s: Span) -> ref MemSlice<u8> {
+        self.bytes.as_slice().slice(offset: s.start.off, len: s.len)
     }
 
     // Value of the integer literal at span `s`, or none if it exceeds 2^256 - 1. The literal
     // is one that `Lexer::number` scanned.
     pub fn int_value(self, _ s: Span) -> Option<u256> {
         var base: u256 = 10
-        var i = s.start
+        var i = s.start.off
         if s.len > 2 && is_hex_marker(self.bytes[i + 1] as i32) {
             base = 16
             i += 2
         }
         var v: u256 = 0
-        while i < s.end() {
+        while i < s.end().off {
             let c = self.bytes[i] as i32
             if c != C_UNDERSCORE {
                 let d = digit_value(c)
@@ -233,28 +295,24 @@ impl Text {
     // Text of string literal `s` with its escapes decoded and its quotes removed.
     pub fn string_value(self, _ s: Span) -> StrValue {
         var v = StrValue { word: 0, len: 0 }
-        var i = s.start + 1
-        while i < s.end() - 1 {
+        var i = s.start.off + 1
+        while i < s.end().off - 1 {
             var c = self.bytes[i] as i32
             if c == C_BACKSLASH {
                 i += 1
                 c = unescape(self.bytes[i] as i32)
             }
-            if v.len < 32 {
-                let byte: u256 = c.downcast_truncate()
-                v.word = v.word | byte << ((31 - v.len) * 8) as u256
-            }
-            v.len += 1
+            v.push(c.downcast_truncate())
             i += 1
         }
         v
     }
 
     // Line and column of byte offset `pos`. LF, CR and CRLF each end one line.
-    pub fn line_col(self, _ pos: usize) -> LineCol {
+    pub fn line_col(self, _ pos: Pos) -> LineCol {
         var at = LineCol { line: 1, col: 1 }
         var i: usize = 0
-        while i < pos && i < self.bytes.len() {
+        while i < pos.off && i < self.bytes.len() {
             let c = self.bytes[i] as i32
             i += 1
             let crlf = c == C_CR && i < self.bytes.len() && self.bytes[i] as i32 == C_LF
@@ -280,24 +338,20 @@ pub struct StrValue {
 
 impl Copy for StrValue {}
 
-// Whether the `n` bytes of `a` at `i` equal the `n` bytes of `b` at `j`.
-fn same_bytes<B: core::ops::Index<usize, Output = u8>>(
-    _ a: MemVec<u8>,
-    _ i: usize,
-    _ b: B,
-    _ j: usize,
-    _ n: usize,
-) -> bool
-uses B::E
-{
-    var k: usize = 0
-    while k < n {
-        if a[i + k] != b[j + k] {
-            return false
+impl StrValue {
+    // Appends byte `b`. Past the first 32 bytes, only `len` grows.
+    pub fn push(mut self, _ b: u8) {
+        if self.len < 32 {
+            let w: u256 = b as u256
+            self.word = self.word | w << ((31 - self.len) * 8) as u256
         }
-        k += 1
+        self.len += 1
     }
-    true
+
+    // Returns byte `i` of the first 32. Errors with an overflow panic when `i` is 32 or more.
+    pub fn byte(self, _ i: usize) -> u8 {
+        (self.word >> ((31 - i) * 8) as u256).downcast_truncate()
+    }
 }
 
 const U256_MAX: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
@@ -444,7 +498,7 @@ struct Lexer {
     // A newline is a token unless the innermost open bracket is `(` (SPEC §3.4).
     open: Brackets,
     // Offset in `text` where the token being read starts.
-    start: usize,
+    start: Pos,
     // A `/` operator or a doc comment that skip_trivia read. `next` returns it after the
     // newline before it, if there is one.
     queued: Option<Token>,
@@ -456,7 +510,7 @@ impl Lexer {
             text: Text::new(),
             peeked: input.next_byte(),
             open: Brackets { bits: 0 },
-            start: 0,
+            start: SOURCE_START,
             queued: Option::None,
         }
     }
@@ -482,7 +536,7 @@ impl Lexer {
 
     // Returns the span of the token read so far.
     fn span(self) -> Span {
-        Span { start: self.start, len: self.text.len() - self.start }
+        Span { start: self.start, len: self.text.end().since(self.start) }
     }
 
     // Returns the keyword kind of the token read so far, or T_IDENT.
@@ -589,13 +643,14 @@ impl Lexer {
         if self.word("Address") {
             return T_ADDRESS
         }
-        let c = self.text.byte(self.start) as i32
-        var i = self.start + 1
-        if (c == C_LOWER_U || c == C_LOWER_I) && i < self.text.len() {
-            while i < self.text.len() && is_digit(self.text.byte(i) as i32) {
-                i += 1
+        let s = self.span()
+        let c = self.text.span_byte(s, 0) as i32
+        var k: usize = 1
+        if (c == C_LOWER_U || c == C_LOWER_I) && k < s.len {
+            while k < s.len && is_digit(self.text.span_byte(s, k) as i32) {
+                k += 1
             }
-            if i == self.text.len() {
+            if k == s.len {
                 return T_TYPE
             }
         }
@@ -632,7 +687,7 @@ impl Lexer {
             },
             Option::None => {},
         }
-        self.start = self.text.len()
+        self.start = self.text.end()
         let c = self.peeked
         if c < 0 {
             return Result::Ok(self.tok(T_EOF))
@@ -660,17 +715,17 @@ impl Lexer {
 
     // Skips blanks and comments, and returns the offset of the first line break among them.
     // A `/` operator or a doc comment that ends the run is read and queued.
-    fn skip_trivia(mut self) -> Option<usize> uses (input: mut Source) {
-        var newline: Option<usize> = Option::None
+    fn skip_trivia(mut self) -> Option<Pos> uses (input: mut Source) {
+        var newline: Option<Pos> = Option::None
         while true {
             let c = self.peeked
             if is_newline(c) && newline.is_none() {
-                newline = Option::Some(self.text.len())
+                newline = Option::Some(self.text.end())
             }
             if c == C_SPACE || c == C_TAB || is_newline(c) {
                 self.bump()
             } else if c == C_SLASH {
-                self.start = self.text.len()
+                self.start = self.text.end()
                 self.bump()
                 if self.peeked != C_SLASH {
                     let kind = self.op_or_assign(O_SLASH)
@@ -869,7 +924,7 @@ impl Lexer {
             if c == C_QUOTE { break }
             if c == C_BACKSLASH {
                 if !is_escape(self.peeked) {
-                    return Result::Err(diag(L_BAD_ESCAPE, self.text.len() - 1))
+                    return Result::Err(diag(L_BAD_ESCAPE, self.text.end().minus(1)))
                 }
                 self.bump()
             }

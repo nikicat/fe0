@@ -30,29 +30,68 @@ pub const MAX_DEPTH: usize = 20
 // Bytes an `assert!` message may hold after decoding escapes (SPEC.md §1).
 const MAX_MESSAGE: usize = 31
 
-// Binding power of the comparisons, which don't chain (SPEC.md §3.2).
-const CMP_POWER: usize = 3
+// How tightly a binary operator binds its operands, from 1 for `||` to 9 for `*`.
+struct Power { level: usize }
 
-// Binding power of a binary operator, from 1 for `||` to 9 for `*`, or 0 for other tokens.
-fn binding_power(_ t: Tok) -> usize {
-    if t == O_OROR { return 1 }
-    if t == O_ANDAND { return 2 }
+impl Copy for Power {}
+
+impl core::ops::Eq for Power {
+    fn eq(self, _ other: Power) -> bool {
+        self.level == other.level
+    }
+}
+
+impl Power {
+    // The power one step tighter, which the right operand of a left-associative operator needs.
+    fn tighter(self) -> Power {
+        Power { level: self.level + 1 }
+    }
+
+    // Checks whether an operator with this power binds at least as tightly as `min`.
+    fn binds_at_least(self, _ min: Power) -> bool {
+        self.level >= min.level
+    }
+}
+
+// The power of a token that is not a binary operator.
+const NOT_BINARY: Power = Power { level: 0 }
+
+// The power of `||`, the loosest binary operator.
+const LOOSEST: Power = Power { level: 1 }
+
+// The power of the comparisons, which don't chain (SPEC.md §3.2).
+const CMP_POWER: Power = Power { level: 3 }
+
+// Returns the binding power of a token, or `NOT_BINARY` for a token that is not a binary operator.
+fn binding_power(_ t: Tok) -> Power {
+    if t == O_OROR {
+        return LOOSEST
+    }
+    if t == O_ANDAND {
+        return Power { level: 2 }
+    }
     if t.is_comparison() {
         return CMP_POWER
     }
-    if t == O_PIPE { return 4 }
-    if t == O_CARET { return 5 }
-    if t == O_AMP { return 6 }
+    if t == O_PIPE {
+        return Power { level: 4 }
+    }
+    if t == O_CARET {
+        return Power { level: 5 }
+    }
+    if t == O_AMP {
+        return Power { level: 6 }
+    }
     if t == O_SHL || t == O_SHR {
-        return 7
+        return Power { level: 7 }
     }
     if t == O_PLUS || t == O_MINUS {
-        return 8
+        return Power { level: 8 }
     }
     if t == O_STAR || t == O_SLASH || t == O_PERCENT {
-        return 9
+        return Power { level: 9 }
     }
-    0
+    NOT_BINARY
 }
 
 struct Parser {
@@ -60,8 +99,19 @@ struct Parser {
     // Index of the current token.
     at: usize,
     depth: usize,
-    // Elements of the lists being built. `Ast.add_list` moves them into a list.
-    pending: MemVec<usize>,
+    // Elements of the lists being built. `close_list` moves them into a list.
+    pending: MemVec<NodeId>,
+}
+
+// The index of a token in `Ast.lexed.toks`, while the parser looks ahead.
+struct TokIdx { i: usize }
+
+impl Copy for TokIdx {}
+
+impl TokIdx {
+    fn next(self) -> TokIdx {
+        TokIdx { i: self.i + 1 }
+    }
 }
 
 impl Parser {
@@ -118,6 +168,16 @@ impl Parser {
         Result::Ok(self.bump())
     }
 
+    // Starts a list. Its elements are the nodes pushed on `pending` until `close_list`.
+    fn open_list(self) -> ListMark {
+        ListMark::end_of(self.pending)
+    }
+
+    // Moves the elements pushed since `mark` into a new list and returns it.
+    fn close_list(mut self, _ mark: ListMark) -> ListId {
+        self.ast.add_list(mut self.pending, mark)
+    }
+
     fn skip_newlines(mut self) {
         while self.eat(T_NEWLINE) {}
     }
@@ -164,8 +224,8 @@ impl Parser {
     // Each element is a node of kind `elem`. A trailing comma and newlines around elements are
     // allowed. Variant lists and field lists also allow doc comments before each element
     // (SPEC.md §1). Returns the list.
-    fn comma_list(mut self, _ close: Tok, _ elem: Kind) -> Result<Diag, usize> {
-        let mark = self.pending.len()
+    fn comma_list(mut self, _ close: Tok, _ elem: Kind) -> Result<Diag, ListId> {
+        let mark = self.open_list()
         let docs = elem == NODE_VARIANT || elem == NODE_FIELD
         while true {
             if docs {
@@ -182,12 +242,12 @@ impl Parser {
                 break
             }
         }
-        Result::Ok(self.ast.add_list(mut self.pending, mark))
+        Result::Ok(self.close_list(mark))
     }
 
     // One element of a comma-separated list, parsed by the parser for its kind. Fe has no
     // closures, so `comma_list` names the element parser by the kind of node it builds.
-    fn element(mut self, _ kind: Kind) -> Result<Diag, usize> {
+    fn element(mut self, _ kind: Kind) -> Result<Diag, NodeId> {
         if kind == NODE_PARAM {
             return self.param()
         }
@@ -219,7 +279,7 @@ impl Parser {
         self.depth -= 1
     }
 
-    fn ident(mut self) -> Result<Diag, usize> {
+    fn ident(mut self) -> Result<Diag, Sym> {
         if self.peek() != T_IDENT {
             return Result::Err(self.err(P_EXPECTED_IDENT))
         }
@@ -253,8 +313,8 @@ impl Parser {
     }
 
     // program = { NL } { item TERM { NL } }
-    fn program(mut self) -> Result<Diag, usize> {
-        let mark = self.pending.len()
+    fn program(mut self) -> Result<Diag, ListId> {
+        let mark = self.open_list()
         self.skip_docs()
         while self.peek() != T_EOF {
             let item = self.item()?
@@ -263,10 +323,10 @@ impl Parser {
             self.end_stmt()?
             self.skip_docs()
         }
-        Result::Ok(self.ast.add_list(mut self.pending, mark))
+        Result::Ok(self.close_list(mark))
     }
 
-    fn item(mut self) -> Result<Diag, usize> {
+    fn item(mut self) -> Result<Diag, NodeId> {
         self.eat(K_PUB)
         let k = self.peek()
         if k == K_CONST {
@@ -285,7 +345,7 @@ impl Parser {
     }
 
     // const = "const" IDENT ":" type "=" expr
-    fn const_item(mut self) -> Result<Diag, usize> {
+    fn const_item(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let name = self.ident()?
         self.expect(P_COLON)?
@@ -296,7 +356,7 @@ impl Parser {
     }
 
     // function = "fn" IDENT "(" [ params ] ")" [ "->" type ] block
-    fn fn_item(mut self) -> Result<Diag, usize> {
+    fn fn_item(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let name = self.ident()?
         let params = self.params()?
@@ -308,13 +368,13 @@ impl Parser {
     }
 
     // "(" [ params ] ")", where params = param { "," param } [ "," ]
-    fn params(mut self) -> Result<Diag, usize> {
+    fn params(mut self) -> Result<Diag, ListId> {
         self.expect(P_LPAREN)?
         self.comma_list(P_RPAREN, NODE_PARAM)
     }
 
     // param = [ "_" ] IDENT ":" type
-    fn param(mut self) -> Result<Diag, usize> {
+    fn param(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let positional = self.eat(T_UNDERSCORE)
         let name = self.ident()?
@@ -326,7 +386,7 @@ impl Parser {
     }
 
     // msg = "msg" IDENT "{" [ variants ] "}"
-    fn msg_item(mut self) -> Result<Diag, usize> {
+    fn msg_item(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let name = self.ident()?
         self.expect(P_LBRACE)?
@@ -336,7 +396,7 @@ impl Parser {
 
     // variant = selector NL IDENT [ "{" [ fields ] "}" ] [ "->" type ]
     // selector = "#" "[" "selector" "=" INT "]"
-    fn variant(mut self) -> Result<Diag, usize> {
+    fn variant(mut self) -> Result<Diag, NodeId> {
         let hash = self.expect(P_HASH)?
         self.expect(P_LBRACKET)?
         let word = self.tok()
@@ -351,7 +411,7 @@ impl Parser {
         self.skip_docs()
         let selector = self.ast.add_int(sel)
         let name = self.ident()?
-        var fields: usize = 0
+        var fields = EMPTY_LIST
         if self.eat(P_LBRACE) {
             fields = self.comma_list(P_RBRACE, NODE_FIELD)?
         }
@@ -361,7 +421,7 @@ impl Parser {
     }
 
     // field = IDENT ":" type
-    fn field(mut self) -> Result<Diag, usize> {
+    fn field(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let name = self.ident()?
         self.expect(P_COLON)?
@@ -371,12 +431,12 @@ impl Parser {
 
     // contract = "contract" IDENT "{" { cfield } [ init ] { recv } "}"
     // cfield = "mut" IDENT ":" type [ "," ]
-    fn contract_item(mut self) -> Result<Diag, usize> {
+    fn contract_item(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let name = self.ident()?
         self.expect(P_LBRACE)?
         self.skip_docs()
-        let fields = self.pending.len()
+        let field_mark = self.open_list()
         while self.peek() == K_MUT || self.peek() == T_IDENT {
             if !self.eat(K_MUT) {
                 return Result::Err(self.err(P_FIELD_NOT_MUT))
@@ -386,19 +446,19 @@ impl Parser {
             self.eat(P_COMMA)
             self.skip_docs()
         }
-        let field_list = self.ast.add_list(mut self.pending, fields)
-        var init: usize = 0
+        let field_list = self.close_list(field_mark)
+        var init = NO_NODE
         if self.peek() == K_INIT {
             init = self.init()?
             self.skip_docs()
         }
-        let recvs = self.pending.len()
+        let recv_mark = self.open_list()
         while self.peek() == K_RECV {
             let r = self.recv()?
             self.pending.push(r)
             self.skip_docs()
         }
-        let recv_list = self.ast.add_list(mut self.pending, recvs)
+        let recv_list = self.close_list(recv_mark)
         self.expect(P_RBRACE)?
         Result::Ok(
             self.ast
@@ -409,7 +469,7 @@ impl Parser {
     }
 
     // init = "init" "(" [ params ] ")" [ uses ] block
-    fn init(mut self) -> Result<Diag, usize> {
+    fn init(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let params = self.params()?
         let use_list = self.uses_clause()?
@@ -420,23 +480,23 @@ impl Parser {
     }
 
     // recv = "recv" IDENT "{" { arm } "}"
-    fn recv(mut self) -> Result<Diag, usize> {
+    fn recv(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let name = self.ident()?
         self.expect(P_LBRACE)?
         self.skip_docs()
-        let mark = self.pending.len()
+        let mark = self.open_list()
         while !self.eat(P_RBRACE) {
             let arm = self.arm()?
             self.pending.push(arm)
             self.skip_docs()
         }
-        let arms = self.ast.add_list(mut self.pending, mark)
+        let arms = self.close_list(mark)
         Result::Ok(self.ast.add_node(Node::new_recv(pos, name, arms)))
     }
 
     // arm = IDENT "{" [ binds ] "}" [ "->" type ] [ uses ] block
-    fn arm(mut self) -> Result<Diag, usize> {
+    fn arm(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let variant = self.ident()?
         self.expect(P_LBRACE)?
@@ -450,7 +510,7 @@ impl Parser {
     }
 
     // bind = IDENT [ ":" IDENT ]
-    fn bind(mut self) -> Result<Diag, usize> {
+    fn bind(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let field = self.ident()?
         var local = field
@@ -461,16 +521,16 @@ impl Parser {
     }
 
     // [ "uses" "(" [ use { "," use } [ "," ] ] ")" ]
-    fn uses_clause(mut self) -> Result<Diag, usize> {
+    fn uses_clause(mut self) -> Result<Diag, ListId> {
         if !self.eat(K_USES) {
-            return Result::Ok(0)
+            return Result::Ok(EMPTY_LIST)
         }
         self.expect(P_LPAREN)?
         self.comma_list(P_RPAREN, NODE_USE)
     }
 
     // use = [ "mut" ] IDENT
-    fn use_entry(mut self) -> Result<Diag, usize> {
+    fn use_entry(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let mutable = self.eat(K_MUT)
         let field = self.ident()?
@@ -478,28 +538,28 @@ impl Parser {
     }
 
     // block = "{" { NL } { stmt { NL } } [ expr { NL } ] "}"
-    fn block(mut self) -> Result<Diag, usize> {
+    fn block(mut self) -> Result<Diag, NodeId> {
         let pos = self.expect(P_LBRACE)?.span.start
         self.enter()?
-        var tail: usize = 0
-        let mark = self.pending.len()
+        var tail = NO_NODE
+        let mark = self.open_list()
         self.skip_newlines()
         while !self.eat(P_RBRACE) {
             let s = self.stmt()?
             self.skip_newlines()
-            if self.ast.nodes[s].kind.is_expr() && self.peek() == P_RBRACE {
+            if self.ast.node(s).kind.is_expr() && self.peek() == P_RBRACE {
                 tail = s
             } else {
                 self.pending.push(s)
             }
         }
-        let stmts = self.ast.add_list(mut self.pending, mark)
+        let stmts = self.close_list(mark)
         self.leave()
         Result::Ok(self.ast.add_node(Node::new_block(pos, stmts, tail)))
     }
 
     // A statement, ended as SPEC.md §3.4 says.
-    fn stmt(mut self) -> Result<Diag, usize> {
+    fn stmt(mut self) -> Result<Diag, NodeId> {
         let k = self.peek()
         if k == K_LET || k == K_VAR {
             let pos = self.bump().span.start
@@ -520,7 +580,7 @@ impl Parser {
         }
         if k == K_RETURN {
             let pos = self.bump().span.start
-            var value: usize = 0
+            var value = NO_NODE
             if !self.at_stmt_end() {
                 value = self.expr()?
             }
@@ -544,29 +604,31 @@ impl Parser {
         Result::Ok(e)
     }
 
-    fn finish_stmt(mut self, _ n: Node) -> Result<Diag, usize> {
+    fn finish_stmt(mut self, _ n: Node) -> Result<Diag, NodeId> {
         self.end_stmt()?
         Result::Ok(self.ast.add_node(n))
     }
 
-    fn expr(mut self) -> Result<Diag, usize> {
-        self.binary(1)
+    fn expr(mut self) -> Result<Diag, NodeId> {
+        // Passing the constant LOOSEST here instead costs about 650 bytes of bytecode
+        // (argotorg/fe#1964, see docs/WORKAROUNDS.md).
+        self.binary(NOT_BINARY.tighter())
     }
 
     // Precedence climbing over the operators that bind at least as tightly as `min`.
-    fn binary(mut self, _ min: usize) -> Result<Diag, usize> {
+    fn binary(mut self, _ min: Power) -> Result<Diag, NodeId> {
         self.enter()?
         var lhs = self.unary()?
         while true {
             let power = binding_power(self.peek())
-            if power < min || power == 0 {
+            if !power.binds_at_least(min) || power == NOT_BINARY {
                 break
             }
             if self.reads_as_generics() {
                 return Result::Err(self.err(P_GENERIC_ARGS))
             }
             let t = self.bump()
-            let rhs = self.binary(power + 1)?
+            let rhs = self.binary(power.tighter())?
             lhs = self.ast.add_node(Node::new_binary(t.span.start, op: t.kind, lhs, rhs))
             if power == CMP_POWER && binding_power(self.peek()) == CMP_POWER {
                 return Result::Err(self.err(P_CHAINED_COMPARISON))
@@ -583,20 +645,20 @@ impl Parser {
         if self.peek() != O_LT || self.prev() != T_IDENT {
             return false
         }
-        var i = self.at + 1
+        var i = TokIdx { i: self.at + 1 }
         // Whether the next token must start an argument.
         var arg = true
         while true {
-            let k = self.kind_at(i)
+            let k = self.kind_at(i.i)
             if k == P_LPAREN || k == P_LBRACKET || (arg && k == P_LBRACE) {
                 i = self.after_group(i)
                 arg = false
             } else if arg
                 && (k == T_IDENT || k.is_type_name() || k == T_INT || k == K_TRUE || k == K_FALSE) {
-                i += 1
+                i = i.next()
                 arg = false
             } else if !arg && (k == P_COMMA || k == O_LT) {
-                i += 1
+                i = i.next()
                 arg = true
             } else {
                 return !arg && (k == O_GT || k == O_SHR || k == O_GE || k == A_SHR)
@@ -612,13 +674,13 @@ impl Parser {
 
     // Index of the token after the bracket group that opens at token `start`, or of the T_EOF
     // token when the group does not close.
-    fn after_group(self, _ start: usize) -> usize {
+    fn after_group(self, _ start: TokIdx) -> TokIdx {
         var i = start
         var depth: usize = 0
         while true {
-            let k = self.kind_at(i)
+            let k = self.kind_at(i.i)
             if k == T_EOF { return i }
-            i += 1
+            i = i.next()
             if k == P_LPAREN || k == P_LBRACE || k == P_LBRACKET {
                 depth += 1
             } else if k == P_RPAREN || k == P_RBRACE || k == P_RBRACKET {
@@ -632,7 +694,7 @@ impl Parser {
     // unary = ( "!" | "~" ) unary | primary. Written as a loop, so a run of operators does not
     // recurse. The operators are consecutive tokens, so the primary is wrapped in them from the
     // last back to the first.
-    fn unary(mut self) -> Result<Diag, usize> {
+    fn unary(mut self) -> Result<Diag, NodeId> {
         let first = self.at
         while self.peek() == O_BANG || self.peek() == O_TILDE {
             self.bump()
@@ -649,7 +711,7 @@ impl Parser {
 
     // primary = INT | "true" | "false" | IDENT "(" [ args ] ")" | IDENT | "(" expr ")" | block | if
     //     | assert
-    fn primary(mut self) -> Result<Diag, usize> {
+    fn primary(mut self) -> Result<Diag, NodeId> {
         let t = self.tok()
         let k = t.kind
         if k == T_INT {
@@ -689,7 +751,7 @@ impl Parser {
     }
 
     // IDENT "(" [ args ] ")", where args = arg { "," arg } [ "," ]
-    fn call(mut self) -> Result<Diag, usize> {
+    fn call(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let name = self.ident()?
         self.expect(P_LPAREN)?
@@ -698,9 +760,9 @@ impl Parser {
     }
 
     // arg = [ IDENT ":" ] expr
-    fn arg(mut self) -> Result<Diag, usize> {
+    fn arg(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
-        var label: usize = 0
+        var label = NO_SYM
         if self.peek() == T_IDENT && self.peek2() == P_COLON {
             label = self.ident()?
             self.bump()
@@ -711,15 +773,15 @@ impl Parser {
 
     // if = "if" expr block [ "else" ( if | block ) ]. An `else if` chain is read in a loop, each
     // IF linked to the next as it is read, so it does not recurse.
-    fn if_expr(mut self) -> Result<Diag, usize> {
-        var first: usize = 0
-        var prev: usize = 0
+    fn if_expr(mut self) -> Result<Diag, NodeId> {
+        var first = NO_NODE
+        var prev = NO_NODE
         while true {
             let pos = self.expect(K_IF)?.span.start
             let cond = self.expr()?
             let then = self.block()?
             let i = self.ast.add_node(Node::new_if(pos, cond, then))
-            if prev == 0 {
+            if prev.is_none() {
                 first = i
             } else {
                 self.ast.set_else(prev, i)
@@ -736,12 +798,12 @@ impl Parser {
     }
 
     // assert = "assert" "!" "(" expr [ "," STRING ] ")"
-    fn assert(mut self) -> Result<Diag, usize> {
+    fn assert(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         self.expect(O_BANG)?
         self.expect(P_LPAREN)?
         let cond = self.expr()?
-        var message: usize = 0
+        var message = NO_NODE
         if self.eat(P_COMMA) {
             let s = self.expect(T_STR)?
             let v = self.ast.lexed.text.string_value(s.span)

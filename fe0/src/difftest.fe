@@ -2,8 +2,9 @@
 // compiler and check that both builds behave the same. DESIGN.md §10 describes the harness.
 
 use ingot::codegen::{Output, compile}
-use ingot::diag::Diag
+use ingot::diag::{Diag, E_NOT_IN_USES, diag}
 use ingot::io::{Source, text}
+use ingot::lexer::Pos
 use std::abi::DynString
 use std::evm::{Call, CallOutcome, Create, RawOps}
 
@@ -14,11 +15,33 @@ const MAX_RUNTIME: u256 = 24576
 const MAX_INITCODE: usize = 49152
 // The gas for each call. Both builds get the same, so that only their code can differ.
 const CALL_GAS: u256 = 10000000
+
+// The panic codes below are a protocol with `Kind` in tools/fegen.py, which makes the case codes
+// and decodes every code. Change both sides together.
+
 // Added to a case code when Fe0's code is too large for a chain. It is `Kind.SIZE` less
-// `Kind.CASE` in tools/fegen.py, which decodes the sum.
+// `Kind.CASE`.
 const TOO_LARGE: u256 = 2 << 32
-// The code of `rejects` when Fe0 accepts the program. It is `Kind.ACCEPTED` in tools/fegen.py.
+// The code of `rejects` when Fe0 accepts the program. It is `Kind.ACCEPTED`.
 const ACCEPTED: u256 = 4 << 32
+
+// The panic code of one deployment or call of a differential test. tools/fegen.py makes it as
+// `Kind.case_code`, in the CASE or the PROBE range.
+pub struct CaseCode { code: u256 }
+
+impl Copy for CaseCode {}
+
+impl CaseCode {
+    // Returns the case code `code`.
+    pub fn new(_ code: u256) -> CaseCode {
+        CaseCode { code }
+    }
+
+    // Returns the code for when a chain would not accept Fe0's build of this case.
+    fn too_large(self) -> u256 {
+        self.code + TOO_LARGE
+    }
+}
 
 // Checks whether a chain accepts a create input of `initcode_len` bytes, and the runtime code
 // that the create left at `runtime`.
@@ -26,13 +49,38 @@ fn fits_chain(initcode_len: usize, runtime: Address) -> bool uses (evm: Evm) {
     initcode_len <= MAX_INITCODE && evm.extcodesize(runtime) <= MAX_RUNTIME
 }
 
-// `d` as one word: letter << 40 | number << 24 | pos. These are the ASCII code of the phase
-// letter, the number within the phase and the byte offset, so E116 at offset 9 is
-// 0x45_0074_000009.
-pub fn diag_word(_ d: Diag) -> u256 {
-    let letter = d.code.letter() as u256
-    let number = d.code.number() as u256
-    letter << 40 | number << 24 | d.pos as u256
+// An error of Fe0 as one panic code: letter << 40 | number << 24 | offset. These are the ASCII
+// code of the phase letter, the number within the phase and the byte offset, so E116 at offset 9
+// is 0x45_0074_000009. `DiagWord` in tools/fegen.py packs and unpacks the same layout.
+pub struct DiagWord { word: u256 }
+
+impl Copy for DiagWord {}
+
+impl core::ops::Eq for DiagWord {
+    fn eq(self, _ other: DiagWord) -> bool {
+        self.word == other.word
+    }
+}
+
+impl DiagWord {
+    // Returns the word that `DiagWord.pack` in tools/fegen.py gave as `word`.
+    pub fn new(_ word: u256) -> DiagWord {
+        DiagWord { word }
+    }
+
+    // Returns the word of `d`.
+    pub fn of(_ d: Diag) -> DiagWord {
+        let letter = d.code.letter() as u256
+        let number = d.code.number() as u256
+        DiagWord { word: letter << 40 | number << 24 | d.pos().offset() as u256 }
+    }
+}
+
+#[test]
+fn diag_word_layout() {
+    // The same example as `check_diag_word` in tools/fegen.py.
+    let w = DiagWord::of(diag(E_NOT_IN_USES, Pos::at(9)))
+    assert!(w == DiagWord::new(0x450074000009))
 }
 
 // Fe0's build of `s`.
@@ -42,24 +90,24 @@ pub fn compiled(_ s: DynString) -> Output {
     }
 }
 
-// Fe0's deploy code for `s`. Fails with Panic(`diag_word(d)`) when Fe0 rejects `s` with `d`.
+// Fe0's deploy code for `s`. Fails with Panic(`DiagWord::of(d)`) when Fe0 rejects `s` with `d`.
 pub fn ours(_ s: DynString) -> MemVec<u8> {
     let out = compiled(s)
     match out.err {
-        Option::Some(d) => core::panic_code(diag_word(d)),
+        Option::Some(d) => core::panic_code(DiagWord::of(d).word),
         Option::None => {},
     }
     out.code
 }
 
-// Checks that Fe0 rejects `s` with the error whose `diag_word` is `expected`. Otherwise fails
-// with Panic(`diag_word`) of the error Fe0 gave, or Panic(`ACCEPTED`) when Fe0 accepted `s`.
-pub fn rejects(_ s: DynString, _ expected: u256) {
+// Checks that Fe0 rejects `s` with the error `expected`. Otherwise fails with Panic(`DiagWord`)
+// of the error Fe0 gave, or Panic(`ACCEPTED`) when Fe0 accepted `s`.
+pub fn rejects(_ s: DynString, _ expected: DiagWord) {
     match compiled(s).err {
         Option::Some(d) => {
-            let got = diag_word(d)
+            let got = DiagWord::of(d)
             if got != expected {
-                core::panic_code(got)
+                core::panic_code(got.word)
             }
         },
         Option::None => core::panic_code(ACCEPTED),
@@ -90,9 +138,9 @@ pub struct Builds { pub ours: MemVec<u8>, pub theirs: MemVec<u8> }
 
 impl Builds {
     // Deploys both builds with `args` and `value`. Fails with Panic(`case`) when only one build
-    // creates a contract, and with Panic(`case + TOO_LARGE`) when a chain would not accept
+    // creates a contract, and with Panic(`case.too_large()`) when a chain would not accept
     // Fe0's build (`fits_chain`).
-    pub fn deploy(self, _ args: MemVec<u8>, _ value: Wei, _ case: u256) -> Deployed
+    pub fn deploy(self, _ args: MemVec<u8>, _ value: Wei, _ case: CaseCode) -> Deployed
     uses (evm: mut Evm)
     {
         let p = Deployed {
@@ -100,25 +148,25 @@ impl Builds {
             theirs: create(self.theirs, args, value),
         }
         if (p.ours.word() == 0) != (p.theirs.word() == 0) {
-            core::panic_code(case)
+            core::panic_code(case.code)
         }
         if !fits_chain(
             initcode_len: self.ours.len() + args.len(),
             runtime: p.ours,
         ) {
-            core::panic_code(case + TOO_LARGE)
+            core::panic_code(case.too_large())
         }
         p
     }
 
     // Deploys both builds as `deploy` does. Also fails with Panic(`case`) when neither creates
     // a contract.
-    pub fn deploy_main(self, _ args: MemVec<u8>, _ value: Wei, _ case: u256) -> Deployed
+    pub fn deploy_main(self, _ args: MemVec<u8>, _ value: Wei, _ case: CaseCode) -> Deployed
     uses (evm: mut Evm)
     {
         let p = self.deploy(args, value, case)
         if p.ours.word() == 0 {
-            core::panic_code(case)
+            core::panic_code(case.code)
         }
         p
     }
@@ -140,14 +188,14 @@ pub struct Deployed { pub ours: Address, pub theirs: Address }
 impl Deployed {
     // Calls both contracts with `data` and `value`. Fails with Panic(`case`) unless the success
     // flags and the return data are the same.
-    pub fn call(self, _ data: own MemVec<u8>, _ value: Wei, _ case: u256)
+    pub fn call(self, _ data: own MemVec<u8>, _ value: Wei, _ case: CaseCode)
     uses (evm: mut Evm)
     {
         let args = data.into_array()
         let a = evm.try_call_raw(addr: self.ours, gas: CALL_GAS, value, args: args.span())
         let b = evm.try_call_raw(addr: self.theirs, gas: CALL_GAS, value, args: args.span())
         if !same_outcome(a, b) {
-            core::panic_code(case)
+            core::panic_code(case.code)
         }
     }
 }

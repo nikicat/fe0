@@ -111,7 +111,8 @@ class Kind(Enum):
     """What the panic code of a failed differential test names.
 
     Each value is the first code of its range, in increasing order. Fe's own panic codes are
-    below 0x100.
+    below 0x100. The codes are a protocol with fe0/src/difftest.fe, which states TOO_LARGE and
+    ACCEPTED and takes case codes as `CaseCode`. Change both sides together.
     """
 
     # A panic of the test itself, such as Panic(0x11) for an overflow.
@@ -121,16 +122,16 @@ class Kind(Enum):
     # A call of DISPATCH: the code is this value plus its index there, from 1.
     PROBE = 2 << 32
     # A deployment whose Fe0 code is larger than a chain accepts. The code is its CASE code
-    # plus `difftest::TOO_LARGE`, which is SIZE less CASE.
+    # plus difftest's TOO_LARGE, which is SIZE less CASE.
     SIZE = 3 << 32
-    # A reject program that Fe0 accepts. The code is `difftest::ACCEPTED`.
+    # A reject program that Fe0 accepts. The code is difftest's ACCEPTED.
     ACCEPTED = 4 << 32
     # An error of Fe0: the code is its `DiagWord`.
     DIAG = 1 << 40
 
-    def code(self, number):
-        """Returns the panic code for `number` in this range."""
-        return self.value + number
+    def case_code(self, number):
+        """Returns the Fe expression of the `difftest::CaseCode` for `number` in this range."""
+        return f"difftest::CaseCode::new({self.value + number:#x})"
 
 
 class Failure(NamedTuple):
@@ -188,27 +189,27 @@ class DiffTest:
                f"    let b = difftest::Builds {{ ours: difftest::ours({lit(self.source)}), theirs: "
                f"difftest::theirs({self.contract}::init_code_offset(), {self.contract}::init_code_len()) }}"]
         for d in self.cases.deploys:
-            out += block(d.payload.build("a") + [f"let _ = b.deploy(a, {d.payload.wei}, {Kind.CASE.code(d.number):#x})"])
+            out += block(d.payload.build("a") + [f"let _ = b.deploy(a, {d.payload.wei}, {Kind.CASE.case_code(d.number)})"])
         m = self.cases.main.payload
         out += ["    " + s for s in m.build("a")]
-        out.append(f"    let p = b.deploy_main(a, {m.wei}, {Kind.CASE.code(self.cases.main.number):#x})")
+        out.append(f"    let p = b.deploy_main(a, {m.wei}, {Kind.CASE.case_code(self.cases.main.number)})")
         for c in self.cases.calls:
-            out += call(c.payload, Kind.CASE.code(c.number))
+            out += call(c.payload, Kind.CASE.case_code(c.number))
         for k, c in enumerate(DISPATCH, start=1):
-            out += call(c, Kind.PROBE.code(k))
+            out += call(c, Kind.PROBE.case_code(k))
         return out + ["}"]
 
 
-def call(payload, code):
+def call(payload, case):
     """Returns the block of a test function that sends `payload` to the main deployment and
-    fails with Panic(`code`) when the builds differ."""
-    return block(payload.build("d") + [f"p.call(d, {payload.wei}, {code:#x})"])
+    fails with the case code `case`, a Fe expression, when the builds differ."""
+    return block(payload.build("d") + [f"p.call(d, {payload.wei}, {case})"])
 
 
 def reject_test(test, source, expected):
     """Returns the lines of a test function that checks that Fe0 rejects `source` with the
     DiagWord `expected`."""
-    return ["", "#[test]", f"fn {test}() {{", f"    difftest::rejects({lit(source)}, {expected.pack():#x})", "}"]
+    return ["", "#[test]", f"fn {test}() {{", f"    difftest::rejects({lit(source)}, difftest::DiagWord::new({expected.pack():#x}))", "}"]
 
 
 def block(statements):
@@ -227,7 +228,8 @@ def line_starts(data):
 
 @dataclass(frozen=True)
 class DiagWord:
-    """An error of Fe0 as one panic code. `diag_word` in fe0/src/difftest.fe owns the layout."""
+    """An error of Fe0 as one panic code. `DiagWord` in fe0/src/difftest.fe packs the same
+    layout, and its test `diag_word_layout` checks the example of `check_diag_word`."""
 
     # The phase letter, such as "E" in E116.
     letter: str
@@ -254,7 +256,7 @@ class DiagWord:
         return cls(chr(word >> 40), word >> 24 & 0xffff, word & 0xffffff)
 
     def pack(self):
-        """Returns the diag word, as `difftest::diag_word` packs it."""
+        """Returns the diag word, as `difftest::DiagWord::of` packs it."""
         return ord(self.letter) << 40 | self.number << 24 | self.offset
 
     def describe(self, source):
@@ -265,7 +267,7 @@ class DiagWord:
 
 
 def check_diag_word():
-    r"""Checks DiagWord against the example of `difftest::diag_word` and one source with `\r`."""
+    r"""Checks DiagWord against the example of `difftest::DiagWord` and one source with `\r`."""
     e116 = DiagWord("E", 116, 9)
     assert e116.pack() == 0x45_0074_000009 and DiagWord.unpack(e116.pack()) == e116
     assert Failure.decode(e116.pack()) == Failure(Kind.DIAG, e116.pack())

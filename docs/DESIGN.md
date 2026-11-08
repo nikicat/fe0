@@ -57,9 +57,9 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
 
 The AST lives in flat arrays and refers to nodes by index
 ([ADR 0005](adr/0005-arena-ast.md)). Index 0 means "none". A child list is a
-length-prefixed run in one array. `op` and `ty` are typed fields, so operators and written types
-never travel as bare integers. `fe0/src/ast.fe` declares `Ast`, `Node` and the fields of each
-node kind.
+length-prefixed run in one array. Ids, operators and written types are typed (`NodeId`,
+`ListId`, `Sym`, `WordId`, `Tok`, `Ty`), so none of them travels as a bare integer.
+`fe0/src/ast.fe` declares `Ast`, `Node` and the fields of each node kind.
 
 - **Building lists:** one stack, `Parser.pending` in `fe0/src/parser.fe`, serves all lists, since
   inner lists close before outer ones.

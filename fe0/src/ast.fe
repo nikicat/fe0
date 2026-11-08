@@ -1,16 +1,12 @@
 // The AST: an arena of nodes that refer to each other by index. ADR 0005 says why.
 //
-// Index 0 of `nodes`, `lists` and `syms` is a sentinel, so an index that is 0 means "none". A
-// node is built by one `Node::new_` constructor per kind and read through the accessors after
-// `impl Node`. The comment on each kind below names the accessors that apply to it:
-// - a name is a sym, an index into `Ast.syms` (an interned identifier);
-// - `list()` is an index into `Ast.lists`, read with `Ast.list_len` and `Ast.list_at`. List 0
-//   is the empty list;
-// - `ty()` is the type written in the source, or TY_NONE when none is;
-// - `pos` is the byte offset of the token that diagnostics about the node point at.
+// A node is built by one `Node::new_` constructor per kind and read through the accessors after
+// `impl Node`. The comment on each kind below names the accessors that apply to it. A list is
+// read with `Ast.list_len` and `Ast.list_at`. `ty()` is the type written in the source, or
+// TY_NONE when none is.
 
 use ingot::diag::Diag
-use ingot::lexer::{Lexed, Span, T_EOF, Tok, Token}
+use ingot::lexer::{Lexed, Pos, SOURCE_START, Span, T_EOF, Tok, Token}
 
 // The kind of a node. The NODE_ constants below are its only values.
 pub struct Kind { code: u8 }
@@ -36,7 +32,7 @@ pub const NODE_NONE: Kind = Kind { code: 0 }
 // Items and their parts.
 // const: name, ty, value.
 pub const NODE_CONST: Kind = Kind { code: 1 }
-// fn: name, ty (the return type), list of PARAMs, body BLOCK.
+// fn: name, ty (the return type), list of PARAMs, use_list (always EMPTY_LIST), body BLOCK.
 pub const NODE_FN: Kind = Kind { code: 2 }
 // param: name, ty, is_positional (written `_ name`).
 pub const NODE_PARAM: Kind = Kind { code: 3 }
@@ -46,7 +42,7 @@ pub const NODE_MSG: Kind = Kind { code: 4 }
 pub const NODE_VARIANT: Kind = Kind { code: 5 }
 // field of a variant or a contract: name, ty.
 pub const NODE_FIELD: Kind = Kind { code: 6 }
-// contract: name, list of FIELDs, init (INIT or 0), recvs (a list of RECVs).
+// contract: name, list of FIELDs, init (INIT or NO_NODE), recvs (a list of RECVs).
 pub const NODE_CONTRACT: Kind = Kind { code: 7 }
 // init: list of PARAMs, use_list (a list of USEs), body BLOCK.
 pub const NODE_INIT: Kind = Kind { code: 8 }
@@ -66,7 +62,7 @@ pub const NODE_STR: Kind = Kind { code: 13 }
 pub const NODE_LET: Kind = Kind { code: 20 }
 // while: cond, body BLOCK.
 pub const NODE_WHILE: Kind = Kind { code: 21 }
-// return: value or 0.
+// return: value or NO_NODE.
 pub const NODE_RETURN: Kind = Kind { code: 22 }
 pub const NODE_BREAK: Kind = Kind { code: 23 }
 pub const NODE_CONTINUE: Kind = Kind { code: 24 }
@@ -86,13 +82,13 @@ pub const NODE_BINARY: Kind = Kind { code: 43 }
 pub const NODE_UNARY: Kind = Kind { code: 44 }
 // call: name (of the callee), list of ARGs.
 pub const NODE_CALL: Kind = Kind { code: 45 }
-// argument: name (the label, or 0), value.
+// argument: name (the label, or NO_SYM), value.
 pub const NODE_ARG: Kind = Kind { code: 46 }
-// if: cond, body (the then BLOCK), otherwise (the else BLOCK, IF or 0).
+// if: cond, body (the then BLOCK), otherwise (the else BLOCK, IF or NO_NODE).
 pub const NODE_IF: Kind = Kind { code: 47 }
-// block: list of statements, value (the tail expression, or 0).
+// block: list of statements, value (the tail expression, or NO_NODE).
 pub const NODE_BLOCK: Kind = Kind { code: 48 }
-// `assert!`: cond, message (a STR or 0).
+// `assert!`: cond, message (a STR or NO_NODE).
 pub const NODE_ASSERT: Kind = Kind { code: 49 }
 
 // A type. A node's ty() holds one written in the source, or TY_NONE when none is written.
@@ -141,7 +137,9 @@ impl Ty {
 // slots stay private to this file, so only the constructors write them.
 pub struct Node {
     pub kind: Kind,
-    pub pos: usize,
+    // A plain offset, not a Pos, because a nested struct field costs bytecode (argotorg/fe#1964,
+    // see docs/WORKAROUNDS.md).
+    pos_off: usize,
     op: Tok,
     ty: Ty,
     // name, cond, lhs or operand
@@ -163,170 +161,238 @@ fn flag(_ b: bool) -> usize {
 impl Node {
     // Returns a node of `kind` at `pos` with every other field empty: the sentinel, `break` and
     // `continue`.
-    pub fn leaf(_ kind: Kind, _ pos: usize) -> Node {
-        Node { kind, pos, op: T_EOF, ty: TY_NONE, a: 0, b: 0, c: 0, d: 0 }
+    pub fn leaf(_ kind: Kind, _ pos: Pos) -> Node {
+        Node::new(kind, pos, op: T_EOF, ty: TY_NONE, a: 0, b: 0, c: 0, d: 0)
     }
 
-    fn make(_ kind: Kind, _ pos: usize, a: usize, b: usize, c: usize, d: usize) -> Node {
-        Node { kind, pos, op: T_EOF, ty: TY_NONE, a, b, c, d }
+    fn make(_ kind: Kind, _ pos: Pos, a: usize, b: usize, c: usize, d: usize) -> Node {
+        Node::new(kind, pos, op: T_EOF, ty: TY_NONE, a, b, c, d)
     }
 
-    fn typed(_ kind: Kind, _ pos: usize, ty: Ty, a: usize, b: usize, c: usize, d: usize) -> Node {
-        Node { kind, pos, op: T_EOF, ty, a, b, c, d }
+    fn typed(_ kind: Kind, _ pos: Pos, ty: Ty, a: usize, b: usize, c: usize, d: usize) -> Node {
+        Node::new(kind, pos, op: T_EOF, ty, a, b, c, d)
     }
 
-    pub fn new_const(_ pos: usize, name: usize, ty: Ty, value: usize) -> Node {
-        Node::typed(NODE_CONST, pos, ty, a: name, b: value, c: 0, d: 0)
+    // Every other constructor ends here, so this is the one place that writes the struct.
+    fn new(
+        _ kind: Kind,
+        _ pos: Pos,
+        op: Tok,
+        ty: Ty,
+        a: usize,
+        b: usize,
+        c: usize,
+        d: usize,
+    ) -> Node {
+        Node { kind, pos_off: pos.offset(), op, ty, a, b, c, d }
     }
 
-    pub fn new_fn(_ pos: usize, name: usize, params: usize, ret: Ty, body: usize) -> Node {
-        Node::typed(NODE_FN, pos, ty: ret, a: name, b: 0, c: params, d: body)
+    pub fn new_const(_ pos: Pos, name: Sym, ty: Ty, value: NodeId) -> Node {
+        Node::typed(NODE_CONST, pos, ty, a: name.id, b: value.id, c: 0, d: 0)
     }
 
-    pub fn new_param(_ pos: usize, name: usize, ty: Ty, positional: bool) -> Node {
+    pub fn new_fn(_ pos: Pos, name: Sym, params: ListId, ret: Ty, body: NodeId) -> Node {
+        Node::typed(
+            NODE_FN,
+            pos,
+            ty: ret,
+            a: name.id,
+            b: 0,
+            c: params.id,
+            d: body.id,
+        )
+    }
+
+    pub fn new_param(_ pos: Pos, name: Sym, ty: Ty, positional: bool) -> Node {
         Node::typed(
             NODE_PARAM,
             pos,
             ty,
-            a: name,
+            a: name.id,
             b: 0,
             c: 0,
             d: flag(positional),
         )
     }
 
-    pub fn new_msg(_ pos: usize, name: usize, variants: usize) -> Node {
-        Node::make(NODE_MSG, pos, a: name, b: 0, c: variants, d: 0)
+    pub fn new_msg(_ pos: Pos, name: Sym, variants: ListId) -> Node {
+        Node::make(NODE_MSG, pos, a: name.id, b: 0, c: variants.id, d: 0)
     }
 
-    pub fn new_variant(_ pos: usize, name: usize, selector: usize, fields: usize, ret: Ty) -> Node {
+    pub fn new_variant(_ pos: Pos, name: Sym, selector: WordId, fields: ListId, ret: Ty) -> Node {
         Node::typed(
             NODE_VARIANT,
             pos,
             ty: ret,
-            a: name,
-            b: selector,
-            c: fields,
+            a: name.id,
+            b: selector.id,
+            c: fields.id,
             d: 0,
         )
     }
 
-    pub fn new_field(_ pos: usize, name: usize, ty: Ty) -> Node {
-        Node::typed(NODE_FIELD, pos, ty, a: name, b: 0, c: 0, d: 0)
+    pub fn new_field(_ pos: Pos, name: Sym, ty: Ty) -> Node {
+        Node::typed(NODE_FIELD, pos, ty, a: name.id, b: 0, c: 0, d: 0)
     }
 
     pub fn new_contract(
-        _ pos: usize,
-        name: usize,
-        fields: usize,
-        init: usize,
-        recvs: usize,
+        _ pos: Pos,
+        name: Sym,
+        fields: ListId,
+        init: NodeId,
+        recvs: ListId,
     ) -> Node {
-        Node::make(NODE_CONTRACT, pos, a: name, b: recvs, c: fields, d: init)
+        Node::make(
+            NODE_CONTRACT,
+            pos,
+            a: name.id,
+            b: recvs.id,
+            c: fields.id,
+            d: init.id,
+        )
     }
 
-    pub fn new_init(_ pos: usize, params: usize, use_list: usize, body: usize) -> Node {
-        Node::make(NODE_INIT, pos, a: 0, b: use_list, c: params, d: body)
+    pub fn new_init(_ pos: Pos, params: ListId, use_list: ListId, body: NodeId) -> Node {
+        Node::make(
+            NODE_INIT,
+            pos,
+            a: 0,
+            b: use_list.id,
+            c: params.id,
+            d: body.id,
+        )
     }
 
-    pub fn new_recv(_ pos: usize, name: usize, arms: usize) -> Node {
-        Node::make(NODE_RECV, pos, a: name, b: 0, c: arms, d: 0)
+    pub fn new_recv(_ pos: Pos, name: Sym, arms: ListId) -> Node {
+        Node::make(NODE_RECV, pos, a: name.id, b: 0, c: arms.id, d: 0)
     }
 
     pub fn new_arm(
-        _ pos: usize,
-        variant: usize,
-        binds: usize,
+        _ pos: Pos,
+        variant: Sym,
+        binds: ListId,
         ret: Ty,
-        use_list: usize,
-        body: usize,
+        use_list: ListId,
+        body: NodeId,
     ) -> Node {
         Node::typed(
             NODE_ARM,
             pos,
             ty: ret,
-            a: variant,
-            b: use_list,
-            c: binds,
-            d: body,
+            a: variant.id,
+            b: use_list.id,
+            c: binds.id,
+            d: body.id,
         )
     }
 
-    pub fn new_bind(_ pos: usize, field: usize, local: usize) -> Node {
-        Node::make(NODE_BIND, pos, a: field, b: local, c: 0, d: 0)
+    pub fn new_bind(_ pos: Pos, field: Sym, local: Sym) -> Node {
+        Node::make(NODE_BIND, pos, a: field.id, b: local.id, c: 0, d: 0)
     }
 
-    pub fn new_use(_ pos: usize, field: usize, mutable: bool) -> Node {
-        Node::make(NODE_USE, pos, a: field, b: 0, c: 0, d: flag(mutable))
+    pub fn new_use(_ pos: Pos, field: Sym, mutable: bool) -> Node {
+        Node::make(NODE_USE, pos, a: field.id, b: 0, c: 0, d: flag(mutable))
     }
 
-    pub fn new_str(_ pos: usize, word: usize, len: usize) -> Node {
-        Node::make(NODE_STR, pos, a: 0, b: word, c: 0, d: len)
+    pub fn new_str(_ pos: Pos, word: WordId, len: usize) -> Node {
+        Node::make(NODE_STR, pos, a: 0, b: word.id, c: 0, d: len)
     }
 
-    pub fn new_let(_ pos: usize, name: usize, ty: Ty, value: usize, mutable: bool) -> Node {
+    pub fn new_let(_ pos: Pos, name: Sym, ty: Ty, value: NodeId, mutable: bool) -> Node {
         Node::typed(
             NODE_LET,
             pos,
             ty,
-            a: name,
-            b: value,
+            a: name.id,
+            b: value.id,
             c: 0,
             d: flag(mutable),
         )
     }
 
-    pub fn new_while(_ pos: usize, cond: usize, body: usize) -> Node {
-        Node::make(NODE_WHILE, pos, a: cond, b: 0, c: 0, d: body)
+    pub fn new_while(_ pos: Pos, cond: NodeId, body: NodeId) -> Node {
+        Node::make(NODE_WHILE, pos, a: cond.id, b: 0, c: 0, d: body.id)
     }
 
-    pub fn new_return(_ pos: usize, value: usize) -> Node {
-        Node::make(NODE_RETURN, pos, a: 0, b: value, c: 0, d: 0)
+    pub fn new_return(_ pos: Pos, value: NodeId) -> Node {
+        Node::make(NODE_RETURN, pos, a: 0, b: value.id, c: 0, d: 0)
     }
 
-    pub fn new_assign(_ pos: usize, name: usize, op: Tok, value: usize) -> Node {
-        Node { kind: NODE_ASSIGN, pos, op, ty: TY_NONE, a: name, b: value, c: 0, d: 0 }
+    pub fn new_assign(_ pos: Pos, name: Sym, op: Tok, value: NodeId) -> Node {
+        Node::new(
+            NODE_ASSIGN,
+            pos,
+            op,
+            ty: TY_NONE,
+            a: name.id,
+            b: value.id,
+            c: 0,
+            d: 0,
+        )
     }
 
-    pub fn new_int(_ pos: usize, word: usize) -> Node {
-        Node::make(NODE_INT, pos, a: 0, b: word, c: 0, d: 0)
+    pub fn new_int(_ pos: Pos, word: WordId) -> Node {
+        Node::make(NODE_INT, pos, a: 0, b: word.id, c: 0, d: 0)
     }
 
-    pub fn new_bool(_ pos: usize, value: bool) -> Node {
+    pub fn new_bool(_ pos: Pos, value: bool) -> Node {
         Node::make(NODE_BOOL, pos, a: 0, b: 0, c: 0, d: flag(value))
     }
 
-    pub fn new_name(_ pos: usize, name: usize) -> Node {
-        Node::make(NODE_NAME, pos, a: name, b: 0, c: 0, d: 0)
+    pub fn new_name(_ pos: Pos, name: Sym) -> Node {
+        Node::make(NODE_NAME, pos, a: name.id, b: 0, c: 0, d: 0)
     }
 
-    pub fn new_binary(_ pos: usize, op: Tok, lhs: usize, rhs: usize) -> Node {
-        Node { kind: NODE_BINARY, pos, op, ty: TY_NONE, a: lhs, b: rhs, c: 0, d: 0 }
+    pub fn new_binary(_ pos: Pos, op: Tok, lhs: NodeId, rhs: NodeId) -> Node {
+        Node::new(
+            NODE_BINARY,
+            pos,
+            op,
+            ty: TY_NONE,
+            a: lhs.id,
+            b: rhs.id,
+            c: 0,
+            d: 0,
+        )
     }
 
-    pub fn new_unary(_ pos: usize, op: Tok, operand: usize) -> Node {
-        Node { kind: NODE_UNARY, pos, op, ty: TY_NONE, a: operand, b: 0, c: 0, d: 0 }
+    pub fn new_unary(_ pos: Pos, op: Tok, operand: NodeId) -> Node {
+        Node::new(
+            NODE_UNARY,
+            pos,
+            op,
+            ty: TY_NONE,
+            a: operand.id,
+            b: 0,
+            c: 0,
+            d: 0,
+        )
     }
 
-    pub fn new_call(_ pos: usize, name: usize, args: usize) -> Node {
-        Node::make(NODE_CALL, pos, a: name, b: 0, c: args, d: 0)
+    pub fn new_call(_ pos: Pos, name: Sym, args: ListId) -> Node {
+        Node::make(NODE_CALL, pos, a: name.id, b: 0, c: args.id, d: 0)
     }
 
-    pub fn new_arg(_ pos: usize, label: usize, value: usize) -> Node {
-        Node::make(NODE_ARG, pos, a: label, b: value, c: 0, d: 0)
+    pub fn new_arg(_ pos: Pos, label: Sym, value: NodeId) -> Node {
+        Node::make(NODE_ARG, pos, a: label.id, b: value.id, c: 0, d: 0)
     }
 
     // An IF without its else branch, which `Ast.set_else` adds.
-    pub fn new_if(_ pos: usize, cond: usize, then: usize) -> Node {
-        Node::make(NODE_IF, pos, a: cond, b: 0, c: 0, d: then)
+    pub fn new_if(_ pos: Pos, cond: NodeId, then: NodeId) -> Node {
+        Node::make(NODE_IF, pos, a: cond.id, b: 0, c: 0, d: then.id)
     }
 
-    pub fn new_block(_ pos: usize, stmts: usize, tail: usize) -> Node {
-        Node::make(NODE_BLOCK, pos, a: 0, b: tail, c: stmts, d: 0)
+    pub fn new_block(_ pos: Pos, stmts: ListId, tail: NodeId) -> Node {
+        Node::make(NODE_BLOCK, pos, a: 0, b: tail.id, c: stmts.id, d: 0)
     }
 
-    pub fn new_assert(_ pos: usize, cond: usize, message: usize) -> Node {
-        Node::make(NODE_ASSERT, pos, a: cond, b: message, c: 0, d: 0)
+    pub fn new_assert(_ pos: Pos, cond: NodeId, message: NodeId) -> Node {
+        Node::make(NODE_ASSERT, pos, a: cond.id, b: message.id, c: 0, d: 0)
+    }
+
+    // Returns the position of the token that diagnostics about the node point at.
+    pub fn pos(self) -> Pos {
+        Pos::at(self.pos_off)
     }
 
     pub fn op(self) -> Tok {
@@ -336,53 +402,53 @@ impl Node {
         self.ty
     }
 
-    pub fn name(self) -> usize {
-        self.a
+    pub fn name(self) -> Sym {
+        Sym { id: self.a }
     }
-    pub fn cond(self) -> usize {
-        self.a
+    pub fn cond(self) -> NodeId {
+        NodeId { id: self.a }
     }
-    pub fn lhs(self) -> usize {
-        self.a
+    pub fn lhs(self) -> NodeId {
+        NodeId { id: self.a }
     }
-    pub fn operand(self) -> usize {
-        self.a
-    }
-
-    pub fn value(self) -> usize {
-        self.b
-    }
-    pub fn rhs(self) -> usize {
-        self.b
-    }
-    pub fn word(self) -> usize {
-        self.b
-    }
-    pub fn local(self) -> usize {
-        self.b
-    }
-    pub fn use_list(self) -> usize {
-        self.b
-    }
-    pub fn recvs(self) -> usize {
-        self.b
-    }
-    pub fn otherwise(self) -> usize {
-        self.b
-    }
-    pub fn message(self) -> usize {
-        self.b
+    pub fn operand(self) -> NodeId {
+        NodeId { id: self.a }
     }
 
-    pub fn list(self) -> usize {
-        self.c
+    pub fn value(self) -> NodeId {
+        NodeId { id: self.b }
+    }
+    pub fn rhs(self) -> NodeId {
+        NodeId { id: self.b }
+    }
+    pub fn word(self) -> WordId {
+        WordId { id: self.b }
+    }
+    pub fn local(self) -> Sym {
+        Sym { id: self.b }
+    }
+    pub fn use_list(self) -> ListId {
+        ListId { id: self.b }
+    }
+    pub fn recvs(self) -> ListId {
+        ListId { id: self.b }
+    }
+    pub fn otherwise(self) -> NodeId {
+        NodeId { id: self.b }
+    }
+    pub fn message(self) -> NodeId {
+        NodeId { id: self.b }
     }
 
-    pub fn body(self) -> usize {
-        self.d
+    pub fn list(self) -> ListId {
+        ListId { id: self.c }
     }
-    pub fn init(self) -> usize {
-        self.d
+
+    pub fn body(self) -> NodeId {
+        NodeId { id: self.d }
+    }
+    pub fn init(self) -> NodeId {
+        NodeId { id: self.d }
     }
     pub fn str_len(self) -> usize {
         self.d
@@ -401,19 +467,95 @@ impl Node {
     }
 }
 
+// An interned identifier: an index into `Ast.syms`. NO_SYM, index 0, is no name.
+pub struct Sym { id: usize }
+
+impl Copy for Sym {}
+
+impl core::ops::Eq for Sym {
+    fn eq(self, _ other: Sym) -> bool {
+        self.id == other.id
+    }
+}
+
+pub const NO_SYM: Sym = Sym { id: 0 }
+
+// A node in `Ast.nodes`. NO_NODE, node 0, is the sentinel and stands for no node.
+pub struct NodeId { id: usize }
+
+impl Copy for NodeId {}
+
+impl core::ops::Eq for NodeId {
+    fn eq(self, _ other: NodeId) -> bool {
+        self.id == other.id
+    }
+}
+
+impl NodeId {
+    // Checks whether this is NO_NODE.
+    pub fn is_none(self) -> bool {
+        self.id == 0
+    }
+
+    // Returns the index, for the side tables that keep one entry per node.
+    pub fn index(self) -> usize {
+        self.id
+    }
+}
+
+pub const NO_NODE: NodeId = NodeId { id: 0 }
+
+// A list of nodes in `Ast.lists`. EMPTY_LIST, list 0, has no elements.
+pub struct ListId { id: usize }
+
+impl Copy for ListId {}
+
+pub const EMPTY_LIST: ListId = ListId { id: 0 }
+
+// Where a list's elements begin on the parser's stack of pending elements.
+pub struct ListMark { at: usize }
+
+impl Copy for ListMark {}
+
+impl ListMark {
+    // Marks the end of `pending`: the elements pushed after this begin the next list.
+    pub fn end_of(_ pending: MemVec<NodeId>) -> ListMark {
+        ListMark { at: pending.len() }
+    }
+}
+
+// An index into `Ast.words`.
+pub struct WordId { id: usize }
+
+impl Copy for WordId {}
+
+impl WordId {
+    // Returns word `index`. With `index()`, this lets a compact table keep a WordId as a plain
+    // number.
+    pub fn at(_ index: usize) -> WordId {
+        WordId { id: index }
+    }
+
+    // Returns the index of the word.
+    pub fn index(self) -> usize {
+        self.id
+    }
+}
+
 // The parsed program. On error, the arrays hold whatever was built before it. This is not a
 // `Result` for the same reason `Lexed` is not.
 pub struct Ast {
     pub lexed: Lexed,
-    pub nodes: MemVec<Node>,
-    pub lists: MemVec<usize>,
+    nodes: MemVec<Node>,
+    // Each list as its length, then its NodeIds. Typed vectors cost 280 bytes (WORKAROUNDS.md).
+    lists: MemVec<usize>,
     // The source span of each distinct identifier.
     pub syms: MemVec<Span>,
     // 256-bit values that nodes refer to: integer literals, selectors and the packed bytes of
     // `assert!` messages.
-    pub words: MemVec<u256>,
+    words: MemVec<u256>,
     // The list of items.
-    pub items: usize,
+    pub items: ListId,
     // The lexer's or the parser's error.
     pub err: Option<Diag>,
 }
@@ -422,84 +564,102 @@ impl Ast {
     // Returns an empty AST over `lexed`, with the sentinels at index 0 and the lexer's error.
     pub fn new(_ lexed: own Lexed) -> Ast {
         var nodes: MemVec<Node> = MemVec::new()
-        nodes.push(Node::leaf(NODE_NONE, 0))
+        nodes.push(Node::leaf(NODE_NONE, SOURCE_START))
         var lists: MemVec<usize> = MemVec::new()
         lists.push(0)
         var syms: MemVec<Span> = MemVec::new()
-        syms.push(Span { start: 0, len: 0 })
+        syms.push(Span { start: SOURCE_START, len: 0 })
         let err = lexed.err
-        Ast { lexed, nodes, lists, syms, words: MemVec::new(), items: 0, err }
+        Ast { lexed, nodes, lists, syms, words: MemVec::new(), items: EMPTY_LIST, err }
     }
 
-    pub fn list_len(self, _ l: usize) -> usize {
-        self.lists[l]
+    pub fn list_len(self, _ l: ListId) -> usize {
+        self.lists[l.id]
     }
 
-    pub fn list_at(self, _ l: usize, _ i: usize) -> usize {
-        self.lists[l + 1 + i]
+    pub fn list_at(self, _ l: ListId, _ i: usize) -> NodeId {
+        NodeId { id: self.lists[l.id + 1 + i] }
     }
 
     // Returns the word that node `i` refers to: an integer literal's value or a variant's selector.
-    pub fn word_value(self, _ i: usize) -> u256 {
-        self.words[self.nodes[i].word()]
+    pub fn word_value(self, _ i: NodeId) -> u256 {
+        self.word(self.node(i).word())
     }
 
-    // Adds node `n` and returns its index.
-    pub fn add_node(mut self, _ n: Node) -> usize {
+    pub fn word(self, _ w: WordId) -> u256 {
+        self.words[w.id]
+    }
+
+    pub fn node(self, _ i: NodeId) -> Node {
+        self.nodes[i.id]
+    }
+
+    // Returns the number of nodes, counting the sentinel.
+    pub fn node_count(self) -> usize {
+        self.nodes.len()
+    }
+
+    // Adds node `n` and returns its id.
+    pub fn add_node(mut self, _ n: Node) -> NodeId {
         self.nodes.push(n)
-        self.nodes.len() - 1
+        NodeId { id: self.nodes.len() - 1 }
     }
 
     // Sets the else branch of IF node `i`.
-    pub fn set_else(mut self, _ i: usize, _ otherwise: usize) {
-        var n = self.nodes[i]
-        n.b = otherwise
-        self.nodes.set(i, n)
+    pub fn set_else(mut self, _ i: NodeId, _ otherwise: NodeId) {
+        var n = self.nodes[i.id]
+        n.b = otherwise.id
+        self.nodes.set(i.id, n)
     }
 
     // Adds the value of integer token `t` to `words` and returns its index.
-    pub fn add_int(mut self, _ t: Token) -> usize {
+    pub fn add_int(mut self, _ t: Token) -> WordId {
         self.add_word(self.lexed.text.int_value(t.span).unwrap())
     }
 
     // Adds `v` to `words` and returns its index.
-    pub fn add_word(mut self, _ v: u256) -> usize {
+    pub fn add_word(mut self, _ v: u256) -> WordId {
         self.words.push(v)
-        self.words.len() - 1
+        WordId { id: self.words.len() - 1 }
     }
 
-    // Moves the elements of `pending` from `mark` on into a new list and returns it. A list is
-    // stored as its length followed by its elements.
-    pub fn add_list(mut self, _ pending: mut MemVec<usize>, _ mark: usize) -> usize {
-        let n = pending.len() - mark
-        if n == 0 { return 0 }
+    // Moves the elements of `pending` from `mark` on into a new list and returns it.
+    pub fn add_list(mut self, _ pending: mut MemVec<NodeId>, _ mark: ListMark) -> ListId {
+        if pending.len() == mark.at {
+            return EMPTY_LIST
+        }
         let l = self.lists.len()
-        self.lists.push(n)
-        var i = mark
-        while i < mark + n {
-            self.lists.push(pending[i])
+        self.lists.push(pending.len() - mark.at)
+        var i = mark.at
+        while i < pending.len() {
+            self.lists.push(pending[i].id)
             i += 1
         }
-        pending.truncate(mark)
-        l
+        pending.truncate(mark.at)
+        ListId { id: l }
     }
 
     // Interns the identifier token `t` and returns its sym.
     // ponytail: linear scan, O(n²) in identifiers; hash if programs grow.
-    pub fn intern(mut self, _ t: Token) -> usize {
+    pub fn intern(mut self, _ t: Token) -> Sym {
         var i: usize = 1
         while i < self.syms.len() {
             if self.lexed.text.same(self.syms[i], t.span) {
-                return i
+                return Sym { id: i }
             }
             i += 1
         }
         self.syms.push(t.span)
-        self.syms.len() - 1
+        Sym { id: self.syms.len() - 1 }
+    }
+
+    // Returns the source span of the first spelling of `sym`.
+    pub fn span_of(self, _ sym: Sym) -> Span {
+        self.syms[sym.id]
     }
 
     // Whether name `sym` starts with an uppercase letter.
-    pub fn starts_upper(self, _ sym: usize) -> bool {
-        self.lexed.text.starts_upper(self.syms[sym])
+    pub fn starts_upper(self, _ sym: Sym) -> bool {
+        self.lexed.text.starts_upper(self.syms[sym.id])
     }
 }

@@ -4,41 +4,147 @@
 
 use ingot::asm::*
 use ingot::ast::*
-use ingot::check::{Checked, check}
+use ingot::check::{Checked, FrameSlot, check}
 use ingot::diag::*
 use ingot::io::Source
 use ingot::lexer::*
 use ingot::parser::parse
 
-// The memory layout (DESIGN.md §6.1): the frame pointer's address, and where frames start.
-const FP: u256 = 0x40
-const FRAMES: u256 = 0x80
-const WORD: u256 = 32
+// A number of bytes: of memory, of calldata, of code or of revert data.
+struct Size { n: u256 }
+
+impl Copy for Size {}
+
+impl Size {
+    fn word(self) -> u256 {
+        self.n
+    }
+
+    fn plus(self, _ other: Size) -> Size {
+        Size { n: self.n + other.n }
+    }
+
+    fn is_zero(self) -> bool {
+        self.n == 0
+    }
+}
+
+// An address in memory.
+struct MemAddr { a: u256 }
+
+impl Copy for MemAddr {}
+
+impl MemAddr {
+    fn word(self) -> u256 {
+        self.a
+    }
+
+    // Returns the address `size` bytes after this one.
+    fn after(self, _ size: Size) -> MemAddr {
+        MemAddr { a: self.a + size.n }
+    }
+
+    // Returns the address of offset `off` in a frame that starts at this address.
+    fn at(self, _ off: FrameOff) -> MemAddr {
+        MemAddr { a: self.a + off.o }
+    }
+}
+
+// An offset from the start of a frame, which FP points at.
+struct FrameOff { o: u256 }
+
+impl Copy for FrameOff {}
+
+impl FrameOff {
+    fn word(self) -> u256 {
+        self.o
+    }
+
+    // Returns this offset in the frame that starts `size` bytes after the current one.
+    fn past(self, _ size: Size) -> FrameOff {
+        FrameOff { o: size.n + self.o }
+    }
+}
+
+// An offset in calldata.
+struct CalldataOff { o: u256 }
+
+impl Copy for CalldataOff {}
+
+impl CalldataOff {
+    fn word(self) -> u256 {
+        self.o
+    }
+
+    // Returns the offset `size` bytes after this one.
+    fn after(self, _ size: Size) -> CalldataOff {
+        CalldataOff { o: self.o + size.n }
+    }
+}
+
+// The 4-byte selector that heads calldata and revert data.
+struct Selector { v: u256 }
+
+impl Copy for Selector {}
+
+impl Selector {
+    fn word(self) -> u256 {
+        self.v
+    }
+}
+
+// The code of a `Panic(code)` revert (SPEC §4).
+struct PanicCode { c: u256 }
+
+impl Copy for PanicCode {}
+
+impl PanicCode {
+    fn word(self) -> u256 {
+        self.c
+    }
+
+    fn is_none(self) -> bool {
+        self.c == 0
+    }
+}
+
+// The memory layout (DESIGN.md §6.1): where revert and return data are built, the frame
+// pointer's address, and where frames start.
+const SCRATCH: MemAddr = MemAddr { a: 0 }
+const FP: MemAddr = MemAddr { a: 0x40 }
+const FRAMES: MemAddr = MemAddr { a: 0x80 }
+const WORD: Size = Size { n: 32 }
 
 // Offsets in a frame: the caller's FP is at 0, then the return address, then parameters and
 // locals.
-const RET_ADDR: u256 = 32
-const FRAME_HEAD: u256 = 64
+const RET_ADDR: FrameOff = FrameOff { o: 32 }
+const FRAME_HEAD: FrameOff = FrameOff { o: 64 }
 
 // The first word of the revert data of `Panic(code)` and `Error(string)` (SPEC §4).
-const PANIC_SELECTOR: u256 = 0x4e487b71
-const ERROR_SELECTOR: u256 = 0x08c379a0
+const PANIC_SELECTOR: Selector = Selector { v: 0x4e487b71 }
+const ERROR_SELECTOR: Selector = Selector { v: 0x08c379a0 }
 
 // The length of a selector, in calldata and in revert data.
-const SELECTOR_BYTES: u256 = 4
+const SELECTOR_BYTES: Size = Size { n: 4 }
 
-// The shift that moves a selector between the top of a word and its low bytes.
-const SELECTOR_SHIFT: u256 = 224
+// The start of calldata, where the selector is.
+const CALLDATA_START: CalldataOff = CalldataOff { o: 0 }
 
-// A shared block that reverts. `panic` is its Panic code, or 0 for a revert with empty data.
-struct Stub { index: usize, panic: u256 }
+// The number of bits that moves a selector between the top of a word and its low bytes.
+const SELECTOR_SHIFT_BITS: u256 = 224
+
+// A shared block that reverts with Panic code `panic`, or with empty data when `panic` is
+// NO_PANIC.
+struct Stub { index: usize, panic: PanicCode }
 
 impl Copy for Stub {}
 
-const REVERT_EMPTY: Stub = Stub { index: 0, panic: 0 }
-const PANIC_ASSERT: Stub = Stub { index: 1, panic: 0x01 }
-const PANIC_OVERFLOW: Stub = Stub { index: 2, panic: 0x11 }
-const PANIC_DIV_ZERO: Stub = Stub { index: 3, panic: 0x12 }
+const NO_PANIC: PanicCode = PanicCode { c: 0 }
+
+const REVERT_EMPTY: Stub = Stub { index: 0, panic: NO_PANIC }
+const PANIC_ASSERT: Stub = Stub { index: 1, panic: PanicCode { c: 0x01 } }
+const PANIC_OVERFLOW: Stub = Stub { index: 2, panic: PanicCode { c: 0x11 } }
+const PANIC_DIV_ZERO: Stub = Stub { index: 3, panic: PanicCode { c: 0x12 } }
 
 // Every stub, at its index.
 const ALL_STUBS: [Stub; 4] = [REVERT_EMPTY, PANIC_ASSERT, PANIC_OVERFLOW, PANIC_DIV_ZERO]
@@ -57,8 +163,7 @@ struct Body {
     kind: Kind,
     // The type of the body's value, or TY_UNIT.
     ret: Ty,
-    // The size of the frame in bytes.
-    frame: u256,
+    frame: Size,
     // The words that the body has on the stack. Code that leaves early pops them.
     depth: usize,
     // Where an INIT body jumps when it ends. Empty for FN and ARM bodies, which leave without it.
@@ -71,9 +176,17 @@ struct Loop { top: Label, end: Label, depth: usize }
 impl Copy for Loop {}
 
 // An ARM of the dispatcher, with the label of its code.
-struct Case { arm: usize, label: Label }
+struct Case { arm: NodeId, label: Label }
 
 impl Copy for Case {}
+
+// What emitted code leaves on the stack: a word for a value, or nothing for unit.
+struct Leaves { word: bool }
+
+impl Copy for Leaves {}
+
+const LEAVES_WORD: Leaves = Leaves { word: true }
+const LEAVES_NOTHING: Leaves = Leaves { word: false }
 
 struct Gen {
     c: Checked,
@@ -82,15 +195,36 @@ struct Gen {
     // The label of each FN that `asm` calls, by node. Every other node's slot is empty.
     fn_labels: MemVec<LabelSlot>,
     // The FNs that `asm` calls and does not hold yet.
-    todo: MemVec<usize>,
+    todo: MemVec<NodeId>,
     // The label of each Stub that `asm` uses, by index. The others' slots are empty.
     stubs: MemVec<LabelSlot>,
     body: Body,
     loops: MemVec<Loop>,
 }
 
-fn words(_ n: usize) -> u256 {
-    WORD * (n as u256)
+// Returns the size of `n` bytes.
+fn bytes(_ n: usize) -> Size {
+    Size { n: n as u256 }
+}
+
+// Returns the size of `n` words.
+fn words(_ n: usize) -> Size {
+    Size { n: WORD.n * (n as u256) }
+}
+
+// Returns the size of a selector followed by `n` words, as in calldata and in revert data.
+fn selector_and_words(_ n: usize) -> Size {
+    SELECTOR_BYTES.plus(words(n))
+}
+
+// Returns the address of word `k` of the revert data at SCRATCH, after its selector.
+fn revert_word(_ k: usize) -> MemAddr {
+    SCRATCH.after(selector_and_words(k))
+}
+
+// Returns the calldata offset of argument `k`, after the selector.
+fn arg_offset(_ k: usize) -> CalldataOff {
+    CALLDATA_START.after(selector_and_words(k))
 }
 
 // Returns a table of `n` empty label slots.
@@ -102,34 +236,50 @@ fn no_labels(_ n: usize) -> MemVec<LabelSlot> {
     t
 }
 
-// The offset in a frame of slot `slot`. Parameters take the first slots, in order.
-fn slot_offset(_ slot: usize) -> u256 {
-    FRAME_HEAD + words(slot)
+// The offset just past the first `n` slots of a frame.
+fn past_slots(_ n: usize) -> FrameOff {
+    FrameOff { o: FRAME_HEAD.o + words(n).n }
+}
+
+// The offset in a frame of slot `slot`.
+fn slot_offset(_ slot: FrameSlot) -> FrameOff {
+    past_slots(slot.number())
+}
+
+// The size of a frame of `slots` slots.
+fn frame_size(_ slots: usize) -> Size {
+    Size { n: past_slots(slots).word() }
 }
 
 impl Gen {
     fn new(_ c: own Checked) -> Gen {
-        let nodes = c.ast.nodes.len()
+        let nodes = c.ast.node_count()
         Gen {
             c,
             asm: Asm::new(),
             fn_labels: no_labels(nodes),
             todo: MemVec::new(),
             stubs: no_labels(ALL_STUBS.len()),
-            body: Body { kind: NODE_NONE, ret: TY_UNIT, frame: 0, depth: 0, exit: EMPTY_SLOT },
+            body: Body {
+                kind: NODE_NONE,
+                ret: TY_UNIT,
+                frame: bytes(0),
+                depth: 0,
+                exit: EMPTY_SLOT,
+            },
             loops: MemVec::new(),
         }
     }
 
-    fn node(self, _ i: usize) -> Node {
-        self.c.ast.nodes[i]
+    fn node(self, _ i: NodeId) -> Node {
+        self.c.ast.node(i)
     }
 
-    fn len(self, _ l: usize) -> usize {
+    fn len(self, _ l: ListId) -> usize {
         self.c.ast.list_len(l)
     }
 
-    fn elem(self, _ l: usize, _ k: usize) -> usize {
+    fn elem(self, _ l: ListId, _ k: usize) -> NodeId {
         self.c.ast.list_at(l, k)
     }
 
@@ -169,47 +319,47 @@ impl Gen {
         let slot = self.stubs[s.index]
         if slot.is_empty() { return }
         self.asm.bind(slot.label())
-        if s.panic != 0 {
-            self.selector_at_0(PANIC_SELECTOR)
-            self.push(s.panic)
-            self.push(SELECTOR_BYTES)
+        if !s.panic.is_none() {
+            self.selector_at_scratch(PANIC_SELECTOR)
+            self.push(s.panic.word())
+            self.push(revert_word(0).word())
             self.op(OP_MSTORE)
-            self.revert(SELECTOR_BYTES + WORD)
+            self.revert(selector_and_words(1))
         } else {
-            self.revert(0)
+            self.revert(bytes(0))
         }
     }
 
-    // Stores the 4-byte `selector` at memory 0, as the head of revert data.
-    fn selector_at_0(mut self, _ selector: u256) {
-        self.push(selector)
-        self.push(SELECTOR_SHIFT)
+    // Stores `selector` at SCRATCH, as the head of revert data.
+    fn selector_at_scratch(mut self, _ selector: Selector) {
+        self.push(selector.word())
+        self.push(SELECTOR_SHIFT_BITS)
         self.op(OP_SHL)
-        self.push(0)
+        self.push(SCRATCH.word())
         self.op(OP_MSTORE)
     }
 
-    // Reverts with the first `size` bytes of memory.
-    fn revert(mut self, _ size: u256) {
-        self.push(size)
-        self.push(0)
+    // Reverts with the first `size` bytes at SCRATCH.
+    fn revert(mut self, _ size: Size) {
+        self.push(size.word())
+        self.push(SCRATCH.word())
         self.op(OP_REVERT)
     }
 
-    // Returns the first `size` bytes of memory.
-    fn return_memory(mut self, _ size: u256) {
-        self.push(size)
-        self.push(0)
+    // Returns the first `size` bytes at SCRATCH.
+    fn return_memory(mut self, _ size: Size) {
+        self.push(size.word())
+        self.push(SCRATCH.word())
         self.op(OP_RETURN)
     }
 
     // The label of FN `f` in the current piece of code. `functions` emits the FN.
-    fn fn_label(mut self, _ f: usize) -> Label {
-        if self.fn_labels[f].is_empty() {
-            self.fn_labels.set(f, self.asm.label().slot())
+    fn fn_label(mut self, _ f: NodeId) -> Label {
+        if self.fn_labels[f.index()].is_empty() {
+            self.fn_labels.set(f.index(), self.asm.label().slot())
             self.todo.push(f)
         }
-        self.fn_labels[f].label()
+        self.fn_labels[f.index()].label()
     }
 
     // Emits each FN that the code calls, and each FN that those call.
@@ -217,7 +367,7 @@ impl Gen {
         while self.todo.len() > 0 {
             let f = self.todo.pop().unwrap()
             let n = self.node(f)
-            self.asm.bind(self.fn_labels[f].label())
+            self.asm.bind(self.fn_labels[f.index()].label())
             self.begin(f)
             self.body_end(n.body())
         }
@@ -225,26 +375,39 @@ impl Gen {
 
     // Starts the body of FN, INIT or ARM `owner`. INIT and ARM bodies use the first frame
     // (DESIGN.md §6.1).
-    fn begin(mut self, _ owner: usize) {
+    fn begin(mut self, _ owner: NodeId) {
         let n = self.node(owner)
         let kind = n.kind
-        let frame = slot_offset(self.c.slots[owner])
+        let frame = frame_size(self.c.frame_slots(owner))
         self.body = Body { kind, ret: n.ty().or_unit(), frame, depth: 0, exit: EMPTY_SLOT }
         if kind != NODE_FN {
-            self.push(FRAMES)
-            self.push(FP)
+            self.push(FRAMES.word())
+            self.push(FP.word())
             self.op(OP_MSTORE)
         }
     }
 
     // Emits BLOCK `b` as the whole body, then leaves the body with its value.
-    fn body_end(mut self, _ b: usize) {
+    fn body_end(mut self, _ b: NodeId) {
         if self.body.ret == TY_UNIT {
             self.discard(b)
         } else {
             self.value(b)
         }
         self.leave()
+    }
+
+    // Gives FP back to the caller and pushes the current frame's return address.
+    fn unlink_frame(mut self) {
+        self.fp()
+        self.op(OP_DUP1)
+        self.push(RET_ADDR.word())
+        self.op(OP_ADD)
+        self.op(OP_MLOAD)
+        self.op(OP_SWAP1)
+        self.op(OP_MLOAD)
+        self.push(FP.word())
+        self.op(OP_MSTORE)
     }
 
     // Leaves the body. Its value, if it has one, is on top of the stack.
@@ -259,20 +422,11 @@ impl Gen {
                 self.op(OP_POP)
                 k += 1
             }
-            // Jump to the return address, with the caller's FP back.
-            self.fp()
-            self.op(OP_DUP1)
-            self.push(RET_ADDR)
-            self.op(OP_ADD)
-            self.op(OP_MLOAD)
-            self.op(OP_SWAP1)
-            self.op(OP_MLOAD)
-            self.push(FP)
-            self.op(OP_MSTORE)
+            self.unlink_frame()
             self.op(OP_JUMP)
         } else if kind == NODE_ARM {
             if value {
-                self.push(0)
+                self.push(SCRATCH.word())
                 self.op(OP_MSTORE)
                 self.return_memory(WORD)
             } else {
@@ -285,26 +439,26 @@ impl Gen {
 
     // Pushes FP.
     fn fp(mut self) {
-        self.push(FP)
+        self.push(FP.word())
         self.op(OP_MLOAD)
     }
 
     // Pushes FP + `off`.
-    fn fp_plus(mut self, _ off: u256) {
+    fn fp_plus(mut self, _ off: FrameOff) {
         self.fp()
-        self.push(off)
+        self.push(off.word())
         self.op(OP_ADD)
     }
 
     // The offset in the frame of local, parameter or bind `d`.
-    fn local_offset(self, _ d: usize) -> u256 {
-        slot_offset(self.c.slots[d])
+    fn local_offset(self, _ d: NodeId) -> FrameOff {
+        slot_offset(self.c.frame_slot(d))
     }
 
     // Pops the top word into the variable that node `d` declares: a local or a contract field.
-    fn store(mut self, _ d: usize) {
+    fn store(mut self, _ d: NodeId) {
         if self.node(d).kind == NODE_FIELD {
-            self.push(self.c.slots[d] as u256)
+            self.push(self.c.storage_slot(d).word())
             self.op(OP_SSTORE)
         } else {
             self.fp_plus(self.local_offset(d))
@@ -314,13 +468,12 @@ impl Gen {
     }
 
     // Pushes the value of the name that node `d` declares: a constant, a field or a local.
-    fn load(mut self, _ d: usize) {
+    fn load(mut self, _ d: NodeId) {
         let k = self.node(d).kind
         if k == NODE_CONST {
-            let v = self.c.ast.words[self.c.slots[d]]
-            self.push(v)
+            self.push(self.c.const_value(d))
         } else if k == NODE_FIELD {
-            self.push(self.c.slots[d] as u256)
+            self.push(self.c.storage_slot(d).word())
             self.op(OP_SLOAD)
         } else {
             self.fp_plus(self.local_offset(d))
@@ -352,15 +505,15 @@ impl Gen {
     }
 
     // Reverts with empty data unless calldata holds at least `size` bytes.
-    fn require_calldata(mut self, _ size: u256) {
-        self.push(size)
+    fn require_calldata(mut self, _ size: Size) {
+        self.push(size.word())
         self.op(OP_CALLDATASIZE)
         self.op(OP_LT)
         self.asm.jumpi(self.stub(REVERT_EMPTY))
     }
 
     // The runtime code: the dispatcher (DESIGN.md §6.4), the arms and what they call.
-    fn runtime(mut self, _ c: usize) {
+    fn runtime(mut self, _ c: NodeId) {
         self.non_payable()
         self.load_selector()
         let cases = self.cases(c)
@@ -369,7 +522,7 @@ impl Gen {
         while i < cases.len() {
             let case = cases[i]
             self.op(OP_DUP1)
-            self.push(self.c.ast.word_value(self.c.res[case.arm]))
+            self.push(self.selector_of(case.arm).word())
             self.op(OP_EQ)
             self.asm.jumpi(case.label)
             i += 1
@@ -389,14 +542,19 @@ impl Gen {
     // Pushes the call's selector, or reverts with empty data when calldata is too short for one.
     fn load_selector(mut self) {
         self.require_calldata(SELECTOR_BYTES)
-        self.push(0)
+        self.push(CALLDATA_START.word())
         self.op(OP_CALLDATALOAD)
-        self.push(SELECTOR_SHIFT)
+        self.push(SELECTOR_SHIFT_BITS)
         self.op(OP_SHR)
     }
 
+    // The selector of ARM `arm`: that of the msg variant it handles.
+    fn selector_of(self, _ arm: NodeId) -> Selector {
+        Selector { v: self.c.ast.word_value(self.c.resolved(arm)) }
+    }
+
     // The ARMs of every RECV of contract `c`, in order, each with a new label.
-    fn cases(mut self, _ c: usize) -> MemVec<Case> {
+    fn cases(mut self, _ c: NodeId) -> MemVec<Case> {
         var cases: MemVec<Case> = MemVec::new()
         let recvs = self.node(c).recvs()
         var r: usize = 0
@@ -413,20 +571,20 @@ impl Gen {
     }
 
     // Emits ARM `a`, which decodes its arguments into its frame and runs its body.
-    fn arm(mut self, _ a: usize) {
+    fn arm(mut self, _ a: NodeId) {
         let n = self.node(a)
-        let fields = self.node(self.c.res[a]).list()
+        let fields = self.node(self.c.resolved(a)).list()
         self.begin(a)
-        self.require_calldata(SELECTOR_BYTES + words(self.len(fields)))
+        self.require_calldata(selector_and_words(self.len(fields)))
         var k: usize = 0
         while k < self.len(n.list()) {
             let b = self.elem(n.list(), k)
             self.push(
-                SELECTOR_BYTES + words(self.index_of(fields, self.c.res[b])),
+                arg_offset(self.index_of(fields, self.c.resolved(b))).word(),
             )
             self.op(OP_CALLDATALOAD)
             self.body.depth += 1
-            let ty = self.c.types[b]
+            let ty = self.c.ty(b)
             self.validate(ty)
             self.store(b)
             k += 1
@@ -435,7 +593,7 @@ impl Gen {
     }
 
     // The position of node `i` in list `l`, which holds it.
-    fn index_of(self, _ l: usize, _ i: usize) -> usize {
+    fn index_of(self, _ l: ListId, _ i: NodeId) -> usize {
         var k: usize = 0
         while self.elem(l, k) != i {
             k += 1
@@ -443,24 +601,23 @@ impl Gen {
         k
     }
 
-    // The initcode for a runtime of `rt_len` bytes: checks and copies the constructor arguments,
+    // The initcode for a runtime of `rt` bytes: checks and copies the constructor arguments,
     // runs `init`, then returns the runtime code (DESIGN.md §6.5).
-    fn initcode(mut self, _ c: usize, _ rt_len: usize) {
+    fn initcode(mut self, _ c: NodeId, _ rt: Size) {
         // The end of the initcode, which is where the runtime code starts.
         let end = self.asm.label()
-        let rt = rt_len as u256
         self.non_payable()
         let init = self.node(c).init()
-        if init != 0 {
+        if !init.is_none() {
             self.init_args(init, rt, end)
             self.begin(init)
             self.body.exit = self.asm.label().slot()
             self.body_end(self.node(init).body())
             self.asm.bind(self.body.exit.label())
         }
-        self.push(rt)
+        self.push(rt.word())
         self.asm.push_label(end)
-        self.push(0)
+        self.push(SCRATCH.word())
         self.op(OP_CODECOPY)
         self.return_memory(rt)
         self.functions()
@@ -470,35 +627,36 @@ impl Gen {
 
     // Checks the arguments of INIT `init`, copies them from the code into its frame and
     // validates them. They follow the `rt` bytes of runtime code, which start at `end`.
-    fn init_args(mut self, _ init: usize, _ rt: u256, _ end: Label) {
+    fn init_args(mut self, _ init: NodeId, _ rt: Size, _ end: Label) {
         let params = self.node(init).list()
         let args = words(self.len(params))
         // Extra bytes after the arguments are ignored.
-        self.push(rt + args)
+        self.push(rt.plus(args).word())
         self.asm.push_label(end)
         self.op(OP_ADD)
         self.op(OP_CODESIZE)
         self.op(OP_LT)
         self.asm.jumpi(self.stub(REVERT_EMPTY))
-        self.push(args)
-        self.push(rt)
+        self.push(args.word())
+        self.push(rt.word())
         self.asm.push_label(end)
         self.op(OP_ADD)
-        self.push(FRAMES + slot_offset(0))
+        self.push(FRAMES.at(FRAME_HEAD).word())
         self.op(OP_CODECOPY)
         var k: usize = 0
         while k < self.len(params) {
-            self.push(FRAMES + slot_offset(k))
+            let param = self.elem(params, k)
+            self.push(FRAMES.at(self.local_offset(param)).word())
             self.op(OP_MLOAD)
-            self.validate(self.node(self.elem(params, k)).ty())
+            self.validate(self.node(param).ty())
             self.op(OP_POP)
             k += 1
         }
     }
 
-    // Emits expression `i` and returns how many words it leaves on the stack: 1 for a value, 0
-    // for unit. An expression of type TY_NEVER may leave either, since no code runs after it.
-    fn expr(mut self, _ i: usize) -> usize {
+    // Emits expression `i` and returns what it leaves on the stack. An expression of type
+    // TY_NEVER may leave either, since no code runs after it.
+    fn expr(mut self, _ i: NodeId) -> Leaves {
         let n = self.node(i)
         let k = n.kind
         if k == NODE_INT {
@@ -506,16 +664,16 @@ impl Gen {
         } else if k == NODE_BOOL {
             self.push(if n.is_true() { 1 } else { 0 })
         } else if k == NODE_NAME {
-            let d = self.c.res[i]
+            let d = self.c.resolved(i)
             self.load(d)
-            return 1
+            return LEAVES_WORD
         } else if k == NODE_BINARY {
             self.binary(i)
-            return 1
+            return LEAVES_WORD
         } else if k == NODE_UNARY {
             self.value(n.operand())
             self.op(if n.op() == O_BANG { OP_ISZERO } else { OP_NOT })
-            return 1
+            return LEAVES_WORD
         } else if k == NODE_CALL {
             return self.call(i)
         } else if k == NODE_IF {
@@ -525,15 +683,15 @@ impl Gen {
         } else {
             // NODE_ASSERT, the only other kind of expression.
             self.assert(i)
-            return 0
+            return LEAVES_NOTHING
         }
         self.body.depth += 1
-        1
+        LEAVES_WORD
     }
 
     // Emits expression `i` so that it leaves one word.
-    fn value(mut self, _ i: usize) {
-        if self.expr(i) == 0 {
+    fn value(mut self, _ i: NodeId) {
+        if !self.expr(i).word {
             // An expression of type TY_NEVER may leave no word. Count one anyway, because the
             // code after it expects one, and that code never runs.
             self.body.depth += 1
@@ -541,14 +699,14 @@ impl Gen {
     }
 
     // Emits expression `i` for its effects only.
-    fn discard(mut self, _ i: usize) {
-        if self.expr(i) == 1 {
+    fn discard(mut self, _ i: NodeId) {
+        if self.expr(i).word {
             self.op(OP_POP)
             self.body.depth -= 1
         }
     }
 
-    fn binary(mut self, _ i: usize) {
+    fn binary(mut self, _ i: NodeId) {
         let n = self.node(i)
         let op = n.op()
         if op == O_ANDAND || op == O_OROR {
@@ -561,7 +719,7 @@ impl Gen {
     }
 
     // `a && b` or `a || b`: `b` runs only when `a` does not decide the result.
-    fn short_circuit(mut self, _ i: usize) {
+    fn short_circuit(mut self, _ i: NodeId) {
         let n = self.node(i)
         let end = self.asm.label()
         self.value(n.lhs())
@@ -644,9 +802,10 @@ impl Gen {
     }
 
     // Emits CALL `i`, by the calling convention of DESIGN.md §6.2.
-    fn call(mut self, _ i: usize) -> usize {
-        let f = self.c.res[i]
+    fn call(mut self, _ i: NodeId) -> Leaves {
+        let f = self.c.resolved(i)
         let args = self.node(i).list()
+        let params = self.node(f).list()
         var k: usize = 0
         while k < self.len(args) {
             self.value(self.node(self.elem(args, k)).value())
@@ -656,37 +815,42 @@ impl Gen {
         let next = self.body.frame
         while k > 0 {
             k -= 1
-            self.fp_plus(next + slot_offset(k))
+            self.fp_plus(self.local_offset(self.elem(params, k)).past(next))
             self.op(OP_MSTORE)
         }
         self.body.depth -= self.len(args)
         let back = self.asm.label()
         self.asm.push_label(back)
-        self.fp_plus(next + RET_ADDR)
+        self.fp_plus(RET_ADDR.past(next))
         self.op(OP_MSTORE)
-        // [next] = FP, then FP = next.
+        self.link_frame(next)
+        self.asm.jump(self.fn_label(f))
+        self.asm.bind(back)
+        if self.node(f).ty() == TY_NONE {
+            return LEAVES_NOTHING
+        }
+        self.body.depth += 1
+        LEAVES_WORD
+    }
+
+    // Moves FP `next` bytes forward, to the callee's frame. The callee's frame keeps the old
+    // FP in its first word, so that `unlink_frame` can give it back.
+    fn link_frame(mut self, _ next: Size) {
         self.fp()
         self.op(OP_DUP1)
-        self.push(next)
+        self.push(next.word())
         self.op(OP_ADD)
         self.op(OP_DUP1)
         self.op(OP_SWAP2)
         self.op(OP_SWAP1)
         self.op(OP_MSTORE)
-        self.push(FP)
+        self.push(FP.word())
         self.op(OP_MSTORE)
-        self.asm.jump(self.fn_label(f))
-        self.asm.bind(back)
-        if self.node(f).ty() == TY_NONE {
-            return 0
-        }
-        self.body.depth += 1
-        1
     }
 
     // IF `i` and its `else if` chain, in a loop as the checker reads it.
-    fn if_expr(mut self, _ i: usize) -> usize {
-        let has_value = self.c.types[i] != TY_UNIT
+    fn if_expr(mut self, _ i: NodeId) -> Leaves {
+        let has_value = self.c.ty(i) != TY_UNIT
         let base = self.body.depth
         let end = self.asm.label()
         var at = i
@@ -699,7 +863,7 @@ impl Gen {
             self.asm.jump(end)
             self.asm.bind(next)
             let e = n.otherwise()
-            if e == 0 { break }
+            if e.is_none() { break }
             if self.node(e).kind != NODE_IF {
                 self.branch(e, has_value)
                 self.body.depth = base
@@ -708,20 +872,22 @@ impl Gen {
             at = e
         }
         self.asm.bind(end)
-        if !has_value { return 0 }
+        if !has_value {
+            return LEAVES_NOTHING
+        }
         self.body.depth = base + 1
-        1
+        LEAVES_WORD
     }
 
     // Emits condition `cond` and jumps to `to` when it is false.
-    fn jump_unless(mut self, _ cond: usize, _ to: Label) {
+    fn jump_unless(mut self, _ cond: NodeId, _ to: Label) {
         self.value(cond)
         self.body.depth -= 1
         self.op(OP_ISZERO)
         self.asm.jumpi(to)
     }
 
-    fn branch(mut self, _ b: usize, _ has_value: bool) {
+    fn branch(mut self, _ b: NodeId, _ has_value: bool) {
         if has_value {
             self.value(b)
         } else {
@@ -729,18 +895,20 @@ impl Gen {
         }
     }
 
-    fn block(mut self, _ i: usize) -> usize {
+    fn block(mut self, _ i: NodeId) -> Leaves {
         let n = self.node(i)
         var k: usize = 0
         while k < self.len(n.list()) {
             self.stmt(self.elem(n.list(), k))
             k += 1
         }
-        if n.value() == 0 { return 0 }
+        if n.value().is_none() {
+            return LEAVES_NOTHING
+        }
         self.expr(n.value())
     }
 
-    fn stmt(mut self, _ i: usize) {
+    fn stmt(mut self, _ i: NodeId) {
         let n = self.node(i)
         let k = n.kind
         if k == NODE_LET {
@@ -771,12 +939,14 @@ impl Gen {
         }
     }
 
-    fn return_stmt(mut self, _ i: usize) {
+    fn return_stmt(mut self, _ i: NodeId) {
         let v = self.node(i).value()
         let before = self.body.depth
         if self.body.ret == TY_UNIT {
             // A unit body may still return a unit expression, such as a call.
-            if v != 0 { self.discard(v) }
+            if !v.is_none() {
+                self.discard(v)
+            }
         } else {
             self.value(v)
         }
@@ -784,7 +954,7 @@ impl Gen {
         self.body.depth = before
     }
 
-    fn while_stmt(mut self, _ i: usize) {
+    fn while_stmt(mut self, _ i: NodeId) {
         let n = self.node(i)
         let top = self.asm.label()
         let end = self.asm.label()
@@ -798,9 +968,9 @@ impl Gen {
     }
 
     // `x = e` or `x op= e`.
-    fn assign(mut self, _ i: usize) {
+    fn assign(mut self, _ i: NodeId) {
         let n = self.node(i)
-        let d = self.c.res[i]
+        let d = self.c.resolved(i)
         if n.op() == O_ASSIGN {
             self.value(n.value())
         } else {
@@ -812,9 +982,9 @@ impl Gen {
     }
 
     // `assert!(c)` reverts with Panic(0x01), and `assert!(c, "m")` with Error("m") (SPEC §4).
-    fn assert(mut self, _ i: usize) {
+    fn assert(mut self, _ i: NodeId) {
         let n = self.node(i)
-        if n.message() == 0 {
+        if n.message().is_none() {
             self.jump_unless(n.cond(), self.stub(PANIC_ASSERT))
             return
         }
@@ -825,22 +995,22 @@ impl Gen {
         let m = self.node(n.message())
         // The ABI encoding of a string: its offset, its length, then its bytes padded to a word.
         // A message has at most 31 bytes, so they fit in one word (SPEC §1).
-        self.selector_at_0(ERROR_SELECTOR)
-        self.push(WORD)
-        self.push(SELECTOR_BYTES)
+        self.selector_at_scratch(ERROR_SELECTOR)
+        self.push(WORD.word())
+        self.push(revert_word(0).word())
         self.op(OP_MSTORE)
-        let len = m.str_len() as u256
-        self.push(len)
-        self.push(SELECTOR_BYTES + WORD)
+        let len = bytes(m.str_len())
+        self.push(len.word())
+        self.push(revert_word(1).word())
         self.op(OP_MSTORE)
-        var size = SELECTOR_BYTES + 2 * WORD
-        if len > 0 {
+        var count: usize = 2
+        if !len.is_zero() {
             self.push(self.c.ast.word_value(n.message()))
-            self.push(size)
+            self.push(revert_word(2).word())
             self.op(OP_MSTORE)
-            size += WORD
+            count = 3
         }
-        self.revert(size)
+        self.revert(selector_and_words(count))
         self.asm.bind(ok)
     }
 }
@@ -866,24 +1036,20 @@ pub fn generate(_ c: own Checked) -> Output {
         return out
     }
     let the_contract = g.c.the_contract
-    if the_contract == 0 {
-        out.err = Option::Some(diag(G_NO_CONTRACT, 0))
+    if the_contract.is_none() {
+        out.err = Option::Some(diag(G_NO_CONTRACT, SOURCE_START))
         return out
     }
     g.runtime(the_contract)
     let runtime = g.section()
-    g.initcode(the_contract, runtime.len())
+    g.initcode(the_contract, bytes(runtime.len()))
     let init = g.section()
     if runtime.too_large() || init.too_large() {
-        out.err = Option::Some(diag(G_CODE_TOO_LARGE, g.node(the_contract).pos))
+        out.err = Option::Some(diag(G_CODE_TOO_LARGE, g.node(the_contract).pos()))
         return out
     }
     out.code = init.code
-    var k: usize = 0
-    while k < runtime.len() {
-        out.code.push(runtime.code[k])
-        k += 1
-    }
+    out.code.extend_from_slice(runtime.code.as_slice())
     out
 }
 

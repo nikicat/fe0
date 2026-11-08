@@ -1,6 +1,7 @@
 use ingot::ast::*
 use ingot::diag::{
     Diag,
+    DiagCode,
     L_RESERVED_WORD,
     P_CHAINED_COMPARISON,
     P_EXPECTED_END,
@@ -48,7 +49,9 @@ use ingot::lexer::{
     O_SLASH,
     O_STAR,
     O_TILDE,
+    Pos,
     Span,
+    StrValue,
     Tok,
 }
 use ingot::parser::{MAX_DEPTH, parse}
@@ -68,6 +71,13 @@ fn parse_err(_ s: DynString) -> Diag {
     }
 }
 
+// Asserts that parsing `src` fails with `code` at byte `at`.
+fn rejects(_ src: DynString, _ code: DiagCode, _ at: usize) {
+    let d = parse_err(src)
+    assert!(d.code == code)
+    assert!(d.pos() == Pos::at(at))
+}
+
 // Asserts that the first item of `src` prints as `want`.
 fn item_is(_ src: DynString, _ want: DynString) {
     let ast = parse_text(src)
@@ -78,13 +88,13 @@ fn item_is(_ src: DynString, _ want: DynString) {
 // Asserts that the tail expression of the first item, a function, prints as `want`.
 fn tail_is(_ src: DynString, _ want: DynString) {
     let ast = parse_text(src)
-    let f = ast.nodes[ast.list_at(ast.items, 0)]
-    let i = ast.nodes[f.body()].value()
+    let f = ast.node(ast.list_at(ast.items, 0))
+    let i = ast.node(f.body()).value()
     prints(ast, i, want)
 }
 
 // Asserts that node `i` of `ast` prints as `want`.
-fn prints(_ ast: own Ast, _ i: usize, _ want: DynString) {
+fn prints(_ ast: own Ast, _ i: NodeId, _ want: DynString) {
     var p = Printer { ast, out: MemVec::new() }
     p.node(i)
     assert!(p.matches(want))
@@ -120,10 +130,10 @@ impl Printer {
     }
 
     fn span(mut self, _ s: Span) {
-        var i = s.start
-        while i < s.end() {
-            self.out.push(self.ast.lexed.text.byte(i))
-            i += 1
+        var k: usize = 0
+        while k < s.len {
+            self.out.push(self.ast.lexed.text.span_byte(s, k))
+            k += 1
         }
     }
 
@@ -143,8 +153,8 @@ impl Printer {
         self.out.push(b)
     }
 
-    fn sym(mut self, _ s: usize) {
-        let y = self.ast.syms[s]
+    fn sym(mut self, _ s: Sym) {
+        let y = self.ast.span_of(s)
         self.span(y)
     }
 
@@ -229,7 +239,7 @@ impl Printer {
         }
     }
 
-    fn typed(mut self, _ s: usize, _ t: Ty) {
+    fn typed(mut self, _ s: Sym, _ t: Ty) {
         self.sym(s)
         self.put(":")
         self.ty(t)
@@ -251,7 +261,7 @@ impl Printer {
     }
 
     // ` (e e e)`, with a leading space.
-    fn list(mut self, _ l: usize) {
+    fn list(mut self, _ l: ListId) {
         self.put(" (")
         var i: usize = 0
         while i < self.ast.list_len(l) {
@@ -262,14 +272,18 @@ impl Printer {
         self.put(")")
     }
 
-    // ` e`, or ` ?` for node 0.
-    fn opt(mut self, _ i: usize) {
+    // ` e`, or ` ?` for NO_NODE.
+    fn opt(mut self, _ i: NodeId) {
         self.put(" ")
-        if i == 0 { self.put("?") } else { self.node(i) }
+        if i.is_none() {
+            self.put("?")
+        } else {
+            self.node(i)
+        }
     }
 
-    fn node(mut self, _ i: usize) {
-        let n = self.ast.nodes[i]
+    fn node(mut self, _ i: NodeId) {
+        let n = self.ast.node(i)
         let k = n.kind
         if k == NODE_CONST {
             self.put("(const ")
@@ -296,7 +310,7 @@ impl Printer {
             self.put(")")
         } else if k == NODE_VARIANT {
             self.put("(")
-            let v = self.ast.words[n.word()]
+            let v = self.ast.word(n.word())
             self.uint(v)
             self.put(" ")
             self.sym(n.name())
@@ -374,7 +388,7 @@ impl Printer {
             self.opt(n.value())
             self.put(")")
         } else if k == NODE_INT {
-            let v = self.ast.words[n.word()]
+            let v = self.ast.word(n.word())
             self.uint(v)
         } else if k == NODE_BOOL {
             if n.is_true() {
@@ -401,7 +415,7 @@ impl Printer {
             self.list(n.list())
             self.put(")")
         } else if k == NODE_ARG {
-            if n.name() != 0 {
+            if n.name() != NO_SYM {
                 self.sym(n.name())
                 self.put(":")
             }
@@ -420,24 +434,24 @@ impl Printer {
                 self.put("; ")
                 i += 1
             }
-            if n.value() != 0 {
+            if !n.value().is_none() {
                 self.node(n.value())
             }
             self.put("}")
         } else if k == NODE_ASSERT {
             self.put("(assert")
             self.opt(n.cond())
-            if n.message() != 0 {
+            if !n.message().is_none() {
                 self.put(" ")
                 self.node(n.message())
             }
             self.put(")")
         } else if k == NODE_STR {
             self.put("\"")
-            let word = self.ast.words[n.word()]
+            let v = StrValue { word: self.ast.word(n.word()), len: n.str_len() }
             var i: usize = 0
-            while i < n.str_len() {
-                self.escaped((word >> ((31 - i) * 8) as u256).downcast_truncate())
+            while i < v.len {
+                self.escaped(v.byte(i))
                 i += 1
             }
             self.put("\"")
@@ -575,9 +589,7 @@ fn items() {
 #[test]
 fn item_lines() {
     // Two items may not share a line, but contract members and arms may (SPEC.md §3.1).
-    let d = parse_err("fn f() {} fn g() {}")
-    assert!(d.code == P_EXPECTED_END)
-    assert!(d.pos == 10)
+    rejects("fn f() {} fn g() {}", P_EXPECTED_END, 10)
     parse_text(
         "contract C { mut a: u256 init() {} recv M { A {} {} B {} {} } }",
     )
@@ -615,12 +627,12 @@ fn doc_comments() {
         parse_err("fn f() {} /// a\nfn g() {}").code == P_EXPECTED_END,
     )
     // A doc comment must document something. The error points at the doc comment.
-    let d = parse_err("fn f() {}\n/// a\n")
-    assert!(d.code == P_EXPECTED_ITEM)
-    assert!(d.pos == 10)
-    let v = parse_err("msg M {\n    #[selector = 1]\n    A,\n    /// a\n}")
-    assert!(v.code == P_EXPECTED_TOKEN)
-    assert!(v.pos == 39)
+    rejects("fn f() {}\n/// a\n", P_EXPECTED_ITEM, 10)
+    rejects(
+        "msg M {\n    #[selector = 1]\n    A,\n    /// a\n}",
+        P_EXPECTED_TOKEN,
+        39,
+    )
     assert!(
         parse_err("contract C {\n    /// a\n}").code == P_EXPECTED_TOKEN,
     )
@@ -647,17 +659,13 @@ fn errors() {
         parse_err("fn f() { let for = 1 }").code == L_RESERVED_WORD,
     )
     // The error points at the offending token.
-    let d = parse_err("fn f() { a < b < c }")
-    assert!(d.code == P_CHAINED_COMPARISON)
-    assert!(d.pos == 15)
+    rejects("fn f() { a < b < c }", P_CHAINED_COMPARISON, 15)
 }
 
 #[test]
 fn generic_arguments() {
     // Each of these `<` may start generic arguments (SPEC.md §3.2).
-    let d = parse_err("fn f() { a < b >> c }")
-    assert!(d.code == P_GENERIC_ARGS)
-    assert!(d.pos == 11)
+    rejects("fn f() { a < b >> c }", P_GENERIC_ARGS, 11)
     assert!(
         parse_err("fn f() { g(a < b, c >> d) }").code == P_GENERIC_ARGS,
     )
@@ -679,9 +687,11 @@ fn generic_arguments() {
 #[test]
 fn record_literal() {
     // The record-literal rule of SPEC.md §3.4.
-    let d = parse_err("fn f() {\n    let a = b\n    { a }\n}")
-    assert!(d.code == P_RECORD_LITERAL)
-    assert!(d.pos == 27)
+    rejects(
+        "fn f() {\n    let a = b\n    { a }\n}",
+        P_RECORD_LITERAL,
+        27,
+    )
     parse_text("fn f() {\n    let a = (b)\n    { a }\n}")
 }
 

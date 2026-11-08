@@ -1,5 +1,7 @@
 // Error codes and the `Diag` that every phase reports.
 
+use ingot::lexer::Pos
+
 // An error code. It is `phase * 1000 + n` and prints as the phase letter and three digits, so
 // 6034 is `C034`. The phases, from 1 to 7, are lexer, parser, names, types, effects,
 // constants and generation. A phase's letter is the first letter of its name. Codes are made
@@ -28,9 +30,22 @@ impl DiagCode {
     }
 }
 
-pub struct Diag { pub code: DiagCode, pub pos: usize }
+// An error, and where in the source it points.
+pub struct Diag {
+    pub code: DiagCode,
+    // A plain offset, not a Pos, because a nested struct field costs bytecode (argotorg/fe#1964,
+    // see docs/WORKAROUNDS.md).
+    off: usize,
+}
 
 impl Copy for Diag {}
+
+impl Diag {
+    // Returns where in the source the error points.
+    pub fn pos(self) -> Pos {
+        Pos::at(self.off)
+    }
+}
 
 // Lexer
 pub const L_UNEXPECTED_CHAR: DiagCode = DiagCode { raw: 1001 }
@@ -132,8 +147,8 @@ pub const G_NO_CONTRACT: DiagCode = DiagCode { raw: 7001 }
 // Initcode or runtime code of `asm::MAX_CODE` bytes or more, which is too long for the assembler.
 pub const G_CODE_TOO_LARGE: DiagCode = DiagCode { raw: 7002 }
 
-pub fn diag(_ code: DiagCode, _ pos: usize) -> Diag {
-    Diag { code, pos }
+pub fn diag(_ code: DiagCode, _ pos: Pos) -> Diag {
+    Diag { code, off: pos.offset() }
 }
 
 #[test]

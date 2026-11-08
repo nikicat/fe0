@@ -82,7 +82,7 @@ fn keywords_and_idents() {
 #[test]
 fn reserved_words_are_errors() {
     assert!(lex_err("let for = 1").code == L_RESERVED_WORD)
-    assert!(lex_err("let x = with").pos == 8)
+    assert!(lex_err("let x = with").pos() == Pos::at(8))
     assert!(lex_err("struct").code == L_RESERVED_WORD)
 }
 
@@ -228,6 +228,12 @@ fn strings() {
     // assert ! ( x , "a \"b\" \n" ) EOF: the string token spans 12 source bytes.
     assert!(l.toks[5].kind == T_STR)
     assert!(l.toks[5].span.len == 12)
+    // The decoded bytes read back in order.
+    let v = l.text.string_value(l.toks[5].span)
+    assert!(v.len == 7)
+    assert!(v.byte(0) == 0x61)
+    assert!(v.byte(2) == 0x22)
+    assert!(v.byte(6) == 0x0a)
     assert!(lex_err("\"abc").code == L_UNTERMINATED_STRING)
     assert!(lex_err("\"ab\ncd\"").code == L_UNTERMINATED_STRING)
     assert!(lex_err("\"\\q\"").code == L_BAD_ESCAPE)
@@ -240,9 +246,9 @@ fn strings() {
 fn bad_characters() {
     let d = lex_err("let x = 1\nlet y = $")
     assert!(d.code == L_UNEXPECTED_CHAR)
-    assert!(d.pos == 18)
+    assert!(d.pos() == Pos::at(18))
     assert!(lex_err("a é").code == L_NON_ASCII)
-    assert!(lex_err("a é").pos == 2)
+    assert!(lex_err("a é").pos() == Pos::at(2))
     // The source holds a raw DEL byte (127), which is ASCII but no token.
     assert!(lex_err("a ").code == L_UNEXPECTED_CHAR)
     assert!(lex_err("x ? y").code == L_UNEXPECTED_CHAR)
@@ -254,23 +260,29 @@ fn bad_characters() {
 #[test]
 fn token_spans() {
     let l = lex_text("let total = a1 + 0x10")
-    assert!(l.toks[1].span.start == 4)
+    assert!(l.toks[1].span.start == Pos::at(4))
     assert!(l.toks[1].span.len == 5)
-    assert!(l.toks[5].span.start == 17)
+    assert!(l.toks[5].span.start == Pos::at(17))
     assert!(l.toks[5].span.len == 4)
     assert!(l.toks[6].kind == T_EOF)
-    assert!(l.toks[6].span.start == 21)
+    assert!(l.toks[6].span.start == Pos::at(21))
 }
 
 #[test]
 fn line_col() {
-    let l = lex_text("let x = 1\nlet y = 2")
-    assert!(l.text.line_col(18).line == 2)
-    assert!(l.text.line_col(18).col == 9)
-    let cr = lex_text("a\rb")
-    assert!(cr.text.line_col(2).line == 2)
-    assert!(cr.text.line_col(2).col == 1)
-    let crlf = lex_text("a\r\nb")
-    assert!(crlf.text.line_col(3).line == 2)
-    assert!(crlf.text.line_col(3).col == 1)
+    let lf = line_col_of("let x = 1\nlet y = 2", 8)
+    assert!(lf.line == 2)
+    assert!(lf.col == 9)
+    let cr = line_col_of("a\rb", 2)
+    assert!(cr.line == 2)
+    assert!(cr.col == 1)
+    let crlf = line_col_of("a\r\nb", 2)
+    assert!(crlf.line == 2)
+    assert!(crlf.col == 1)
+}
+
+// Line and column where token `tok` of `s` starts.
+fn line_col_of(_ s: DynString, _ tok: usize) -> LineCol {
+    let l = lex_text(s)
+    l.text.line_col(l.toks[tok].span.start)
 }

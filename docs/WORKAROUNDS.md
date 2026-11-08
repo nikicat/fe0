@@ -44,6 +44,23 @@ passes it.
   - **Workaround:** `tools/embed.py` writes the program modules of its batch ingots without
     formatting them.
 
+- **Some one-field structs cost bytecode at `-O s`** (argotorg/fe#1964). A one-field struct
+  such as `Pos` or `NodeId` is usually free. Four shapes are not:
+  - A constant struct passed as an argument to a call. Fe lowers it as data. Passing
+    `EMPTY_LIST` to `begin` in `fn_item` cost 610 bytes.
+  - A struct field nested in a struct that is stored in bulk or read often. A `Pos` field cost
+    31 bytes in `Diag` and 105 in `Node`, and `Parser.at: TokIdx` cost 338.
+  - A small accessor that the optimizer stops inlining once it has a few callers.
+    `Checked.storage_slot` cost 240 bytes, and `Span.start()` cost 208.
+  - A vector of one-field structs. A `MemVec<NodeId>` beside a `MemVec<usize>` cost 280
+    bytes in `Ast.lists`.
+  - **Workaround:** `fn_item` in `fe0/src/check.fe` passes the FN node's `use_list()`, which is
+    always `EMPTY_LIST`. `Parser.expr` in `fe0/src/parser.fe` passes `NOT_BINARY.tighter()`
+    instead of the constant `LOOSEST`, which cost about 650 bytes. `Node` and `Diag` store a
+    plain offset and rebuild the `Pos` in `pos()`. `Parser.at` stays a plain number, and
+    `Span.start` stays a field. `Ast.lists` keeps each list as its length followed by its
+    NodeIds in one `MemVec<usize>`. Re-measure and remove these when the issue is fixed.
+
 ## Upstream API churn (master, unreleased)
 
 - **Master removes character I/O from `std::io`** (newsfragment `+native-io.removal`).

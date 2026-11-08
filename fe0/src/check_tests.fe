@@ -41,6 +41,7 @@ use ingot::diag::{
     DiagCode,
 }
 use ingot::io::{Source, text}
+use ingot::lexer::Pos
 use ingot::parser::{MAX_DEPTH, parse}
 use ingot::parser_tests::{DEEPEST_BLOCKS, DEEPEST_PARENS, Nested}
 use std::abi::DynString
@@ -64,13 +65,13 @@ fn warns(_ s: DynString, _ code: DiagCode, _ pos: usize) {
     assert!(c.err.is_none())
     assert!(c.warns.len() == 1)
     assert!(c.warns[0].code == code)
-    assert!(c.warns[0].pos == pos)
+    assert!(c.warns[0].pos() == Pos::at(pos))
 }
 
 fn rejects(_ s: DynString, _ code: DiagCode, _ pos: usize) {
     let d = checked(s).err.unwrap()
     assert!(d.code == code)
-    assert!(d.pos == pos)
+    assert!(d.pos() == Pos::at(pos))
 }
 
 #[test]
@@ -496,23 +497,23 @@ fn side_tables() {
     assert!(c.err.is_none())
     let items = c.ast.items
     let a = c.ast.list_at(items, 0)
-    assert!(c.ast.words[c.slots[a]] == 42)
+    assert!(c.const_value(a) == 42)
     // f has three frame slots: p, x and y.
     let f = c.ast.list_at(items, 1)
-    assert!(c.slots[f] == 3)
+    assert!(c.frame_slots(f) == 3)
     let k = c.ast.list_at(items, 3)
-    let fields = c.ast.nodes[k].list()
+    let fields = c.ast.node(k).list()
     let b = c.ast.list_at(fields, 1)
-    assert!(c.slots[b] == 1)
-    assert!(c.types[b] == TY_BOOL)
+    assert!(c.storage_slot(b).word() == 1)
+    assert!(c.ty(b) == TY_BOOL)
     // In `Get`, the tail `a` resolves to field a.
-    let recv = c.ast.list_at(c.ast.nodes[k].recvs(), 0)
-    let get = c.ast.list_at(c.ast.nodes[recv].list(), 0)
-    let tail = c.ast.nodes[c.ast.nodes[get].body()].value()
-    assert!(c.res[tail] == c.ast.list_at(fields, 0))
-    assert!(c.types[tail] == TY_U256)
+    let recv = c.ast.list_at(c.ast.node(k).recvs(), 0)
+    let get = c.ast.list_at(c.ast.node(recv).list(), 0)
+    let tail = c.ast.node(c.ast.node(get).body()).value()
+    assert!(c.resolved(tail) == c.ast.list_at(fields, 0))
+    assert!(c.ty(tail) == TY_U256)
     assert!(
-        c.res[get] == c.ast.list_at(c.ast.nodes[c.res[recv]].list(), 0),
+        c.resolved(get) == c.ast.list_at(c.ast.node(c.resolved(recv)).list(), 0),
     )
 }
 
@@ -579,5 +580,5 @@ fn too_many_fields() {
     let d = fields(257).unwrap()
     assert!(d.code == E_TOO_MANY_FIELDS)
     // The name of field 256, after the 13-byte head and 256 lines of 19 bytes.
-    assert!(d.pos == 13 + 256 * 19 + 8)
+    assert!(d.pos() == Pos::at(13 + 256 * 19 + 8))
 }
