@@ -176,6 +176,23 @@ class Cases(NamedTuple):
     calls: Sequence[Case]
 
 
+# The wei that the test of one program spends at most on its deployments and calls.
+BALANCE = 1000
+# The effects of a function that deploys and calls contracts.
+USES_EVM = "uses (evm: mut Evm)"
+
+
+def indent(lines):
+    """Returns `lines` indented by one level of Fe code."""
+    return ["    " + s for s in lines]
+
+
+def evm_test(name, balance, statements):
+    """Returns the lines of a test function `name` that runs `statements`, with `balance` wei to
+    spend on the EVM."""
+    return [f"#[test(balance = {balance})]", f"fn {name}() {USES_EVM} {{"] + indent(statements) + ["}"]
+
+
 @dataclass(frozen=True)
 class DiffTest:
     """A test that compares Fe0's build of a program with the official build.
@@ -192,25 +209,30 @@ class DiffTest:
     # The deployments and calls that the test sends.
     cases: Cases
 
+    @property
+    def runner(self):
+        """Returns the name of the function that sends the cases."""
+        return f"run_{self.test}"
+
     def lines(self):
-        """Returns the lines of the test function."""
-        out = ["", "#[test(balance = 1000)]", f"fn {self.test}() uses (evm: mut Evm) {{",
+        """Returns the lines of the runner and of the test function."""
+        out = ["", f"pub fn {self.runner}() {USES_EVM} {{",
                f"    let b = difftest::Builds {{ ours: difftest::ours({lit(self.source)}), theirs: "
                f"difftest::theirs({self.contract}::init_code_offset(), {self.contract}::init_code_len()) }}"]
         for d in self.cases.deploys:
             out += block(d.payload.build("a") + [f"let _ = b.deploy(a, {d.code})"])
         m = self.cases.main.payload
-        out += ["    " + s for s in m.build("a")]
+        out += indent(m.build("a"))
         out.append(f"    let p = b.deploy_main(a, {self.cases.main.code})")
         for c in self.cases.calls:
             out += call(c.payload, c.code)
         for k, c in enumerate(DISPATCH, start=1):
             out += call(c, Kind.PROBE.case_code(k))
-        return out + ["}"]
+        return out + ["}", ""] + evm_test(self.test, BALANCE, [f"{self.runner}()"])
 
 
 def call(payload, case):
-    """Returns the block of a test function that sends `payload` to the main deployment and
+    """Returns the block of a runner that sends `payload` to the main deployment and
     fails with the case code `case`, a Fe expression, when the builds differ."""
     return block(payload.build("d") + [f"p.call(d, {case})"])
 
@@ -222,8 +244,8 @@ def reject_test(test, source, expected):
 
 
 def block(statements):
-    """Returns `statements` as a braced block inside a test function."""
-    return ["    {"] + ["        " + s for s in statements] + ["    }"]
+    """Returns `statements` as a braced block inside a runner."""
+    return indent(["{"] + indent(statements) + ["}"])
 
 
 # What ends a line, as fe0's Text.line_col counts lines: `\n`, `\r\n` or a lone `\r`.

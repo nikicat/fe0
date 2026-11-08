@@ -33,6 +33,17 @@ passes it.
 
 ## Open bugs (26.5.1)
 
+- **On the EVM backend, `fe test` compiles each test alone.** Each test becomes its own
+  object, with everything it reaches. So a test that calls Fe0 compiles the whole compiler,
+  which takes 11 to 13 s of CPU.
+  - **Where it bites:** the differential tests (DESIGN.md §10). With one test per program, the
+    cost grows with the number of programs. ADR 0003 gives the measurements.
+  - **Upstream:** the feature request argotorg/fe#1967 asks for code that many tests share to
+    compile once. It is open.
+  - **Workaround:** `tools/embed.py` runs one test per batch ingot, which calls every program
+    of the batch. It runs the reject tests on `--backend native`, which builds all of them
+    into one executable.
+
 - **`fe fmt` breaks long lines into code that Fe does not parse.** It moves a binary operator
   such as `<` or `<<` to the start of the next line. The parser then rejects that line with
   "line-start `<` is ambiguous" (`1-0001`), even though `fe fmt` exits with 0. The random

@@ -37,3 +37,16 @@ compile did not exist yet.
 | **8 ingots × 25, `--jobs 0`** | **18.4 s** |
 
 - Standalone files cannot depend on the `fe0` ingot, so they are not an option for the harness.
+
+Measured again on Nov 8 on 8 cores, after Fe0's in-EVM compile existed. The cost follows the
+number of tests, not the number of programs.
+[WORKAROUNDS.md](../WORKAROUNDS.md#open-bugs-2651) says why.
+
+| Run, at `-O 1` | One test per program | One test per batch ingot |
+|---|---|---|
+| batch01, 25 programs | 101 s | 12.4 s |
+| `tools/embed.py`, 44 programs and 70 reject programs | 4 min 22 s | 26 s |
+| `tools/gen.py -n 25` | 98 s | 14.7 s |
+
+- The 70 reject tests take 142 s on the EVM backend and 4.7 s on `--backend native`.
+- `fe test --grouped` does not help (98 s against 101 s).

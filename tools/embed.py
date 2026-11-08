@@ -49,6 +49,9 @@ CORPUS = ROOT / "corpus"
 OUT = ROOT / "out/difftest"
 # Programs per batch ingot (ADR 0003, Measurements).
 BATCH = 25
+# The start of the name of each batch ingot's test, which runs every program of the batch
+# (DESIGN.md §10).
+BATCH_TEST = "every_program_in_"
 
 
 class ScriptError(Exception):
@@ -388,13 +391,13 @@ fe0 = {{ path = "{fe0}" }}
 """
 
 
-def write_ingot(d, modules):
+def write_ingot(d, modules, lib=""):
     """Writes an ingot named after the directory `d` into `d`, with `modules`, a dict from module
-    name to text."""
+    name to text, and the root module `lib`."""
     (d / "src").mkdir(parents=True)
     fe0 = Path(os.path.relpath(fegen.FE0, d)).as_posix()
     (d / "fe.toml").write_text(INGOT.format(name=d.name, fe0=fe0))
-    (d / "src/lib.fe").write_text("")
+    (d / "src/lib.fe").write_text(lib)
     # The modules are not formatted: Fe must compile each program as written, and `fe fmt`
     # breaks some long lines into code that Fe does not parse (docs/WORKAROUNDS.md).
     for m, text in modules.items():
@@ -409,6 +412,15 @@ def fe_rejection(path):
     return None if r.returncode == 0 else r.stdout + r.stderr
 
 
+# The line of `fe test` that reports a test as passed or failed, which captures the test's name.
+# With several ingots, the line names the ingot first.
+_RESULT = r"^{}\s+\[[^\]]*\]\s+(?:\w+\s+)?(\w+)"
+_PASSED = re.compile(_RESULT.format("PASS") + "$", re.M)
+_FAILED = re.compile(_RESULT.format("FAIL"))
+_PANICKED = re.compile(_RESULT.format("FAIL") + r"\n\s+(?:\w+\s+)?Test reverted: 0x4e487b71([0-9a-f]{64})$",
+                       re.M)
+
+
 class TestRun(NamedTuple):
     """What `fe test` reports."""
 
@@ -417,17 +429,48 @@ class TestRun(NamedTuple):
     panics: dict[str, int]
     output: str
 
+    @classmethod
+    def parse(cls, output):
+        """Returns what the output of `fe test` reports."""
+        panics = {name: int(code, 16) for name, code in _PANICKED.findall(output)}
+        return cls(set(_PASSED.findall(output)), panics, output)
 
-def run_tests(ingots, opt):
-    """Runs `fe test` at the optimization level `opt` on `ingots`."""
-    r = subprocess.run([fegen.FE, "test", "-O", opt, "--jobs", "0", *map(str, ingots)],
-                       capture_output=True, text=True)
-    out = r.stdout + r.stderr
-    # With several ingots, `fe test` prints the ingot's name before the test's.
-    panics = re.findall(r"^FAIL\s+\[[^\]]*\]\s+(?:\w+\s+)?(\w+)\n\s+(?:\w+\s+)?"
-                        r"Test reverted: 0x4e487b71([0-9a-f]{64})$", out, re.M)
-    passed = set(re.findall(r"^PASS\s+\[[^\]]*\]\s+(?:\w+\s+)?(\w+)$", out, re.M))
-    return TestRun(passed, {name: int(code, 16) for name, code in panics}, out)
+    def why(self, test):
+        """Returns a sentence that quotes what the output says about the failure of `test`: the
+        lines that report it, or the end of the output when no line names it."""
+        lines = self.output.splitlines()
+        start = next((i for i, line in enumerate(lines)
+                      if (m := _FAILED.fullmatch(line)) and m[1] == test), None)
+        if start is None:
+            quote = self.output[-4000:]
+        else:
+            # The indented lines after the FAIL line belong to it.
+            end = next((i for i in range(start + 1, len(lines)) if not lines[i][:1].isspace()), len(lines))
+            quote = "\n".join(lines[start:end])
+        return "fe test says why:\n" + quote
+
+
+class Backend(Enum):
+    """A backend of `fe test`, by the value of its `--backend` option."""
+
+    # The default, which runs each test on the EVM.
+    SONATINA = "sonatina"
+    NATIVE = "native"
+
+
+class FeTest(NamedTuple):
+    """The `fe test` command of the harness."""
+
+    # The optimization level.
+    opt: str
+
+    def run(self, ingots, only=None, backend=Backend.SONATINA):
+        """Runs the tests of `ingots` on `backend`, only those whose name holds `only` when it
+        is given."""
+        options = (["-f", only] if only else []) + ["--backend", backend.value]
+        r = subprocess.run([fegen.FE, "test", "-O", self.opt, "--jobs", "0", *options, *map(str, ingots)],
+                           capture_output=True, text=True)
+        return TestRun.parse(r.stdout + r.stderr)
 
 
 def report(tests, run):
@@ -441,7 +484,7 @@ def report(tests, run):
         if name in run.panics:
             failures.append(tests[name].explain(run.panics[name]))
         elif name not in run.passed:
-            failures.append(f"{name} did not pass, and fe test says why:\n" + run.output[-4000:])
+            failures.append(f"{name} did not pass, and {run.why(name)}")
             break
     return failures
 
@@ -464,26 +507,19 @@ class Corpus(NamedTuple):
                 else:
                     failures.append(f"{p.path}: the official compiler rejects it\n{rejection}")
             failures.extend(filter(None, map(Reject.official_failure, self.rejects, reject_rejections)))
-        return Checked(Corpus(accepted, self.rejects), failures)
-
-    def write_ingots(self, out):
-        """Replaces the directory `out` with batch ingots of the programs and one ingot of the
-        reject programs, and returns their directories."""
-        shutil.rmtree(out, ignore_errors=True)
-        ingots = [write_ingot(out / f"batch{i:02}", {p.path.stem: p.module_text() for p in batch})
-                  for i, batch in enumerate(itertools.batched(self.programs, BATCH), start=1)]
-        if self.rejects:
-            ingots.append(write_ingot(out / "reject", {"reject": reject_module(self.rejects)}))
-        return ingots
+        return Checked(accepted, failures)
 
     def write(self, out):
-        """Writes to `out` the batch ingots of the programs that fe check accepts, and one ingot
-        of all the reject programs. Returns them with a message for each failure of fe check."""
+        """Replaces the directory `out` with batch ingots of the programs that fe check accepts,
+        and one ingot of all the reject programs. Returns them with a message for each failure
+        of fe check."""
         checked = self.check_official()
-        ingots = checked.corpus.write_ingots(out)
-        print(f"{len(checked.corpus.programs)} programs and {len(self.rejects)} reject programs"
+        shutil.rmtree(out, ignore_errors=True)
+        batches = [b.write() for b in Batch.split(out, checked.accepted)]
+        reject = RejectIngot(out / "reject", self.rejects).write() if self.rejects else None
+        print(f"{len(checked.accepted)} programs and {len(self.rejects)} reject programs"
               f" in {out.relative_to(ROOT)}/")
-        return Written(checked.corpus, ingots, checked.failures)
+        return Written(batches, reject, checked.failures)
 
     def harness(self, out, args):
         """Runs the corpus through the differential harness, with the ingots in `out`, and exits
@@ -491,34 +527,108 @@ class Corpus(NamedTuple):
         `args.no_run` is set, fe test does not run, and only the failures of fe check are
         reported."""
         written = self.write(out)
-        failures = written.failures if args.no_run else written.failures + written.run(args.opt)
+        failures = written.failures if args.no_run else written.failures + written.run(FeTest(args.opt))
         sys.exit("\n".join(failures) or None)
 
 
 class Checked(NamedTuple):
     """The verdict of the official compiler on a corpus."""
 
-    # The programs that it accepts, and all the reject programs.
-    corpus: Corpus
+    # The programs that it accepts.
+    accepted: list[Program]
     # A message for each program it rejects, and for each reject program whose header it
     # contradicts.
     failures: list[str]
 
 
-class Written(NamedTuple):
-    """The batch ingots of a corpus, and the programs and reject programs in them."""
+class Batch(NamedTuple):
+    """A batch ingot and the programs in it."""
 
-    corpus: Corpus
-    ingots: list[Path]
+    ingot: Path
+    programs: list[Program]
+
+    @classmethod
+    def split(cls, out, programs):
+        """Returns the batches of `programs`, BATCH in each, in the directory `out`."""
+        return [cls(out / f"batch{i:02}", list(group))
+                for i, group in enumerate(itertools.batched(programs, BATCH), start=1)]
+
+    @property
+    def test(self):
+        return BATCH_TEST + self.ingot.name
+
+    def write(self):
+        """Writes the ingot, with a module for each program and a root module that holds the
+        batch test, and returns the batch."""
+        calls = [f"ingot::{p.path.stem}::{p.diff.runner}()" for p in self.programs]
+        test = fegen.evm_test(self.test, fegen.BALANCE * len(self.programs), calls)
+        lib = "\n".join(["// Generated by tools/embed.py.", "", *test]) + "\n"
+        write_ingot(self.ingot, {p.path.stem: p.module_text() for p in self.programs}, lib)
+        return self
+
+
+def run_batches(batches, fe_test):
+    """Runs the batch tests with `fe_test`, and returns a message for each program that fails.
+
+    When a batch test fails, the tests of that batch's programs run too, and each program that
+    fails gets its message from its own test. When every program of a failed batch passes
+    alone, the batch gets one message instead, which quotes fe test on the batch test.
+    """
+    run = fe_test.run([b.ingot for b in batches], only=BATCH_TEST)
+    passed, failed = [], []
+    for b in batches:
+        (passed if b.test in run.passed else failed).append(b)
+    rerun = fe_test.run([b.ingot for b in failed]) if failed else None
+    alone = [p for b in failed for p in b.programs if p.test in rerun.passed]
+    print(f"{sum(len(b.programs) for b in passed) + len(alone)} programs passed")
+    failures = []
+    for b in failed:
+        failures += report({p.test: p for p in b.programs}, rerun) or [
+            f"{b.ingot.relative_to(ROOT)}: {b.test} fails, but each program passes alone, and"
+            f" {run.why(b.test)}"]
+    return failures
+
+
+class RejectIngot(NamedTuple):
+    """The ingot of the reject programs."""
+
+    ingot: Path
+    rejects: list[Reject]
+
+    def write(self):
+        """Writes the ingot and returns it."""
+        write_ingot(self.ingot, {"reject": reject_module(self.rejects)})
+        return self
+
+    def run(self, fe_test):
+        """Runs the tests with `fe_test`, and returns a message for each reject program that
+        fails. The tests run on the native backend, and again on the EVM when one fails
+        (DESIGN.md §10)."""
+        tests = {r.test: r for r in self.rejects}
+        run = fe_test.run([self.ingot], backend=Backend.NATIVE)
+        print(f"{len(tests.keys() & run.passed)} reject programs passed")
+        if tests.keys() <= run.passed:
+            return []
+        rerun = fe_test.run([self.ingot])
+        native_only = sorted(n for n in tests.keys() - run.passed if n in rerun.passed)
+        return report(tests, rerun) + [
+            f"{tests[n].path}: the test fails on the native backend and passes on the EVM" for n in native_only]
+
+
+class Written(NamedTuple):
+    """The ingots of a corpus."""
+
+    batches: list[Batch]
+    # The ingot of the reject programs, or None when there are none.
+    reject: RejectIngot | None
     # A message for each failure of `fe check`.
     failures: list[str]
 
-    def run(self, opt):
-        """Runs `fe test` at the optimization level `opt` on the ingots, and returns a message
-        for each test that did not pass."""
-        run = run_tests(self.ingots, opt)
-        print(f"{len(run.passed)} tests passed")
-        return report({t.test: t for t in self.corpus.programs + self.corpus.rejects}, run)
+    def run(self, fe_test):
+        """Runs the tests of the ingots with `fe_test`, and returns a message for each program or
+        reject program that did not pass."""
+        failures = run_batches(self.batches, fe_test) if self.batches else []
+        return failures + (self.reject.run(fe_test) if self.reject else [])
 
 
 def parser(doc):

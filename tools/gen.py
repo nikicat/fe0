@@ -36,7 +36,7 @@ from typing import NamedTuple
 
 import embed
 from embed import Head, ScriptLine
-from fegen import MAX, PROBE_SELECTOR, ROOT
+from fegen import MAX, PROBE_SELECTOR, ROOT, indent
 
 GEN = ROOT / "corpus/gen"
 OUT = ROOT / "out/gen"
@@ -267,10 +267,6 @@ class Body:
     def may_call(self, helper):
         """Whether the code may call `helper` here."""
         return self.may_fail() and not (helper.heavy and self.loops)
-
-
-def indent(lines):
-    return ["    " + s for s in lines]
 
 
 class BodyWriter:

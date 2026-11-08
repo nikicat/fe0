@@ -470,8 +470,7 @@ contract CgNoRecv {
     mut n: u256,
 }
 
-#[test(balance = 1000)]
-fn counter() uses (evm: mut Evm) {
+pub fn run_counter() uses (evm: mut Evm) {
     let b = difftest::Builds {
         ours: difftest::ours(
             "msg CgCounterMsg {\n    #[selector = 0xd09de08a]\n    Increment {},\n    #[selector = 0x6d4ce63c]\n    Get -> u256,\n}\n\ncontract CgCounter {\n    mut count: u256,\n\n    init() uses (mut count) {\n        count = 0\n    }\n\n    recv CgCounterMsg {\n        Increment {} uses (mut count) {\n            count += 1\n        }\n        Get {} -> u256 uses (count) {\n            count\n        }\n    }\n}\n",
@@ -539,7 +538,11 @@ fn counter() uses (evm: mut Evm) {
 }
 
 #[test(balance = 1000)]
-fn ops() uses (evm: mut Evm) {
+fn counter() uses (evm: mut Evm) {
+    run_counter()
+}
+
+pub fn run_ops() uses (evm: mut Evm) {
     let b = difftest::Builds {
         ours: difftest::ours(
             "msg CgOpsMsg {\n    #[selector = 1]\n    Add { a: u256, b: u256 } -> u256,\n    #[selector = 2]\n    Sub { a: u256, b: u256 } -> u256,\n    #[selector = 3]\n    Mul { a: u256, b: u256 } -> u256,\n    #[selector = 4]\n    Div { a: u256, b: u256 } -> u256,\n    #[selector = 5]\n    Mod { a: u256, b: u256 } -> u256,\n    #[selector = 6]\n    Shl { a: u256, b: u256 } -> u256,\n    #[selector = 7]\n    Shr { a: u256, b: u256 } -> u256,\n    #[selector = 8]\n    Bits { a: u256, b: u256 } -> u256,\n    #[selector = 9]\n    Cmp { a: u256, b: u256 } -> u256,\n    #[selector = 10]\n    Logic { a: bool, b: bool } -> bool,\n    #[selector = 11]\n    Short { a: bool, b: u256 } -> bool,\n    #[selector = 12]\n    Fact { n: u256 } -> u256,\n    #[selector = 13]\n    Sum { n: u256 } -> u256,\n    #[selector = 14]\n    Early { a: u256 } -> u256,\n    #[selector = 15]\n    Order { a: u256 } -> u256,\n    #[selector = 16]\n    Args { a: u256 } -> u256,\n    #[selector = 17]\n    Assert { a: u256 },\n    #[selector = 18]\n    AssertMsg { a: u256 },\n    #[selector = 19]\n    AssertEmpty { a: u256 },\n    #[selector = 20]\n    Aug { a: u256, b: u256 } -> u256,\n    #[selector = 21]\n    Chain { a: u256 } -> u256,\n    #[selector = 22]\n    Store { a: u256, b: bool, c: Address },\n    #[selector = 23]\n    LoadX -> u256,\n    #[selector = 24]\n    LoadFlag -> bool,\n    #[selector = 25]\n    LoadWho -> Address,\n    #[selector = 26]\n    Same { a: Address, b: Address } -> bool,\n    #[selector = 27]\n    Swap { a: u256, b: u256 } -> u256,\n    #[selector = 28]\n    Bump -> u256,\n}\n\nconst TEN: u256 = 10\n\nfn flags(_ a: bool, _ b: bool, _ c: bool, _ d: bool, _ e: bool, _ f: bool) -> u256 {\n    var r: u256 = 0\n    if a { r |= 1 }\n    if b { r |= 2 }\n    if c { r |= 4 }\n    if d { r |= 8 }\n    if e { r |= 16 }\n    if f { r |= 32 }\n    r\n}\n\nfn fact(_ n: u256) -> u256 {\n    if n == 0 { 1 } else { n * fact(n - 1) }\n}\n\n// The sum of the odd numbers up to `n`, with `break` and `continue`.\nfn sum_odd(_ n: u256) -> u256 {\n    var i: u256 = 0\n    var s: u256 = 0\n    while true {\n        i += 1\n        if i > n { break }\n        if i % 2 == 0 { continue }\n        s += i\n    }\n    s\n}\n\n// Returns early from inside an operand, while `1` is pending on the stack.\nfn early(_ a: u256) -> u256 {\n    1 + {\n        if a == 0 { return 100 }\n        a\n    }\n}\n\nfn pair(p: u256, q: u256) -> u256 {\n    p * TEN + q\n}\n\nfn aug(_ a: u256, _ b: u256) -> u256 {\n    var v = a\n    v += b\n    v *= 2\n    v -= 1\n    v /= 3\n    v %= 1000\n    v <<= 2\n    v >>= 1\n    v |= 1\n    v &= 0xff\n    v ^= 3\n    v\n}\n\nfn bump_x(_ v: u256) -> u256 {\n    v + 1\n}\n\ncontract CgOps {\n    mut x: u256,\n    mut flag: bool,\n    mut who: Address,\n\n    recv CgOpsMsg {\n        Add { a, b } -> u256 {\n            a + b\n        }\n        Sub { a, b } -> u256 {\n            a - b\n        }\n        Mul { a, b } -> u256 {\n            a * b\n        }\n        Div { a, b } -> u256 {\n            a / b\n        }\n        Mod { a, b } -> u256 {\n            a % b\n        }\n        Shl { a, b } -> u256 {\n            a << b\n        }\n        Shr { a, b } -> u256 {\n            a >> b\n        }\n        Bits { a, b } -> u256 {\n            (a & b) | (a ^ b) | ~a\n        }\n        Cmp { a, b } -> u256 {\n            flags(a < b, a <= b, a > b, a >= b, a == b, a != b)\n        }\n        Logic { a, b } -> bool {\n            (a && !b) || (!a && b)\n        }\n        Short { a, b } -> bool {\n            (a || 1 / b == 0) && (!a || b == 0 || 1 / b == 0 || true)\n        }\n        Fact { n } -> u256 {\n            fact(n)\n        }\n        Sum { n } -> u256 {\n            sum_odd(n)\n        }\n        Early { a } -> u256 {\n            early(a) + early(a)\n        }\n        Order { a } -> u256 {\n            1 / a + (a - 1)\n        }\n        Args { a } -> u256 {\n            pair(p: 1 / a, q: a - 1)\n        }\n        Assert { a } {\n            assert!(a != 0)\n        }\n        AssertMsg { a } {\n            assert!(a != 0, \"a is zero\")\n        }\n        AssertEmpty { a } {\n            assert!(a != 0, \"\")\n        }\n        Aug { a, b } -> u256 {\n            aug(a, b)\n        }\n        Chain { a } -> u256 {\n            if a == 0 { 10 } else if a == 1 { 11 } else if a == 2 { 12 } else { 13 }\n        }\n        Store { a, b, c } uses (mut x, mut flag, mut who) {\n            x = a\n            flag = b\n            who = c\n        }\n        LoadX {} -> u256 uses (x) {\n            x\n        }\n        LoadFlag {} -> bool uses (flag) {\n            flag\n        }\n        LoadWho {} -> Address uses (who) {\n            who\n        }\n        Same { a, b } -> bool {\n            a == b\n        }\n        Swap { a, b } -> u256 uses (mut x) {\n            {\n                let t = a\n                x = b\n                return t\n            }\n        }\n        Bump {} -> u256 uses (mut x) {\n            x = bump_x(x)\n            x\n        }\n    }\n}\n",
@@ -1372,7 +1375,11 @@ fn ops() uses (evm: mut Evm) {
 }
 
 #[test(balance = 1000)]
-fn init() uses (evm: mut Evm) {
+fn ops() uses (evm: mut Evm) {
+    run_ops()
+}
+
+pub fn run_init() uses (evm: mut Evm) {
     let b = difftest::Builds {
         ours: difftest::ours(
             "msg CgInitMsg {\n    #[selector = 1]\n    Get -> u256,\n    #[selector = 2]\n    Flag -> bool,\n    #[selector = 3]\n    Who -> Address,\n}\n\ncontract CgInit {\n    mut a: u256,\n    mut b: bool,\n    mut c: Address,\n\n    init(x: u256, y: bool, z: Address) uses (mut a, mut b, mut c) {\n        a = x\n        b = y\n        c = z\n    }\n\n    recv CgInitMsg {\n        Get {} -> u256 uses (a) {\n            a\n        }\n        Flag {} -> bool uses (b) {\n            b\n        }\n        Who {} -> Address uses (c) {\n            c\n        }\n    }\n}\n",
@@ -1463,7 +1470,11 @@ fn init() uses (evm: mut Evm) {
 }
 
 #[test(balance = 1000)]
-fn misc() uses (evm: mut Evm) {
+fn init() uses (evm: mut Evm) {
+    run_init()
+}
+
+pub fn run_misc() uses (evm: mut Evm) {
     let b = difftest::Builds {
         ours: difftest::ours(
             "msg CgMiscMsg {\n    #[selector = 1]\n    Unit { a: u256 } -> u256,\n    #[selector = 2]\n    Pending { a: u256 } -> u256,\n    #[selector = 3]\n    Deep { n: u256 } -> u256,\n    #[selector = 4]\n    Who { a: Address, b: Address } -> Address,\n    #[selector = 5]\n    Long { a: u256 },\n    #[selector = 6]\n    Shadow { a: u256 } -> u256,\n    #[selector = 7]\n    Flag {} -> bool,\n}\n\nconst ON: bool = true\nconst BIG: u256 = 1 << 255\n\n// A unit function that returns early, and one that returns a unit call.\nfn bump(_ a: u256) {\n    if a == 0 { return }\n    assert!(a != 7)\n}\n\nfn bump_twice(_ a: u256) {\n    bump(a)\n    return bump(a + 1)\n}\n\nfn deep(_ n: u256) -> u256 {\n    if n == 0 { 0 } else { 1 + deep(n - 1) }\n}\n\nfn pick(_ c: bool, _ a: Address, _ b: Address) -> Address {\n    if c { a } else { b }\n}\n\ncontract CgMisc {\n    mut count: u256,\n\n    recv CgMiscMsg {\n        Unit { a } -> u256 uses (mut count) {\n            bump_twice(a)\n            count += 1\n            count\n        }\n        Pending { a } -> u256 {\n            var i: u256 = 0\n            let r = 1 + {\n                while true {\n                    i += 1\n                    if i >= a { break }\n                    if i == 100 { return 7 }\n                }\n                i * 2\n            }\n            r + BIG / BIG\n        }\n        Deep { n: m } -> u256 {\n            deep(m)\n        }\n        Who { a, b } -> Address {\n            pick(ON, a, b) == pick(!ON, b, a)\n            pick(a == b, a, b)\n        }\n        Long { a } {\n            assert!(a == 0, \"abcdefghijklmnopqrstuvwxyz01234\")\n        }\n        Shadow { a } -> u256 {\n            let x = a\n            let y = {\n                let x = x + 1\n                x * 2\n            }\n            x + y\n        }\n        Flag {} -> bool {\n            ON\n        }\n    }\n}\n",
@@ -1588,7 +1599,11 @@ fn misc() uses (evm: mut Evm) {
 }
 
 #[test(balance = 1000)]
-fn chain() uses (evm: mut Evm) {
+fn misc() uses (evm: mut Evm) {
+    run_misc()
+}
+
+pub fn run_chain() uses (evm: mut Evm) {
     let b = difftest::Builds {
         ours: difftest::ours(
             "msg CgChainMsg {\n    #[selector = 1]\n    Pick { a: u256 } -> u256,\n}\n\ncontract CgChain {\n    recv CgChainMsg {\n        Pick { a } -> u256 {\n            if a == 0 { 0 } else if a == 1 { 1 } else if a == 2 { 2 } else if a == 3 { 3 } else if a == 4 { 4 } else if a == 5 { 5 } else if a == 6 { 6 } else if a == 7 { 7 } else if a == 8 { 8 } else if a == 9 { 9 } else if a == 10 { 10 } else if a == 11 { 11 } else if a == 12 { 12 } else if a == 13 { 13 } else if a == 14 { 14 } else if a == 15 { 15 } else if a == 16 { 16 } else if a == 17 { 17 } else if a == 18 { 18 } else if a == 19 { 19 } else if a == 20 { 20 } else if a == 21 { 21 } else if a == 22 { 22 } else if a == 23 { 23 } else if a == 24 { 24 } else if a == 25 { 25 } else if a == 26 { 26 } else if a == 27 { 27 } else if a == 28 { 28 } else if a == 29 { 29 } else if a == 30 { 30 } else if a == 31 { 31 } else if a == 32 { 32 } else if a == 33 { 33 } else if a == 34 { 34 } else if a == 35 { 35 } else if a == 36 { 36 } else if a == 37 { 37 } else if a == 38 { 38 } else if a == 39 { 39 } else { ((((((((((((((((a)))))))))))))))) + { { { { { { { 1 } } } } } } } }\n        }\n    }\n}\n",
@@ -1652,7 +1667,11 @@ fn chain() uses (evm: mut Evm) {
 }
 
 #[test(balance = 1000)]
-fn no_recv() uses (evm: mut Evm) {
+fn chain() uses (evm: mut Evm) {
+    run_chain()
+}
+
+pub fn run_no_recv() uses (evm: mut Evm) {
     let b = difftest::Builds {
         ours: difftest::ours("contract CgNoRecv {\n    mut n: u256,\n}\n"),
         theirs: difftest::theirs(CgNoRecv::init_code_offset(), CgNoRecv::init_code_len()),
@@ -1685,6 +1704,11 @@ fn no_recv() uses (evm: mut Evm) {
         d.push_selector(0x7777)
         p.call(d, difftest::CaseCode::new(0x200000003))
     }
+}
+
+#[test(balance = 1000)]
+fn no_recv() uses (evm: mut Evm) {
+    run_no_recv()
 }
 
 fn fails(_ s: DynString) -> Diag {

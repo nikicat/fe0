@@ -322,8 +322,8 @@ ingot under `out/difftest/` that holds:
 
 1. a copy of the program, compiled by the official compiler, with each contract and msg renamed
    to `Name_X`;
-2. one `#[test]` with the program as written in a string literal. The test calls
-   `fe0/src/difftest.fe`, which:
+2. a runner function with the program as written in a string literal, and one `#[test]` that
+   calls the runner. The runner calls `fe0/src/difftest.fe`, which:
    1. compiles the string with the `fe0` library *inside the test*, so on the EVM;
    2. copies the official build's initcode out of the test's own code, from
       `C::init_code_offset()` and `C::init_code_len()`;
@@ -359,6 +359,14 @@ Each batch ingot holds `BATCH` programs and depends on `fe0` by path. One `fe te
 run tests all the batches. [ADR 0003](adr/0003-own-corpus-and-generator.md#measurements) gives
 the measurements behind this layout.
 
+**One test per batch.** The root module of each batch ingot holds one test that calls every
+runner of the batch. Its name starts with `embed.BATCH_TEST`. The harness runs only these
+tests. It runs the programs' own tests only in a batch whose test fails, to get each program's
+panic code. The WORKAROUNDS.md entry on `fe test` compiling each EVM test alone says why.
+
+**The reject tests run on the native backend**, for the same reason. A native failure gives no
+panic code, so when one fails the harness runs the reject ingot again on the EVM to explain it.
+
 **A program that the official compiler rejects would fail its whole batch.** So `embed.py`
 first runs `fe check` on each program alone, about 0.2 s each and in parallel, and leaves out
 and reports the ones it rejects.
@@ -378,9 +386,8 @@ of a program and what the generator guarantees.
 The generator steers clear of a few shapes that Fe rejects or mishandles. Each one is marked
 at the code in `gen.py` that avoids it, with its task id or its WORKAROUNDS.md entry.
 
-**Throughput.** 200 programs took 7 minutes of wall time on 8 cores (Nov 6), about 2 seconds
-each, and 44 minutes of CPU time, about 13 seconds each. Most of it is Fe0 compiling each
-program inside the EVM.
+**Throughput.** `tools/gen.py -n 25` takes about 15 s on 8 cores (Nov 8).
+[ADR 0003](adr/0003-own-corpus-and-generator.md#measurements) gives the measurements.
 
 Shrinking a failing program is a stretch goal. It would delete lines while the failure stays.
 

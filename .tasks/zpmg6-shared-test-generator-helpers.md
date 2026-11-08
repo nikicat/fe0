@@ -21,3 +21,10 @@ T0006 moved the rest into `tools/fegen.py`: the `fe` path (`$FE`), `lit`, `write
   third element, so the shape depends on the string. Build the cases with `ok(src)`,
   `err(src, code)` and `warn(src, code)`, which return a NamedTuple `Case(kind, src, code)`
   with an Enum kind. Finding b1-5.
+
+## From the /unsmell run of 2026-11-08 (T1zv2e)
+- `tools/gen_codegen_tests.py:100-103`: `Arm.selector` reads the module global `OPS_ARMS`
+  (`OPS_ARMS.index(self) + 1`). So an `Arm` works only while it is in that one list, and an
+  equal `Arm` elsewhere would get the first matching index. The numbering belongs to the msg
+  that holds the arms. Build `OPS_MSG` with `enumerate(OPS_ARMS, start=1)`, and pass the
+  selector to `Arm.variant`. Finding b2-7.
