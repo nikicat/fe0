@@ -402,48 +402,11 @@ def write_ingot(d, modules):
     return d
 
 
-def write_ingots(out, programs, rejects):
-    """Replaces the directory `out` with batch ingots of `programs` and one ingot of `rejects`,
-    and returns their directories."""
-    shutil.rmtree(out, ignore_errors=True)
-    ingots = [write_ingot(out / f"batch{i:02}", {p.path.stem: p.module_text() for p in batch})
-              for i, batch in enumerate(itertools.batched(programs, BATCH), start=1)]
-    if rejects:
-        ingots.append(write_ingot(out / "reject", {"reject": reject_module(rejects)}))
-    return ingots
-
-
 def fe_rejection(path):
     """Returns the output of the official compiler's `fe check` on the file `path` when it
     rejects the file, or None when it accepts it."""
     r = subprocess.run([fegen.FE, "check", "--standalone", str(ROOT / path)], capture_output=True, text=True)
     return None if r.returncode == 0 else r.stdout + r.stderr
-
-
-class Checked(NamedTuple):
-    """The verdict of the official compiler on the corpus."""
-
-    # The programs that it accepts.
-    programs: list[Program]
-    # A message for each program it rejects, and for each reject program whose header it
-    # contradicts.
-    failures: list[str]
-
-
-def check_official(programs, rejects):
-    """Returns the verdict of `fe check` on `programs` and `rejects`, which it checks one file
-    at a time."""
-    with ThreadPoolExecutor() as pool:
-        program_rejections = pool.map(fe_rejection, [p.path for p in programs])
-        reject_rejections = pool.map(fe_rejection, [r.path for r in rejects])
-        checked = Checked([], [])
-        for p, rejection in zip(programs, program_rejections):
-            if rejection is None:
-                checked.programs.append(p)
-            else:
-                checked.failures.append(f"{p.path}: the official compiler rejects it\n{rejection}")
-        checked.failures.extend(filter(None, map(Reject.official_failure, rejects, reject_rejections)))
-    return checked
 
 
 class TestRun(NamedTuple):
@@ -483,12 +446,69 @@ def report(tests, run):
     return failures
 
 
-class Written(NamedTuple):
-    """The batch ingots of the corpus and the programs in them."""
+class Corpus(NamedTuple):
+    """Programs and reject programs to run through the differential harness."""
 
-    # The programs that the official compiler accepts.
     programs: list[Program]
     rejects: list[Reject]
+
+    def check_official(self):
+        """Returns the verdict of `fe check` on the corpus, which it checks one file at a time."""
+        with ThreadPoolExecutor() as pool:
+            program_rejections = pool.map(fe_rejection, [p.path for p in self.programs])
+            reject_rejections = pool.map(fe_rejection, [r.path for r in self.rejects])
+            accepted, failures = [], []
+            for p, rejection in zip(self.programs, program_rejections):
+                if rejection is None:
+                    accepted.append(p)
+                else:
+                    failures.append(f"{p.path}: the official compiler rejects it\n{rejection}")
+            failures.extend(filter(None, map(Reject.official_failure, self.rejects, reject_rejections)))
+        return Checked(Corpus(accepted, self.rejects), failures)
+
+    def write_ingots(self, out):
+        """Replaces the directory `out` with batch ingots of the programs and one ingot of the
+        reject programs, and returns their directories."""
+        shutil.rmtree(out, ignore_errors=True)
+        ingots = [write_ingot(out / f"batch{i:02}", {p.path.stem: p.module_text() for p in batch})
+                  for i, batch in enumerate(itertools.batched(self.programs, BATCH), start=1)]
+        if self.rejects:
+            ingots.append(write_ingot(out / "reject", {"reject": reject_module(self.rejects)}))
+        return ingots
+
+    def write(self, out):
+        """Writes to `out` the batch ingots of the programs that fe check accepts, and one ingot
+        of all the reject programs. Returns them with a message for each failure of fe check."""
+        checked = self.check_official()
+        ingots = checked.corpus.write_ingots(out)
+        print(f"{len(checked.corpus.programs)} programs and {len(self.rejects)} reject programs"
+              f" in {out.relative_to(ROOT)}/")
+        return Written(checked.corpus, ingots, checked.failures)
+
+    def harness(self, out, args):
+        """Runs the corpus through the differential harness, with the ingots in `out`, and exits
+        with a message for each failure. `args` holds the options of `parser`. When
+        `args.no_run` is set, fe test does not run, and only the failures of fe check are
+        reported."""
+        written = self.write(out)
+        failures = written.failures if args.no_run else written.failures + written.run(args.opt)
+        sys.exit("\n".join(failures) or None)
+
+
+class Checked(NamedTuple):
+    """The verdict of the official compiler on a corpus."""
+
+    # The programs that it accepts, and all the reject programs.
+    corpus: Corpus
+    # A message for each program it rejects, and for each reject program whose header it
+    # contradicts.
+    failures: list[str]
+
+
+class Written(NamedTuple):
+    """The batch ingots of a corpus, and the programs and reject programs in them."""
+
+    corpus: Corpus
     ingots: list[Path]
     # A message for each failure of `fe check`.
     failures: list[str]
@@ -498,16 +518,7 @@ class Written(NamedTuple):
         for each test that did not pass."""
         run = run_tests(self.ingots, opt)
         print(f"{len(run.passed)} tests passed")
-        return report({t.test: t for t in self.programs + self.rejects}, run)
-
-
-def write(programs, rejects, out):
-    """Writes to `out` the batch ingots of the programs that fe check accepts, and one ingot of
-    all of `rejects`. Returns them with a message for each failure of fe check."""
-    checked = check_official(programs, rejects)
-    ingots = write_ingots(out, checked.programs, rejects)
-    print(f"{len(checked.programs)} programs and {len(rejects)} reject programs in {out.relative_to(ROOT)}/")
-    return Written(checked.programs, rejects, ingots, checked.failures)
+        return report({t.test: t for t in self.corpus.programs + self.corpus.rejects}, run)
 
 
 def parser(doc):
@@ -519,15 +530,6 @@ def parser(doc):
     ap.add_argument("-O", dest="opt", default="1", help="the optimization level of fe test")
     ap.add_argument("--no-run", action="store_true", help="skip fe test (fe check still runs)")
     return ap
-
-
-def harness(programs, rejects, out, args):
-    """Runs `programs` and `rejects` through the differential harness, with the ingots in `out`,
-    and exits with a message for each failure. `args` holds the options of `parser`. When
-    `args.no_run` is set, fe test does not run, and only the failures of fe check are reported."""
-    written = write(programs, rejects, out)
-    failures = written.failures if args.no_run else written.failures + written.run(args.opt)
-    sys.exit("\n".join(failures) or None)
 
 
 def check_header():
@@ -555,7 +557,7 @@ def main():
         sys.exit(str(e))
     if not programs and not rejects:
         sys.exit("Errors when choosing programs: none matches " + " ".join(args.names))
-    harness(programs, rejects, OUT, args)
+    Corpus(programs, rejects).harness(OUT, args)
 
 if __name__ == "__main__":
     main()

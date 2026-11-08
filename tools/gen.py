@@ -779,7 +779,7 @@ def main():
     GEN.mkdir(parents=True)
     paths = [write(s) for s in range(args.seed, args.seed + args.n)]
     programs = [embed.Program.load(p) for p in paths]
-    embed.harness(programs, [], OUT, args)
+    embed.Corpus(programs, []).harness(OUT, args)
 
 
 if __name__ == "__main__":
