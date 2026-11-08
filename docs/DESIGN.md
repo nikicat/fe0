@@ -48,6 +48,8 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
 - **Newline tokens** are kept, except where the innermost open bracket is `(` (SPEC §3.4).
   `Lexer.open` tracks the open brackets. Where a newline is kept, the parser decides whether
   it ends a statement.
+- **Doc comments** are `T_DOC` tokens, even inside `( )`. `Parser.skip_docs` skips them only
+  where SPEC §1 allows them, so a doc comment anywhere else is a syntax error.
 - **Positions:** line and column are computed only when an error is reported, by scanning the
   source buffer up to the error offset.
 
@@ -75,8 +77,8 @@ node kind.
   ([ADR 0011](adr/0011-error-field-not-result.md)).
 - **Recursion is bounded:** nesting depth is capped at `MAX_DEPTH` in `fe0/src/parser.fe`
   ([ADR 0012](adr/0012-max-depth.md)).
-- **Statement terminators** follow SPEC §3.4. Any other token after a statement is
-  `P_EXPECTED_END`.
+- **Statement terminators** follow SPEC §3.4. Any other token after a statement or an
+  item is `P_EXPECTED_END`.
 
 ## 5. Checker
 

@@ -1,0 +1,59 @@
+// Doc comments in every place where SPEC §1 allows them.
+
+/// A message with documented variants and fields.
+msg DocMsg { /// After the `{` of a msg.
+    #[selector = 2]
+    Get -> u256, /// At the end of a variant's line.
+    /// Before the selector.
+    #[selector = 1]
+    /// After the selector.
+    Set { /// After the `{` of a variant's fields.
+        /// A variant's field.
+        v: u256, /// At the end of a variant field's line.
+        w: u256,
+    },
+    #[selector = 3]
+    Put {},
+}
+
+msg PingMsg {
+    #[selector = 4]
+    Ping -> u256,
+}
+
+//// Four slashes start a doc comment too.
+
+/// A constant.
+pub const START: u256 = 7
+
+/// A function.
+fn twice(_ x: u256) -> u256 {
+    x * 2
+}
+
+/// A contract.
+contract Doc { /// After the `{` of a contract.
+    /// A field.
+    mut a: u256 /// At the end of a field's line.
+    mut b: u256
+    /// The constructor.
+    init() uses (mut a) {
+        a = START
+    } /// At the end of the line of `init`.
+    /// The receive block.
+    recv DocMsg { /// After the `{` of a recv block.
+        /// An arm.
+        Set { v, w } uses (mut a) {
+            a = twice(v) + w
+        } /// At the end of an arm's line.
+        Get {} -> u256 uses (a) { a }
+        /// An arm.
+        // A plain comment between a doc comment and what it documents.
+        Put {} uses (mut b) {
+            b = 1
+        }
+    } /// At the end of the line of a recv block.
+    recv PingMsg {
+        Ping {} -> u256 uses (b) { b }
+    }
+}

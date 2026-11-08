@@ -122,7 +122,20 @@ impl Parser {
         while self.eat(T_NEWLINE) {}
     }
 
-    // Whether the current token ends a statement (SPEC.md §3.4).
+    // Skips newlines and doc comments. When `}` or the end of input follows, it skips none of
+    // the doc comments, so the caller reports a syntax error at the first one.
+    fn skip_docs(mut self) {
+        let start = self.at
+        while self.eat(T_NEWLINE) || self.eat(T_DOC) {}
+        if self.peek() == P_RBRACE || self.peek() == T_EOF {
+            // Returning an error here would cost bytecode at every caller, which would have to
+            // pass it on.
+            self.at = start
+            self.skip_newlines()
+        }
+    }
+
+    // Whether the current token ends a statement or an item (SPEC.md §3.4).
     fn at_stmt_end(self) -> bool {
         let k = self.peek()
         k == T_NEWLINE || k == P_RBRACE || k == T_EOF
@@ -134,8 +147,8 @@ impl Parser {
         self.kind_at(self.at - 1)
     }
 
-    // Checks that the current token ends a statement. Errors with P_EXPECTED_END or
-    // P_RECORD_LITERAL when it does not end as SPEC.md §3.4 says.
+    // Checks that the current token ends a statement or an item. Errors with P_EXPECTED_END or
+    // P_RECORD_LITERAL when it does not.
     fn end_stmt(self) -> Result<Diag, ()> {
         if !self.at_stmt_end() {
             return Result::Err(self.err(P_EXPECTED_END))
@@ -149,11 +162,18 @@ impl Parser {
 
     // The rest of a comma-separated list, after its opening token, up to and including `close`.
     // Each element is a node of kind `elem`. A trailing comma and newlines around elements are
-    // allowed. Returns the list.
+    // allowed. Variant lists and field lists also allow doc comments before each element
+    // (SPEC.md §1). Returns the list.
     fn comma_list(mut self, _ close: Tok, _ elem: Kind) -> Result<Diag, usize> {
         let mark = self.pending.len()
-        self.skip_newlines()
-        while !self.eat(close) {
+        let docs = elem == NODE_VARIANT || elem == NODE_FIELD
+        while true {
+            if docs {
+                self.skip_docs()
+            } else {
+                self.skip_newlines()
+            }
+            if self.eat(close) { break }
             let e = self.element(elem)?
             self.pending.push(e)
             self.skip_newlines()
@@ -161,7 +181,6 @@ impl Parser {
                 self.expect(close)?
                 break
             }
-            self.skip_newlines()
         }
         Result::Ok(self.ast.add_list(mut self.pending, mark))
     }
@@ -233,14 +252,16 @@ impl Parser {
         Result::Ok(TY_NONE)
     }
 
-    // program = { NL } { item { NL } }
+    // program = { NL } { item TERM { NL } }
     fn program(mut self) -> Result<Diag, usize> {
         let mark = self.pending.len()
-        self.skip_newlines()
+        self.skip_docs()
         while self.peek() != T_EOF {
             let item = self.item()?
             self.pending.push(item)
-            self.skip_newlines()
+            // Two items may not share a line (SPEC.md §3.1).
+            self.end_stmt()?
+            self.skip_docs()
         }
         Result::Ok(self.ast.add_list(mut self.pending, mark))
     }
@@ -263,7 +284,7 @@ impl Parser {
         Result::Err(self.err(P_EXPECTED_ITEM))
     }
 
-    // const = "const" IDENT ":" type "=" expr TERM
+    // const = "const" IDENT ":" type "=" expr
     fn const_item(mut self) -> Result<Diag, usize> {
         let pos = self.bump().span.start
         let name = self.ident()?
@@ -271,7 +292,6 @@ impl Parser {
         let ty = self.ty()?
         self.expect(O_ASSIGN)?
         let value = self.expr()?
-        self.end_stmt()?
         Result::Ok(self.ast.add_node(Node::new_const(pos, name, ty, value)))
     }
 
@@ -314,7 +334,7 @@ impl Parser {
         Result::Ok(self.ast.add_node(Node::new_msg(pos, name, variants)))
     }
 
-    // variant = selector IDENT [ "{" [ fields ] "}" ] [ "->" type ]
+    // variant = selector NL IDENT [ "{" [ fields ] "}" ] [ "->" type ]
     // selector = "#" "[" "selector" "=" INT "]"
     fn variant(mut self) -> Result<Diag, usize> {
         let hash = self.expect(P_HASH)?
@@ -327,7 +347,8 @@ impl Parser {
         self.expect(O_ASSIGN)?
         let sel = self.expect(T_INT)?
         self.expect(P_RBRACKET)?
-        self.skip_newlines()
+        self.expect(T_NEWLINE)?
+        self.skip_docs()
         let selector = self.ast.add_int(sel)
         let name = self.ident()?
         var fields: usize = 0
@@ -354,7 +375,7 @@ impl Parser {
         let pos = self.bump().span.start
         let name = self.ident()?
         self.expect(P_LBRACE)?
-        self.skip_newlines()
+        self.skip_docs()
         let fields = self.pending.len()
         while self.peek() == K_MUT || self.peek() == T_IDENT {
             if !self.eat(K_MUT) {
@@ -363,19 +384,19 @@ impl Parser {
             let f = self.field()?
             self.pending.push(f)
             self.eat(P_COMMA)
-            self.skip_newlines()
+            self.skip_docs()
         }
         let field_list = self.ast.add_list(mut self.pending, fields)
         var init: usize = 0
         if self.peek() == K_INIT {
             init = self.init()?
-            self.skip_newlines()
+            self.skip_docs()
         }
         let recvs = self.pending.len()
         while self.peek() == K_RECV {
             let r = self.recv()?
             self.pending.push(r)
-            self.skip_newlines()
+            self.skip_docs()
         }
         let recv_list = self.ast.add_list(mut self.pending, recvs)
         self.expect(P_RBRACE)?
@@ -403,12 +424,12 @@ impl Parser {
         let pos = self.bump().span.start
         let name = self.ident()?
         self.expect(P_LBRACE)?
-        self.skip_newlines()
+        self.skip_docs()
         let mark = self.pending.len()
         while !self.eat(P_RBRACE) {
             let arm = self.arm()?
             self.pending.push(arm)
-            self.skip_newlines()
+            self.skip_docs()
         }
         let arms = self.ast.add_list(mut self.pending, mark)
         Result::Ok(self.ast.add_node(Node::new_recv(pos, name, arms)))

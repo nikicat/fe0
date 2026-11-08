@@ -1,0 +1,5 @@
+// expect: P002 4:23
+// A selector must end its line (SPEC §3.1).
+msg M {
+    #[selector = 0x1] Get -> u256,
+}

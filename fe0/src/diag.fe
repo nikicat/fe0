@@ -48,7 +48,7 @@ pub const P_EXPECTED_TOKEN: DiagCode = DiagCode { raw: 2002 }
 pub const P_EXPECTED_IDENT: DiagCode = DiagCode { raw: 2003 }
 pub const P_EXPECTED_TYPE: DiagCode = DiagCode { raw: 2004 }
 pub const P_EXPECTED_EXPR: DiagCode = DiagCode { raw: 2005 }
-// The statement did not end where SPEC.md §3.4 says it must.
+// A statement or an item did not end where SPEC.md §3.4 says it must.
 pub const P_EXPECTED_END: DiagCode = DiagCode { raw: 2006 }
 pub const P_CHAINED_COMPARISON: DiagCode = DiagCode { raw: 2007 }
 pub const P_TOO_DEEP: DiagCode = DiagCode { raw: 2008 }

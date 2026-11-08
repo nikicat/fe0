@@ -12,7 +12,7 @@ Marks used below:
 - **[V]** — behaviour not yet confirmed against the official compiler. Each one becomes a
   differential test before it is relied on.
 - **[✓]** — confirmed by a probe. The probes are in `spike-*/`, and the ADRs in `docs/adr/`
-  summarise what they found. The reject programs in `corpus/reject/` are probes too (§8).
+  summarise what they found. The programs in `corpus/` and `corpus/reject/` are probes too (§8).
 
 Reference toolchain: Fe 26.5.1. Probes ran on master `d217a51bf`.
 
@@ -26,7 +26,8 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 |---|---|---|
 | Whitespace | `[ \t]+` | Ignored |
 | Newline | `(\n \| \r\n \| \r)+` | Significant: it can end a statement (§3.4) |
-| Line comment | `//` up to the end of the line | `///` doc comments are lexed the same way and ignored |
+| Line comment | `//` up to the end of the line | Ignored, unless it starts with `///` |
+| Doc comment | `///` up to the end of the line | Allowed only in some places (below) |
 | Identifier | `[a-zA-Z_][a-zA-Z0-9_]*`, excluding keywords, type names and a lone `_` | |
 | Decimal integer | `[0-9]+(_[0-9]+)*` | The value must fit in 256 bits |
 | Hex integer | `0[xX][0-9a-fA-F]+` | No `_` separators. Must fit in 256 bits |
@@ -36,6 +37,29 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 | Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside, and rejects spaced forms. Fe 26.5.1 rejects `x + = 1` too **[✓]** |
 
 - **No block comments.** Fe's compiler lexer has none, even though the tree-sitter grammar does.
+- **Doc comments.** A comment that starts with `///`, including `////`, is a doc comment. It may
+  come only before an item, a contract field, `init`, `recv`, an arm, a variant or a field of a
+  variant. Only newlines and other comments may come between it and what it documents. A doc
+  comment may also stand at the end of the line where a contract field, `init`, `recv`, an arm,
+  a variant or a variant's field ends. It then documents the next of these. It may not stand at
+  the end of the line where an item ends, because only a newline or a plain comment may follow
+  an item on its line (§3.1). It may also end the line of the `{` that opens a `msg`, a
+  contract, a `recv` block or a variant's fields. A variant's doc comment may come before or
+  after its selector, but not on the selector's line. A doc comment must come before what it
+  documents, so one right before `}` or at the end of the file is a syntax error. Fe allows doc
+  comments in the same places:
+  - Fe accepts each of these places **[✓]**. The program `corpus/doc_comments.fe` has one of
+    each.
+  - Fe rejects a doc comment in a block (`1-0001`) **[✓]**. The probe is
+    `corpus/reject/doc_in_block.fe`.
+  - Fe rejects a doc comment before `}` (`1-0001`) **[✓]**. The probe is
+    `corpus/reject/doc_documents_nothing.fe`.
+  - Fe rejects a doc comment on a selector's line (`1-0001`) **[✓]**. The probe is
+    `corpus/reject/doc_after_selector.fe`.
+  - Fe rejects a doc comment at the end of an item's line (`1-0001`) **[V]**.
+  - Fe also rejects a doc comment among binds, among parameters or `uses` entries, anywhere
+    else inside `( )`, and at the end of the file **[V]**.
+  - `//!` is an ordinary comment in both **[V]**.
 - **Binary (`0b`) and octal (`0o`) literals** are left out of Fe0. They are valid Fe, so they
   could be added later.
 
@@ -85,19 +109,26 @@ rule for every name, which the subset rule allows.
 
 The grammar is EBNF. `{ x }` means zero or more, `[ x ]` means optional. Terminals are quoted.
 `NL` is a newline token.
+- The grammar leaves out doc comments (§1). It also leaves out the optional newlines inside
+  `msg`, `contract` and `recv` bodies. A newline that is required, such as the one after a
+  selector, is shown as `NL`.
+- Fe rejects two items on one line (`1-0001`) **[✓]**. The probe is
+  `corpus/reject/items_one_line.fe`. Fe accepts contract members and arms on one line **[V]**.
+- Fe rejects a selector with its variant on the same line (`1-0001`) **[✓]**. The probe is
+  `corpus/reject/selector_same_line.fe`.
 
 ```ebnf
-program     = { NL } { item { NL } } ;
+program     = { NL } { item TERM { NL } } ;      (* one item per line *)
 item        = [ "pub" ] ( const | function | msg | contract ) ;
 
-const       = "const" IDENT ":" type "=" expr TERM ;
+const       = "const" IDENT ":" type "=" expr ;
 function    = "fn" IDENT "(" [ params ] ")" [ "->" type ] block ;
 params      = param { "," param } [ "," ] ;
 param       = [ "_" ] IDENT ":" type ;            (* "_ x" means a positional argument, §5.4 *)
 
 msg         = "msg" IDENT "{" [ variants ] "}" ;
 variants    = variant { "," variant } [ "," ] ;
-variant     = selector IDENT [ "{" [ fields ] "}" ] [ "->" type ] ;
+variant     = selector NL IDENT [ "{" [ fields ] "}" ] [ "->" type ] ;
 selector    = "#" "[" "selector" "=" INT "]" ;
 fields      = field { "," field } [ "," ] ;
 field       = IDENT ":" type ;

@@ -94,6 +94,9 @@ pub const K_TRUE: Tok = Tok { code: 27 }
 pub const K_FALSE: Tok = Tok { code: 28 }
 pub const K_ASSERT: Tok = Tok { code: 29 }
 
+// A doc comment: `///` up to the end of the line (SPEC.md §1).
+pub const T_DOC: Tok = Tok { code: 30 }
+
 // Punctuation.
 pub const P_LPAREN: Tok = Tok { code: 40 }
 pub const P_RPAREN: Tok = Tok { code: 41 }
@@ -442,7 +445,8 @@ struct Lexer {
     open: Brackets,
     // Offset in `text` where the token being read starts.
     start: usize,
-    // A `/` token read while skipping trivia, returned after the newline before it.
+    // A `/` operator or a doc comment that skip_trivia read. `next` returns it after the
+    // newline before it, if there is one.
     queued: Option<Token>,
 }
 
@@ -655,7 +659,7 @@ impl Lexer {
     }
 
     // Skips blanks and comments, and returns the offset of the first line break among them.
-    // A `/` operator that ends the run is read and queued.
+    // A `/` operator or a doc comment that ends the run is read and queued.
     fn skip_trivia(mut self) -> Option<usize> uses (input: mut Source) {
         var newline: Option<usize> = Option::None
         while true {
@@ -673,8 +677,14 @@ impl Lexer {
                     self.queued = Option::Some(self.tok(kind))
                     break
                 }
+                self.bump()
+                let doc = self.peeked == C_SLASH
                 while self.peeked >= 0 && !is_newline(self.peeked) {
                     self.bump()
+                }
+                if doc {
+                    self.queued = Option::Some(self.tok(T_DOC))
+                    break
                 }
             } else {
                 break

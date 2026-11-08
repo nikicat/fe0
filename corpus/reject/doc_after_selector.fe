@@ -1,0 +1,6 @@
+// expect: P002 4:23
+// A doc comment may not share a line with a selector (SPEC §1).
+msg M {
+    #[selector = 0x1] /// The getter.
+    Get -> u256,
+}

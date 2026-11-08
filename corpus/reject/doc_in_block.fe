@@ -1,0 +1,7 @@
+// expect: P005 4:5
+// A doc comment may not come before a statement (SPEC §1).
+fn g() -> u256 {
+    /// The result.
+    let x: u256 = 1
+    x
+}

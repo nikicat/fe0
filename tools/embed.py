@@ -87,10 +87,15 @@ def word(text):
     return v
 
 
+# A Fe0 line comment, as Lexer.skip_trivia reads it (SPEC §1).
+LINE_COMMENT = re.compile(r"//[^\r\n]*")
+
+
 def selectors(source):
-    """The selector of each msg variant in `source`, by variant name."""
+    """Returns the selector of each msg variant in `source`, by variant name."""
     return {name: int(sel, 0)
-            for sel, name in re.findall(r"#\[selector\s*=\s*(\w+)\]\s*(\w+)", source)}
+            for sel, name in re.findall(r"#\[selector\s*=\s*(\w+)\]\s*(\w+)",
+                                        LINE_COMMENT.sub("", source))}
 
 
 class Head(Enum):
@@ -223,7 +228,7 @@ def rename(source, suffix):
     if not declared:
         return Renamed(source, [])
     names = "|".join(name for _, name in declared)
-    use = re.compile(rf'"(?:\\.|[^"\\])*"|//[^\n]*|\b({names})\b')
+    use = re.compile(rf'"(?:\\.|[^"\\])*"|{LINE_COMMENT.pattern}|\b({names})\b')
     return Renamed(use.sub(lambda m: f"{m[1]}_{suffix}" if m[1] else m[0], source),
                    [f"{name}_{suffix}" for kind, name in declared if kind == "contract"])
 

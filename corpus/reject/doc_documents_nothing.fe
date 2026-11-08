@@ -1,0 +1,7 @@
+// expect: P002 6:5
+// A doc comment must come before what it documents (SPEC §1), not before the `}`.
+msg M {
+    #[selector = 0x1]
+    Get -> u256,
+    /// Nothing follows.
+}

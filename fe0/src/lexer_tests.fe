@@ -171,6 +171,19 @@ fn newlines_collapse_and_vanish_where_parens_are_innermost() {
 }
 
 #[test]
+fn doc_comments_are_tokens() {
+    // `///` and longer runs of `/` start a doc comment, which is a token (SPEC.md §1).
+    expect(
+        "a /// note\n//// b\nc",
+        [T_IDENT, T_DOC, T_NEWLINE, T_DOC, T_NEWLINE, T_IDENT, T_EOF],
+    )
+    expect(
+        "(a\n/// note\n)",
+        [P_LPAREN, T_IDENT, T_DOC, P_RPAREN, T_EOF],
+    )
+}
+
+#[test]
 fn integers() {
     let l = lex_text("0 42 1_000_000 0xff")
     assert!(l.text.int_value(l.toks[0].span).unwrap() == 0)

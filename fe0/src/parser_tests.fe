@@ -573,6 +573,63 @@ fn items() {
 }
 
 #[test]
+fn item_lines() {
+    // Two items may not share a line, but contract members and arms may (SPEC.md §3.1).
+    let d = parse_err("fn f() {} fn g() {}")
+    assert!(d.code == P_EXPECTED_END)
+    assert!(d.pos == 10)
+    parse_text(
+        "contract C { mut a: u256 init() {} recv M { A {} {} B {} {} } }",
+    )
+    // A selector must end its line.
+    assert!(
+        parse_err("msg M {\n    #[selector = 1] A\n}").code == P_EXPECTED_TOKEN,
+    )
+}
+
+#[test]
+fn doc_comments() {
+    // A doc comment may come in each place that SPEC.md §1 lists.
+    parse_text("/// a\n\n//// b\nfn f() {}\n/// c\nconst A: u256 = 1\n")
+    parse_text(
+        "contract C {\n    /// a\n    mut a: u256\n    /// b\n    init() {}\n    /// c\n    recv M {\n        /// d\n        A {} {}\n    }\n}",
+    )
+    parse_text(
+        "msg M {\n    /// a\n    #[selector = 1]\n    /// b\n    A {\n        /// c\n        v: u256,\n    },\n}",
+    )
+    // At the end of a member's line or of an opening `{`, and with a plain comment after it.
+    parse_text(
+        "contract C { /// a\n    mut a: u256 /// b\n    mut b: u256\n    init() {} /// c\n    recv M { /// d\n        A {} {} /// e\n        /// f\n        // g\n        B {} {}\n    } /// h\n    recv N {}\n}",
+    )
+    parse_text(
+        "msg M { /// a\n    #[selector = 1]\n    A {}, /// b\n    #[selector = 2]\n    B { /// c\n        v: u256, /// d\n        w: u256,\n    },\n}",
+    )
+    // Anywhere else, it is an error.
+    assert!(
+        parse_err("fn f() {\n    /// a\n    1\n}").code == P_EXPECTED_EXPR,
+    )
+    assert!(
+        parse_err("fn f(\n    /// a\n    x: u256,\n) {}").code == P_EXPECTED_IDENT,
+    )
+    assert!(
+        parse_err("fn f() {} /// a\nfn g() {}").code == P_EXPECTED_END,
+    )
+    // A doc comment must document something. The error points at the doc comment.
+    let d = parse_err("fn f() {}\n/// a\n")
+    assert!(d.code == P_EXPECTED_ITEM)
+    assert!(d.pos == 10)
+    let v = parse_err("msg M {\n    #[selector = 1]\n    A,\n    /// a\n}")
+    assert!(v.code == P_EXPECTED_TOKEN)
+    assert!(v.pos == 39)
+    assert!(
+        parse_err("contract C {\n    /// a\n}").code == P_EXPECTED_TOKEN,
+    )
+    assert!(
+        parse_err("contract C {\n    recv M {\n        /// a\n    }\n}").code == P_EXPECTED_IDENT,
+    )
+}
+
+#[test]
 fn errors() {
     assert!(parse_err("let x = 1").code == P_EXPECTED_ITEM)
     assert!(parse_err("fn (").code == P_EXPECTED_IDENT)
