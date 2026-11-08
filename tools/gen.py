@@ -529,6 +529,76 @@ class BodyWriter:
         return [f"var {i.name}: u256 = 0", f"while {cond} {{"] + indent(body) + ["}"]
 
 
+class ContractWriter:
+    """The writer of the contract and its msgs. It holds the contract's storage fields, and the
+    selectors that its msg variants already use."""
+
+    def __init__(self, gen, fields):
+        self.gen, self.rng, self.fields = gen, gen.rng, fields
+        self.used = {PROBE_SELECTOR}
+
+    def uses(self, body):
+        """The uses clause of `body`, with some unused entries."""
+        g, entries = self.gen, []
+        for f in self.fields:
+            if f.name in body.writes or (f.name in body.reads and g.chance(0.1)):
+                entries.append(f"mut {f.name}")
+            elif f.name in body.reads or g.chance(0.15):
+                entries.append(f.name)
+        if not entries:
+            return ""
+        self.rng.shuffle(entries)
+        return f" uses ({', '.join(entries)}{',' if g.chance(0.1) else ''})"
+
+    def msgs(self):
+        """The msgs that the contract receives."""
+        msgs = []
+        for _ in range(self.rng.choice([1, 1, 1, 2])):
+            variants = [self.variant() for _ in range(self.rng.randint(1, 6))]
+            msgs.append(Msg(self.gen.fresh("M"), variants))
+        return msgs
+
+    def variant(self):
+        """A msg variant with a selector that no other variant uses."""
+        rng = self.rng
+        sel = rng.choice([rng.randrange(1, 64), rng.getrandbits(32)])
+        while sel in self.used:
+            sel = rng.getrandbits(32)
+        self.used.add(sel)
+        vfields = [Field(f"a{j}", rng.choice(list(Ty))) for j in range(rng.choice([0, 1, 1, 2, 3]))]
+        sc = Scope([*self.fields, *(Var(f.name, f.ty, VarKind.PARAM) for f in vfields)])
+        return Variant(self.gen.fresh("V"), sel, vfields, rng.choice([None, *sc.types()]))
+
+    def contract(self, init_params, msgs):
+        """The contract, with an init that takes `init_params` unless they are None."""
+        g = self.gen
+        lines = indent([f"mut {f.name}: {f.ty}," for f in self.fields])
+        if init_params is not None:
+            body = Body(BodyKind.INIT, None, self.rng.randint(0, 4))
+            sc = [*g.consts, *self.fields, *(p.var for p in init_params)]
+            code = BodyWriter(g, body, sc).write()
+            head = f"init({decls(init_params)}){self.uses(body)} {{"
+            lines += [""] + indent([head] + indent(code) + ["}"])
+        for m in msgs:
+            arms = [line for v in m.variants for line in self.arm(v)]
+            lines += [""] + indent([f"recv {m.name} {{"] + indent(arms) + ["}"])
+        return ["contract C {"] + lines + ["}"]
+
+    def arm(self, v):
+        """The recv arm of the variant `v`."""
+        g = self.gen
+        binds, locals_ = [], []
+        for f in v.fields:
+            local = f.name if g.chance(0.5) else g.fresh("b")
+            binds.append(f.name if local == f.name else f"{f.name}: {local}")
+            locals_.append(Var(local, f.ty, VarKind.PARAM))
+        body = Body(BodyKind.ARM, v.ret, self.rng.randint(0, 7))
+        lines = BodyWriter(g, body, [*g.consts, *self.fields, *locals_]).write()
+        ret = f" -> {v.ret}" if v.ret else ""
+        head = f"{v.name} {{ {', '.join(binds)} }}" if binds else f"{v.name} {{}}"
+        return [f"{head}{ret}{self.uses(body)} {{"] + indent(lines) + ["}"]
+
+
 class Generated(NamedTuple):
     """A generated program and its call script."""
 
@@ -630,66 +700,6 @@ class Gen:
         self.helpers.append(Helper(name, params, ret, body.heavy))
         return [f"fn {name}({decls(params)}) -> {ret} {{"] + indent(lines) + ["}"]
 
-    def uses(self, body, fields):
-        """The uses clause of `body`, with some unused entries."""
-        entries = []
-        for f in fields:
-            if f.name in body.writes or (f.name in body.reads and self.chance(0.1)):
-                entries.append(f"mut {f.name}")
-            elif f.name in body.reads or self.chance(0.15):
-                entries.append(f.name)
-        if not entries:
-            return ""
-        self.rng.shuffle(entries)
-        return f" uses ({', '.join(entries)}{',' if self.chance(0.1) else ''})"
-
-    def msgs(self, fields):
-        """The msgs that the contract with `fields` receives."""
-        used = {PROBE_SELECTOR}
-        msgs = []
-        for _ in range(self.rng.choice([1, 1, 1, 2])):
-            variants = [self.variant(used, fields) for _ in range(self.rng.randint(1, 6))]
-            msgs.append(Msg(self.fresh("M"), variants))
-        return msgs
-
-    def variant(self, used, fields):
-        """A msg variant with a selector that is not in `used`, which it adds to `used`."""
-        rng = self.rng
-        sel = rng.choice([rng.randrange(1, 64), rng.getrandbits(32)])
-        while sel in used:
-            sel = rng.getrandbits(32)
-        used.add(sel)
-        vfields = [Field(f"a{j}", rng.choice(list(Ty))) for j in range(rng.choice([0, 1, 1, 2, 3]))]
-        sc = Scope([*fields, *(Var(f.name, f.ty, VarKind.PARAM) for f in vfields)])
-        return Variant(self.fresh("V"), sel, vfields, rng.choice([None, *sc.types()]))
-
-    def contract(self, fields, init_params, msgs):
-        """The contract, with an init that takes `init_params` unless they are None."""
-        lines = indent([f"mut {f.name}: {f.ty}," for f in fields])
-        if init_params is not None:
-            body = Body(BodyKind.INIT, None, self.rng.randint(0, 4))
-            sc = [*self.consts, *fields, *(p.var for p in init_params)]
-            code = BodyWriter(self, body, sc).write()
-            head = f"init({decls(init_params)}){self.uses(body, fields)} {{"
-            lines += [""] + indent([head] + indent(code) + ["}"])
-        for m in msgs:
-            arms = [line for v in m.variants for line in self.arm(v, fields)]
-            lines += [""] + indent([f"recv {m.name} {{"] + indent(arms) + ["}"])
-        return ["contract C {"] + lines + ["}"]
-
-    def arm(self, v, fields):
-        """The recv arm of the variant `v`."""
-        binds, locals_ = [], []
-        for f in v.fields:
-            local = f.name if self.chance(0.5) else self.fresh("b")
-            binds.append(f.name if local == f.name else f"{f.name}: {local}")
-            locals_.append(Var(local, f.ty, VarKind.PARAM))
-        body = Body(BodyKind.ARM, v.ret, self.rng.randint(0, 7))
-        lines = BodyWriter(self, body, [*self.consts, *fields, *locals_]).write()
-        ret = f" -> {v.ret}" if v.ret else ""
-        head = f"{v.name} {{ {', '.join(binds)} }}" if binds else f"{v.name} {{}}"
-        return [f"{head}{ret}{self.uses(body, fields)} {{"] + indent(lines) + ["}"]
-
     def msg_item(self, m):
         out = [f"msg {m.name} {{"]
         for v in m.variants:
@@ -715,10 +725,11 @@ class Gen:
         consts = [[self.constant()] for _ in range(rng.choice([0, 0, 1, 2, 3]))]
         helpers = [self.helper() for _ in range(rng.choice([0, 1, 1, 2, 3]))]
         fields = [Var(self.fresh("s"), rng.choice(list(Ty)), VarKind.FIELD) for _ in range(rng.randint(1, 4))]
-        msgs = self.msgs(fields)
+        writer = ContractWriter(self, fields)
+        msgs = writer.msgs()
         init_params = [Param(self.fresh("p"), rng.choice(list(Ty)), False)
                        for _ in range(rng.randint(0, 3))] if self.chance(0.8) else None
-        contract = self.contract(fields, init_params, msgs)
+        contract = writer.contract(init_params, msgs)
         items = self.order(consts, helpers + [self.msg_item(m) for m in msgs] + [contract])
         text = f"// Generated by tools/gen.py with seed {self.seed}.\n" \
             + "\n\n".join("\n".join(item) for item in items) + "\n"
