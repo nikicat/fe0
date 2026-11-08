@@ -479,62 +479,62 @@ fn counter() uses (evm: mut Evm) {
         theirs: difftest::theirs(CgCounter::init_code_offset(), CgCounter::init_code_len()),
     }
     {
-        var a: MemVec<u8> = MemVec::new()
-        let _ = b.deploy(a, std::evm::wei(5), difftest::CaseCode::new(0x100000001))
+        var a = difftest::Payload::new(std::evm::wei(5))
+        let _ = b.deploy(a, difftest::CaseCode::new(0x100000001))
     }
     {
-        var a: MemVec<u8> = MemVec::new()
+        var a = difftest::Payload::new(Wei::zero())
         a.push(0x99)
-        let _ = b.deploy(a, Wei::zero(), difftest::CaseCode::new(0x100000002))
+        let _ = b.deploy(a, difftest::CaseCode::new(0x100000002))
     }
-    var a: MemVec<u8> = MemVec::new()
-    let p = b.deploy_main(a, Wei::zero(), difftest::CaseCode::new(0x100001000))
+    var a = difftest::Payload::new(Wei::zero())
+    let p = b.deploy_main(a, difftest::CaseCode::new(0x100001000))
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x6d4ce63c, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001001))
-    }
-    {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xd09de08a, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001002))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x6d4ce63c)
+        p.call(d, difftest::CaseCode::new(0x100001001))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xd09de08a, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001003))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xd09de08a)
+        p.call(d, difftest::CaseCode::new(0x100001002))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x6d4ce63c, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001004))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xd09de08a)
+        p.call(d, difftest::CaseCode::new(0x100001003))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xd09de08a, bytes: 4)
-        p.call(d, std::evm::wei(1), difftest::CaseCode::new(0x100001005))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x6d4ce63c)
+        p.call(d, difftest::CaseCode::new(0x100001004))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x6d4ce63c, bytes: 4)
-        difftest::push_be(mut d, 0x5, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001006))
+        var d = difftest::Payload::new(std::evm::wei(1))
+        d.push_selector(0xd09de08a)
+        p.call(d, difftest::CaseCode::new(0x100001005))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000001))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x6d4ce63c)
+        d.push_word(0x5)
+        p.call(d, difftest::CaseCode::new(0x100001006))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
+        var d = difftest::Payload::new(Wei::zero())
+        p.call(d, difftest::CaseCode::new(0x200000001))
+    }
+    {
+        var d = difftest::Payload::new(Wei::zero())
         d.push(0)
         d.push(0)
         d.push(1)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000002))
+        p.call(d, difftest::CaseCode::new(0x200000002))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x7777, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000003))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x7777)
+        p.call(d, difftest::CaseCode::new(0x200000003))
     }
 }
 
@@ -546,902 +546,828 @@ fn ops() uses (evm: mut Evm) {
         ),
         theirs: difftest::theirs(CgOps::init_code_offset(), CgOps::init_code_len()),
     }
-    var a: MemVec<u8> = MemVec::new()
-    let p = b.deploy_main(a, Wei::zero(), difftest::CaseCode::new(0x100001000))
+    var a = difftest::Payload::new(Wei::zero())
+    let p = b.deploy_main(a, difftest::CaseCode::new(0x100001000))
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        difftest::push_be(mut d, 0x3, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001001))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x2)
+        d.push_word(0x3)
+        p.call(d, difftest::CaseCode::new(0x100001001))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        difftest::push_be(mut d, 0x3, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001002))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(0x2)
+        d.push_word(0x3)
+        p.call(d, difftest::CaseCode::new(0x100001002))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        difftest::push_be(mut d, 0x3, bytes: 32)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001003))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(0x3)
+        d.push_word(0x2)
+        p.call(d, difftest::CaseCode::new(0x100001003))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x3, bytes: 4)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        difftest::push_be(mut d, 0x3, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001004))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x3)
+        d.push_word(0x2)
+        d.push_word(0x3)
+        p.call(d, difftest::CaseCode::new(0x100001004))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x4, bytes: 4)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        difftest::push_be(mut d, 0x3, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001005))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x4)
+        d.push_word(0x2)
+        d.push_word(0x3)
+        p.call(d, difftest::CaseCode::new(0x100001005))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x5, bytes: 4)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        difftest::push_be(mut d, 0x3, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001006))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x5)
+        d.push_word(0x2)
+        d.push_word(0x3)
+        p.call(d, difftest::CaseCode::new(0x100001006))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x8, bytes: 4)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        difftest::push_be(mut d, 0x3, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001007))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x8)
+        d.push_word(0x2)
+        d.push_word(0x3)
+        p.call(d, difftest::CaseCode::new(0x100001007))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x9, bytes: 4)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        difftest::push_be(mut d, 0x3, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001008))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x9)
+        d.push_word(0x2)
+        d.push_word(0x3)
+        p.call(d, difftest::CaseCode::new(0x100001008))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x9, bytes: 4)
-        difftest::push_be(mut d, 0x3, bytes: 32)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001009))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x9)
+        d.push_word(0x3)
+        d.push_word(0x2)
+        p.call(d, difftest::CaseCode::new(0x100001009))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x14, bytes: 4)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        difftest::push_be(mut d, 0x3, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000100a))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x14)
+        d.push_word(0x2)
+        d.push_word(0x3)
+        p.call(d, difftest::CaseCode::new(0x10000100a))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000100b))
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x10000100b))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000100c))
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x10000100c))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(0x1)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000100d))
+        p.call(d, difftest::CaseCode::new(0x10000100d))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x3, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x3)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000100e))
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x10000100e))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x4, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x4)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000100f))
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x10000100f))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x5, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x5)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001010))
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001010))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x8, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x8)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001011))
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001011))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x9, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x9)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001012))
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001012))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x9, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x9)
+        d.push_word(0x1)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001013))
+        p.call(d, difftest::CaseCode::new(0x100001013))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x14, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x14)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001014))
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001014))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001015))
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001015))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001016))
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001016))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(0x0)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001017))
+        p.call(d, difftest::CaseCode::new(0x100001017))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x3, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x3)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001018))
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001018))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x4, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x4)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001019))
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001019))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x5, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x5)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000101a))
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x10000101a))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x8, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x8)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000101b))
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x10000101b))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x9, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x9)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000101c))
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x10000101c))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x9, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x9)
+        d.push_word(0x0)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000101d))
+        p.call(d, difftest::CaseCode::new(0x10000101d))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x14, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x14)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000101e))
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x10000101e))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x1)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000101f))
+        p.call(d, difftest::CaseCode::new(0x10000101f))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(0x1)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001020))
+        p.call(d, difftest::CaseCode::new(0x100001020))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001021))
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001021))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x3, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x3)
+        d.push_word(0x1)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001022))
+        p.call(d, difftest::CaseCode::new(0x100001022))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x4, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x4)
+        d.push_word(0x1)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001023))
+        p.call(d, difftest::CaseCode::new(0x100001023))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x5, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x5)
+        d.push_word(0x1)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001024))
+        p.call(d, difftest::CaseCode::new(0x100001024))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x8, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x8)
+        d.push_word(0x1)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001025))
+        p.call(d, difftest::CaseCode::new(0x100001025))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x9, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x9)
+        d.push_word(0x1)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001026))
+        p.call(d, difftest::CaseCode::new(0x100001026))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x9, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x9)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001027))
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001027))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x14, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x14)
+        d.push_word(0x1)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001028))
+        p.call(d, difftest::CaseCode::new(0x100001028))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001029))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x7)
+        d.push_word(0x7)
+        p.call(d, difftest::CaseCode::new(0x100001029))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000102a))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(0x7)
+        d.push_word(0x7)
+        p.call(d, difftest::CaseCode::new(0x10000102a))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000102b))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(0x7)
+        d.push_word(0x7)
+        p.call(d, difftest::CaseCode::new(0x10000102b))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x3, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000102c))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x3)
+        d.push_word(0x7)
+        d.push_word(0x7)
+        p.call(d, difftest::CaseCode::new(0x10000102c))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x4, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000102d))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x4)
+        d.push_word(0x7)
+        d.push_word(0x7)
+        p.call(d, difftest::CaseCode::new(0x10000102d))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x5, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000102e))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x5)
+        d.push_word(0x7)
+        d.push_word(0x7)
+        p.call(d, difftest::CaseCode::new(0x10000102e))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x8, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000102f))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x8)
+        d.push_word(0x7)
+        d.push_word(0x7)
+        p.call(d, difftest::CaseCode::new(0x10000102f))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x9, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001030))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x9)
+        d.push_word(0x7)
+        d.push_word(0x7)
+        p.call(d, difftest::CaseCode::new(0x100001030))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x9, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001031))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x9)
+        d.push_word(0x7)
+        d.push_word(0x7)
+        p.call(d, difftest::CaseCode::new(0x100001031))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x14, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001032))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x14)
+        d.push_word(0x7)
+        d.push_word(0x7)
+        p.call(d, difftest::CaseCode::new(0x100001032))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x3, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x3)
+        d.push_word(0x0)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001033))
+        p.call(d, difftest::CaseCode::new(0x100001033))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x3, bytes: 4)
-        difftest::push_be(mut d, 0x100000000000000000000000000000000, bytes: 32)
-        difftest::push_be(mut d, 0x100000000000000000000000000000000, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001034))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x3)
+        d.push_word(0x100000000000000000000000000000000)
+        d.push_word(0x100000000000000000000000000000000)
+        p.call(d, difftest::CaseCode::new(0x100001034))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x3, bytes: 4)
-        difftest::push_be(mut d, 0x80000000000000000000000000000000, bytes: 32)
-        difftest::push_be(mut d, 0x100000000000000000000000000000000, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001035))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x3)
+        d.push_word(0x80000000000000000000000000000000)
+        d.push_word(0x100000000000000000000000000000000)
+        p.call(d, difftest::CaseCode::new(0x100001035))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x4, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001036))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x4)
+        d.push_word(0x7)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001036))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x5, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001037))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x5)
+        d.push_word(0x7)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001037))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x5, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        difftest::push_be(mut d, 0x3, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001038))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x5)
+        d.push_word(0x7)
+        d.push_word(0x3)
+        p.call(d, difftest::CaseCode::new(0x100001038))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x6, bytes: 4)
-        difftest::push_be(mut d, 0x3, bytes: 32)
-        difftest::push_be(mut d, 0xff, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001039))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x6)
+        d.push_word(0x3)
+        d.push_word(0xff)
+        p.call(d, difftest::CaseCode::new(0x100001039))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x6, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(mut d, 0x100, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000103a))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x6)
+        d.push_word(0x1)
+        d.push_word(0x100)
+        p.call(d, difftest::CaseCode::new(0x10000103a))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x7, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x7)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x12c, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000103b))
+        d.push_word(0x12c)
+        p.call(d, difftest::CaseCode::new(0x10000103b))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x7, bytes: 4)
-        difftest::push_be(
-            mut d,
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x7)
+        d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-            bytes: 32,
         )
-        difftest::push_be(mut d, 0x4, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000103c))
+        d.push_word(0x4)
+        p.call(d, difftest::CaseCode::new(0x10000103c))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xa, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000103d))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xa)
+        d.push_word(0x0)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x10000103d))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xa, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000103e))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xa)
+        d.push_word(0x0)
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x10000103e))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xa, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000103f))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xa)
+        d.push_word(0x1)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x10000103f))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xa, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001040))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xa)
+        d.push_word(0x1)
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001040))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xa, bytes: 4)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001041))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xa)
+        d.push_word(0x2)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001041))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xa, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001042))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xa)
+        d.push_word(0x0)
+        d.push_word(0x2)
+        p.call(d, difftest::CaseCode::new(0x100001042))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xb, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001043))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xb)
+        d.push_word(0x1)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001043))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xb, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001044))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xb)
+        d.push_word(0x0)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001044))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xb, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001045))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xb)
+        d.push_word(0x0)
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001045))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xc, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001046))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xc)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001046))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xc, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001047))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xc)
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001047))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xc, bytes: 4)
-        difftest::push_be(mut d, 0x5, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001048))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xc)
+        d.push_word(0x5)
+        p.call(d, difftest::CaseCode::new(0x100001048))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xc, bytes: 4)
-        difftest::push_be(mut d, 0x39, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001049))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xc)
+        d.push_word(0x39)
+        p.call(d, difftest::CaseCode::new(0x100001049))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xc, bytes: 4)
-        difftest::push_be(mut d, 0x3a, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000104a))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xc)
+        d.push_word(0x3a)
+        p.call(d, difftest::CaseCode::new(0x10000104a))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xd, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000104b))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xd)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x10000104b))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xd, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000104c))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xd)
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x10000104c))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xd, bytes: 4)
-        difftest::push_be(mut d, 0xa, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000104d))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xd)
+        d.push_word(0xa)
+        p.call(d, difftest::CaseCode::new(0x10000104d))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xe, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000104e))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xe)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x10000104e))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xe, bytes: 4)
-        difftest::push_be(mut d, 0x5, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000104f))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xe)
+        d.push_word(0x5)
+        p.call(d, difftest::CaseCode::new(0x10000104f))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0xf, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001050))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0xf)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001050))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x10, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001051))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x10)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001051))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x10, bytes: 4)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001052))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x10)
+        d.push_word(0x2)
+        p.call(d, difftest::CaseCode::new(0x100001052))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x11, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001053))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x11)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001053))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x11, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001054))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x11)
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001054))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x12, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001055))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x12)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001055))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x12, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001056))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x12)
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001056))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x13, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001057))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x13)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001057))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x15, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001058))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x15)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001058))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x15, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001059))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x15)
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001059))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x15, bytes: 4)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000105a))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x15)
+        d.push_word(0x2)
+        p.call(d, difftest::CaseCode::new(0x10000105a))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x15, bytes: 4)
-        difftest::push_be(mut d, 0x3, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000105b))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x15)
+        d.push_word(0x3)
+        p.call(d, difftest::CaseCode::new(0x10000105b))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x17, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000105c))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x17)
+        p.call(d, difftest::CaseCode::new(0x10000105c))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x16, bytes: 4)
-        difftest::push_be(mut d, 0x5, bytes: 32)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(mut d, 0xcc, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000105d))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x16)
+        d.push_word(0x5)
+        d.push_word(0x1)
+        d.push_word(0xcc)
+        p.call(d, difftest::CaseCode::new(0x10000105d))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x17, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000105e))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x17)
+        p.call(d, difftest::CaseCode::new(0x10000105e))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x18, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000105f))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x18)
+        p.call(d, difftest::CaseCode::new(0x10000105f))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x19, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001060))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x19)
+        p.call(d, difftest::CaseCode::new(0x100001060))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x16, bytes: 4)
-        difftest::push_be(mut d, 0x6, bytes: 32)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        difftest::push_be(mut d, 0xcc, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001061))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x16)
+        d.push_word(0x6)
+        d.push_word(0x2)
+        d.push_word(0xcc)
+        p.call(d, difftest::CaseCode::new(0x100001061))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x16, bytes: 4)
-        difftest::push_be(mut d, 0x6, bytes: 32)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        difftest::push_be(
-            mut d,
-            0x100000000000000000000000000000000000000cc,
-            bytes: 32,
-        )
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001062))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x16)
+        d.push_word(0x6)
+        d.push_word(0x0)
+        d.push_word(0x100000000000000000000000000000000000000cc)
+        p.call(d, difftest::CaseCode::new(0x100001062))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x17, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001063))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x17)
+        p.call(d, difftest::CaseCode::new(0x100001063))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1b, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(mut d, 0x2, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001064))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1b)
+        d.push_word(0x1)
+        d.push_word(0x2)
+        p.call(d, difftest::CaseCode::new(0x100001064))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x17, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001065))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x17)
+        p.call(d, difftest::CaseCode::new(0x100001065))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1c, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001066))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1c)
+        p.call(d, difftest::CaseCode::new(0x100001066))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1c, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001067))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1c)
+        p.call(d, difftest::CaseCode::new(0x100001067))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x17, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001068))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x17)
+        p.call(d, difftest::CaseCode::new(0x100001068))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1a, bytes: 4)
-        difftest::push_be(mut d, 0xcc, bytes: 32)
-        difftest::push_be(mut d, 0xcc, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001069))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1a)
+        d.push_word(0xcc)
+        d.push_word(0xcc)
+        p.call(d, difftest::CaseCode::new(0x100001069))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1a, bytes: 4)
-        difftest::push_be(mut d, 0xcc, bytes: 32)
-        difftest::push_be(mut d, 0xdd, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000106a))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1a)
+        d.push_word(0xcc)
+        d.push_word(0xdd)
+        p.call(d, difftest::CaseCode::new(0x10000106a))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1a, bytes: 4)
-        difftest::push_be(
-            mut d,
-            0x10000000000000000000000000000000000000000,
-            bytes: 32,
-        )
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000106b))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1a)
+        d.push_word(0x10000000000000000000000000000000000000000)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x10000106b))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000106c))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x10000106c))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        difftest::push_be(mut d, 0x2, bytes: 32)
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x1)
+        d.push_word(0x2)
         d.push(0x99)
         d.push(0x99)
         d.push(0x99)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000106d))
+        p.call(d, difftest::CaseCode::new(0x10000106d))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x17, bytes: 4)
-        p.call(d, std::evm::wei(5), difftest::CaseCode::new(0x10000106e))
+        var d = difftest::Payload::new(std::evm::wei(5))
+        d.push_selector(0x17)
+        p.call(d, difftest::CaseCode::new(0x10000106e))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x17, bytes: 4)
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x17)
         d.push(0x99)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000106f))
+        p.call(d, difftest::CaseCode::new(0x10000106f))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000001))
+        var d = difftest::Payload::new(Wei::zero())
+        p.call(d, difftest::CaseCode::new(0x200000001))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
+        var d = difftest::Payload::new(Wei::zero())
         d.push(0)
         d.push(0)
         d.push(1)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000002))
+        p.call(d, difftest::CaseCode::new(0x200000002))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x7777, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000003))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x7777)
+        p.call(d, difftest::CaseCode::new(0x200000003))
     }
 }
 
@@ -1454,38 +1380,34 @@ fn init() uses (evm: mut Evm) {
         theirs: difftest::theirs(CgInit::init_code_offset(), CgInit::init_code_len()),
     }
     {
-        var a: MemVec<u8> = MemVec::new()
-        let _ = b.deploy(a, Wei::zero(), difftest::CaseCode::new(0x100000001))
+        var a = difftest::Payload::new(Wei::zero())
+        let _ = b.deploy(a, difftest::CaseCode::new(0x100000001))
     }
     {
-        var a: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut a, 0xaa, bytes: 32)
-        difftest::push_be(mut a, 0x1, bytes: 32)
-        let _ = b.deploy(a, Wei::zero(), difftest::CaseCode::new(0x100000002))
+        var a = difftest::Payload::new(Wei::zero())
+        a.push_word(0xaa)
+        a.push_word(0x1)
+        let _ = b.deploy(a, difftest::CaseCode::new(0x100000002))
     }
     {
-        var a: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut a, 0xaa, bytes: 32)
-        difftest::push_be(mut a, 0x2, bytes: 32)
-        difftest::push_be(mut a, 0xcc, bytes: 32)
-        let _ = b.deploy(a, Wei::zero(), difftest::CaseCode::new(0x100000003))
+        var a = difftest::Payload::new(Wei::zero())
+        a.push_word(0xaa)
+        a.push_word(0x2)
+        a.push_word(0xcc)
+        let _ = b.deploy(a, difftest::CaseCode::new(0x100000003))
     }
     {
-        var a: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut a, 0xaa, bytes: 32)
-        difftest::push_be(mut a, 0x1, bytes: 32)
-        difftest::push_be(
-            mut a,
-            0x1000000000000000000000000000000000000000000000000cc,
-            bytes: 32,
-        )
-        let _ = b.deploy(a, Wei::zero(), difftest::CaseCode::new(0x100000004))
+        var a = difftest::Payload::new(Wei::zero())
+        a.push_word(0xaa)
+        a.push_word(0x1)
+        a.push_word(0x1000000000000000000000000000000000000000000000000cc)
+        let _ = b.deploy(a, difftest::CaseCode::new(0x100000004))
     }
     {
-        var a: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut a, 0xaa, bytes: 32)
-        difftest::push_be(mut a, 0x1, bytes: 32)
-        difftest::push_be(mut a, 0xcc, bytes: 32)
+        var a = difftest::Payload::new(Wei::zero())
+        a.push_word(0xaa)
+        a.push_word(0x1)
+        a.push_word(0xcc)
         a.push(0x99)
         a.push(0x99)
         a.push(0x99)
@@ -1493,50 +1415,50 @@ fn init() uses (evm: mut Evm) {
         a.push(0x99)
         a.push(0x99)
         a.push(0x99)
-        let _ = b.deploy(a, Wei::zero(), difftest::CaseCode::new(0x100000005))
+        let _ = b.deploy(a, difftest::CaseCode::new(0x100000005))
     }
     {
-        var a: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut a, 0xaa, bytes: 32)
-        difftest::push_be(mut a, 0x1, bytes: 32)
-        difftest::push_be(mut a, 0xcc, bytes: 32)
-        let _ = b.deploy(a, std::evm::wei(5), difftest::CaseCode::new(0x100000006))
+        var a = difftest::Payload::new(std::evm::wei(5))
+        a.push_word(0xaa)
+        a.push_word(0x1)
+        a.push_word(0xcc)
+        let _ = b.deploy(a, difftest::CaseCode::new(0x100000006))
     }
-    var a: MemVec<u8> = MemVec::new()
-    difftest::push_be(mut a, 0xaa, bytes: 32)
-    difftest::push_be(mut a, 0x1, bytes: 32)
-    difftest::push_be(mut a, 0xcc, bytes: 32)
-    let p = b.deploy_main(a, Wei::zero(), difftest::CaseCode::new(0x100001000))
+    var a = difftest::Payload::new(Wei::zero())
+    a.push_word(0xaa)
+    a.push_word(0x1)
+    a.push_word(0xcc)
+    let p = b.deploy_main(a, difftest::CaseCode::new(0x100001000))
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001001))
-    }
-    {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001002))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001001))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x3, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001003))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        p.call(d, difftest::CaseCode::new(0x100001002))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000001))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x3)
+        p.call(d, difftest::CaseCode::new(0x100001003))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
+        var d = difftest::Payload::new(Wei::zero())
+        p.call(d, difftest::CaseCode::new(0x200000001))
+    }
+    {
+        var d = difftest::Payload::new(Wei::zero())
         d.push(0)
         d.push(0)
         d.push(1)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000002))
+        p.call(d, difftest::CaseCode::new(0x200000002))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x7777, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000003))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x7777)
+        p.call(d, difftest::CaseCode::new(0x200000003))
     }
 }
 
@@ -1548,120 +1470,120 @@ fn misc() uses (evm: mut Evm) {
         ),
         theirs: difftest::theirs(CgMisc::init_code_offset(), CgMisc::init_code_len()),
     }
-    var a: MemVec<u8> = MemVec::new()
-    let p = b.deploy_main(a, Wei::zero(), difftest::CaseCode::new(0x100001000))
+    var a = difftest::Payload::new(Wei::zero())
+    let p = b.deploy_main(a, difftest::CaseCode::new(0x100001000))
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001001))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001001))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001002))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001002))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x6, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001003))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x6)
+        p.call(d, difftest::CaseCode::new(0x100001003))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x7, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001004))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x7)
+        p.call(d, difftest::CaseCode::new(0x100001004))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x9, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001005))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x9)
+        p.call(d, difftest::CaseCode::new(0x100001005))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001006))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001006))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        difftest::push_be(mut d, 0x5, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001007))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(0x5)
+        p.call(d, difftest::CaseCode::new(0x100001007))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x2, bytes: 4)
-        difftest::push_be(mut d, 0x96, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001008))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(0x96)
+        p.call(d, difftest::CaseCode::new(0x100001008))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x3, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001009))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x3)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001009))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x3, bytes: 4)
-        difftest::push_be(mut d, 0x12c, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000100a))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x3)
+        d.push_word(0x12c)
+        p.call(d, difftest::CaseCode::new(0x10000100a))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x4, bytes: 4)
-        difftest::push_be(mut d, 0xaa, bytes: 32)
-        difftest::push_be(mut d, 0xbb, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000100b))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x4)
+        d.push_word(0xaa)
+        d.push_word(0xbb)
+        p.call(d, difftest::CaseCode::new(0x10000100b))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x4, bytes: 4)
-        difftest::push_be(mut d, 0xaa, bytes: 32)
-        difftest::push_be(mut d, 0xaa, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000100c))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x4)
+        d.push_word(0xaa)
+        d.push_word(0xaa)
+        p.call(d, difftest::CaseCode::new(0x10000100c))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x5, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000100d))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x5)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x10000100d))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x5, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000100e))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x5)
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x10000100e))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x6, bytes: 4)
-        difftest::push_be(mut d, 0x4, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x10000100f))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x6)
+        d.push_word(0x4)
+        p.call(d, difftest::CaseCode::new(0x10000100f))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x7, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001010))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x7)
+        p.call(d, difftest::CaseCode::new(0x100001010))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000001))
+        var d = difftest::Payload::new(Wei::zero())
+        p.call(d, difftest::CaseCode::new(0x200000001))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
+        var d = difftest::Payload::new(Wei::zero())
         d.push(0)
         d.push(0)
         d.push(1)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000002))
+        p.call(d, difftest::CaseCode::new(0x200000002))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x7777, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000003))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x7777)
+        p.call(d, difftest::CaseCode::new(0x200000003))
     }
 }
 
@@ -1673,59 +1595,59 @@ fn chain() uses (evm: mut Evm) {
         ),
         theirs: difftest::theirs(CgChain::init_code_offset(), CgChain::init_code_len()),
     }
-    var a: MemVec<u8> = MemVec::new()
-    let p = b.deploy_main(a, Wei::zero(), difftest::CaseCode::new(0x100001000))
+    var a = difftest::Payload::new(Wei::zero())
+    let p = b.deploy_main(a, difftest::CaseCode::new(0x100001000))
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x0, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001001))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x0)
+        p.call(d, difftest::CaseCode::new(0x100001001))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x1, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001002))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001002))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x14, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001003))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x14)
+        p.call(d, difftest::CaseCode::new(0x100001003))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x27, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001004))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x27)
+        p.call(d, difftest::CaseCode::new(0x100001004))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x28, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001005))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x28)
+        p.call(d, difftest::CaseCode::new(0x100001005))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        difftest::push_be(mut d, 0x29, bytes: 32)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001006))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(0x29)
+        p.call(d, difftest::CaseCode::new(0x100001006))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000001))
+        var d = difftest::Payload::new(Wei::zero())
+        p.call(d, difftest::CaseCode::new(0x200000001))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
+        var d = difftest::Payload::new(Wei::zero())
         d.push(0)
         d.push(0)
         d.push(1)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000002))
+        p.call(d, difftest::CaseCode::new(0x200000002))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x7777, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000003))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x7777)
+        p.call(d, difftest::CaseCode::new(0x200000003))
     }
 }
 
@@ -1736,32 +1658,32 @@ fn no_recv() uses (evm: mut Evm) {
         theirs: difftest::theirs(CgNoRecv::init_code_offset(), CgNoRecv::init_code_len()),
     }
     {
-        var a: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut a, 0x5, bytes: 32)
-        let _ = b.deploy(a, Wei::zero(), difftest::CaseCode::new(0x100000001))
+        var a = difftest::Payload::new(Wei::zero())
+        a.push_word(0x5)
+        let _ = b.deploy(a, difftest::CaseCode::new(0x100000001))
     }
-    var a: MemVec<u8> = MemVec::new()
-    let p = b.deploy_main(a, Wei::zero(), difftest::CaseCode::new(0x100001000))
+    var a = difftest::Payload::new(Wei::zero())
+    let p = b.deploy_main(a, difftest::CaseCode::new(0x100001000))
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x1, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x100001001))
-    }
-    {
-        var d: MemVec<u8> = MemVec::new()
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000001))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        p.call(d, difftest::CaseCode::new(0x100001001))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
+        var d = difftest::Payload::new(Wei::zero())
+        p.call(d, difftest::CaseCode::new(0x200000001))
+    }
+    {
+        var d = difftest::Payload::new(Wei::zero())
         d.push(0)
         d.push(0)
         d.push(1)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000002))
+        p.call(d, difftest::CaseCode::new(0x200000002))
     }
     {
-        var d: MemVec<u8> = MemVec::new()
-        difftest::push_be(mut d, 0x7777, bytes: 4)
-        p.call(d, Wei::zero(), difftest::CaseCode::new(0x200000003))
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x7777)
+        p.call(d, difftest::CaseCode::new(0x200000003))
     }
 }
 

@@ -40,24 +40,23 @@ def write_formatted(path, text):
 
 
 class Payload:
-    """Bytes sent to a contract, together with a value in wei."""
+    """Bytes sent to a contract, together with a value in wei. It mirrors `difftest::Payload` in
+    fe0/src/difftest.fe."""
 
     def __init__(self, value):
         self.value = value
 
-    @property
-    def wei(self):
-        """The Fe expression for the value."""
-        return f"std::evm::wei({self.value})" if self.value else "Wei::zero()"
-
     def build(self, var):
-        """Returns the Fe statements that declare `var` and fill it with the bytes."""
-        return [f"var {var}: MemVec<u8> = MemVec::new()"] + self.pushes(var)
+        """Returns the Fe statements that declare `var` as a `difftest::Payload` and fill it with
+        the bytes."""
+        wei = f"std::evm::wei({self.value})" if self.value else "Wei::zero()"
+        new = f"var {var} = difftest::Payload::new({wei})"
+        return [new] + [f"{var}.{c}" for c in self.pushes()]
 
 
-def push_words(var, words, extra):
-    """Returns the Fe statements that append 32-byte `words`, then `extra` bytes of 0x99."""
-    return [f"difftest::push_be(mut {var}, {w:#x}, bytes: 32)" for w in words] + [f"{var}.push(0x99)"] * extra
+def push_words(words, extra):
+    """Returns the Payload method calls that append the ABI `words`, then `extra` bytes of 0x99."""
+    return [f"push_word({w:#x})" for w in words] + ["push(0x99)"] * extra
 
 
 class Deploy(Payload):
@@ -67,19 +66,24 @@ class Deploy(Payload):
         super().__init__(value)
         self.words, self.extra = words, extra
 
-    def pushes(self, var):
-        return push_words(var, self.words, self.extra)
+    def pushes(self):
+        return push_words(self.words, self.extra)
 
 
 class Call(Payload):
-    """Calldata: a 4-byte selector, words, then `extra` bytes."""
+    """Calldata: a 4-byte selector, words, then `extra` bytes. Errors when `sel` does not fit
+    in 4 bytes."""
 
     def __init__(self, sel, *words, extra=0, value=0):
+        # Fe cuts a literal that is too wide for its type without an error, so the u32 parameter
+        # of `difftest::Payload.push_selector` would not catch it (docs/WORKAROUNDS.md).
+        if sel not in range(1 << 32):
+            raise ValueError(f"the selector {sel:#x} does not fit in 4 bytes")
         super().__init__(value)
         self.sel, self.words, self.extra = sel, words, extra
 
-    def pushes(self, var):
-        return [f"difftest::push_be(mut {var}, {self.sel:#x}, bytes: 4)"] + push_words(var, self.words, self.extra)
+    def pushes(self):
+        return [f"push_selector({self.sel:#x})"] + push_words(self.words, self.extra)
 
 
 class RawCall(Payload):
@@ -89,8 +93,8 @@ class RawCall(Payload):
         super().__init__(value)
         self.data = data
 
-    def pushes(self, var):
-        return [f"{var}.push({b})" for b in self.data]
+    def pushes(self):
+        return [f"push({b})" for b in self.data]
 
 
 # A selector that DISPATCH sends as an unknown one.
@@ -155,6 +159,11 @@ class Case(NamedTuple):
     number: int
     payload: Payload
 
+    @property
+    def code(self):
+        """Returns the Fe expression of this case's `difftest::CaseCode`."""
+        return Kind.CASE.case_code(self.number)
+
 
 class Cases(NamedTuple):
     """What a differential test sends. Every test also sends the calls of DISPATCH."""
@@ -189,12 +198,12 @@ class DiffTest:
                f"    let b = difftest::Builds {{ ours: difftest::ours({lit(self.source)}), theirs: "
                f"difftest::theirs({self.contract}::init_code_offset(), {self.contract}::init_code_len()) }}"]
         for d in self.cases.deploys:
-            out += block(d.payload.build("a") + [f"let _ = b.deploy(a, {d.payload.wei}, {Kind.CASE.case_code(d.number)})"])
+            out += block(d.payload.build("a") + [f"let _ = b.deploy(a, {d.code})"])
         m = self.cases.main.payload
         out += ["    " + s for s in m.build("a")]
-        out.append(f"    let p = b.deploy_main(a, {m.wei}, {Kind.CASE.case_code(self.cases.main.number)})")
+        out.append(f"    let p = b.deploy_main(a, {self.cases.main.code})")
         for c in self.cases.calls:
-            out += call(c.payload, Kind.CASE.case_code(c.number))
+            out += call(c.payload, c.code)
         for k, c in enumerate(DISPATCH, start=1):
             out += call(c, Kind.PROBE.case_code(k))
         return out + ["}"]
@@ -203,7 +212,7 @@ class DiffTest:
 def call(payload, case):
     """Returns the block of a test function that sends `payload` to the main deployment and
     fails with the case code `case`, a Fe expression, when the builds differ."""
-    return block(payload.build("d") + [f"p.call(d, {payload.wei}, {case})"])
+    return block(payload.build("d") + [f"p.call(d, {case})"])
 
 
 def reject_test(test, source, expected):

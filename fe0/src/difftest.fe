@@ -10,8 +10,8 @@ use std::evm::{Call, CallOutcome, Create, RawOps}
 
 // The largest runtime code that a chain accepts (EIP-170). The test EVM does not enforce it.
 const MAX_RUNTIME: u256 = 24576
-// The largest create input that a chain accepts (EIP-3860). The input is the deploy code
-// followed by the constructor arguments. The test EVM does not enforce this limit either.
+// The largest create input (`Payload.initcode`) that a chain accepts (EIP-3860). The test EVM
+// does not enforce this limit either.
 const MAX_INITCODE: usize = 49152
 // The gas for each call. Both builds get the same, so that only their code can differ.
 const CALL_GAS: u256 = 10000000
@@ -124,12 +124,45 @@ pub fn theirs(_ offset: u256, _ len: u256) -> MemVec<u8> uses (evm: mut Evm) {
     v
 }
 
-// Appends the low `bytes` bytes of `x` to `v`, most significant first.
-pub fn push_be(_ v: mut MemVec<u8>, _ x: u256, bytes: u256) {
-    var i: u256 = 0
-    while i < bytes {
-        v.push(((x >> ((bytes - 1 - i) * 8)) & 0xff).downcast_truncate())
-        i += 1
+// Bytes sent to a contract, as constructor arguments or as calldata, with a value in wei.
+// `Payload.build` in tools/fegen.py writes the code that makes one.
+pub struct Payload { data: MemVec<u8>, value: Wei }
+
+impl Payload {
+    // An empty payload that sends `value`.
+    pub fn new(_ value: Wei) -> Payload {
+        Payload { data: MemVec::new(), value }
+    }
+
+    pub fn push(mut self, _ b: u8) {
+        self.data.push(b)
+    }
+
+    // Appends the 4-byte function selector `sel`.
+    pub fn push_selector(mut self, _ sel: u32) {
+        self.push_be(sel as u256, bytes: 4)
+    }
+
+    // Appends `w` as one 32-byte ABI word.
+    pub fn push_word(mut self, _ w: u256) {
+        self.push_be(w, bytes: 32)
+    }
+
+    // Appends the low `bytes` bytes of `x`, most significant first.
+    fn push_be(mut self, _ x: u256, bytes: u256) {
+        var i: u256 = 0
+        while i < bytes {
+            self.data.push(((x >> ((bytes - 1 - i) * 8)) & 0xff).downcast_truncate())
+            i += 1
+        }
+    }
+
+    // Returns the create input that deploys `code`, with these bytes as its constructor arguments.
+    pub fn initcode(self, _ code: MemVec<u8>) -> MemArray<u8> {
+        var v: MemVec<u8> = MemVec::new()
+        v.extend_from_slice(code.as_slice())
+        v.extend_from_slice(self.data.as_slice())
+        v.into_array()
     }
 }
 
@@ -137,23 +170,19 @@ pub fn push_be(_ v: mut MemVec<u8>, _ x: u256, bytes: u256) {
 pub struct Builds { pub ours: MemVec<u8>, pub theirs: MemVec<u8> }
 
 impl Builds {
-    // Deploys both builds with `args` and `value`. Fails with Panic(`case`) when only one build
-    // creates a contract, and with Panic(`case.too_large()`) when a chain would not accept
-    // Fe0's build (`fits_chain`).
-    pub fn deploy(self, _ args: MemVec<u8>, _ value: Wei, _ case: CaseCode) -> Deployed
+    // Deploys both builds with the constructor arguments `args`. Fails with Panic(`case`) when
+    // only one build creates a contract, and with Panic(`case.too_large()`) when a chain would
+    // not accept Fe0's build (`fits_chain`).
+    pub fn deploy(self, _ args: Payload, _ case: CaseCode) -> Deployed
     uses (evm: mut Evm)
     {
-        let p = Deployed {
-            ours: create(self.ours, args, value),
-            theirs: create(self.theirs, args, value),
-        }
+        let ours = args.initcode(self.ours)
+        let theirs = args.initcode(self.theirs)
+        let p = Deployed { ours: create(ours, args.value), theirs: create(theirs, args.value) }
         if (p.ours.word() == 0) != (p.theirs.word() == 0) {
             core::panic_code(case.code)
         }
-        if !fits_chain(
-            initcode_len: self.ours.len() + args.len(),
-            runtime: p.ours,
-        ) {
+        if !fits_chain(initcode_len: ours.len(), runtime: p.ours) {
             core::panic_code(case.too_large())
         }
         p
@@ -161,10 +190,10 @@ impl Builds {
 
     // Deploys both builds as `deploy` does. Also fails with Panic(`case`) when neither creates
     // a contract.
-    pub fn deploy_main(self, _ args: MemVec<u8>, _ value: Wei, _ case: CaseCode) -> Deployed
+    pub fn deploy_main(self, _ args: Payload, _ case: CaseCode) -> Deployed
     uses (evm: mut Evm)
     {
-        let p = self.deploy(args, value, case)
+        let p = self.deploy(args, case)
         if p.ours.word() == 0 {
             core::panic_code(case.code)
         }
@@ -172,26 +201,22 @@ impl Builds {
     }
 }
 
-// Deploys `code` followed by `args`.
-fn create(_ code: MemVec<u8>, _ args: MemVec<u8>, _ value: Wei) -> Address
+// Creates a contract from the create input `initcode` and sends it `value`.
+fn create(_ initcode: MemArray<u8>, _ value: Wei) -> Address
 uses (evm: mut Evm)
 {
-    var v: MemVec<u8> = MemVec::new()
-    v.extend_from_slice(code.as_slice())
-    v.extend_from_slice(args.as_slice())
-    evm.create_raw(value, init_code: v.into_array().span())
+    evm.create_raw(value, init_code: initcode.span())
 }
 
 // One program deployed from both builds.
 pub struct Deployed { pub ours: Address, pub theirs: Address }
 
 impl Deployed {
-    // Calls both contracts with `data` and `value`. Fails with Panic(`case`) unless the success
-    // flags and the return data are the same.
-    pub fn call(self, _ data: own MemVec<u8>, _ value: Wei, _ case: CaseCode)
-    uses (evm: mut Evm)
-    {
-        let args = data.into_array()
+    // Calls both contracts with `calldata`. Fails with Panic(`case`) unless the success flags
+    // and the return data are the same.
+    pub fn call(self, _ calldata: own Payload, _ case: CaseCode) uses (evm: mut Evm) {
+        let value = calldata.value
+        let args = calldata.data.into_array()
         let a = evm.try_call_raw(addr: self.ours, gas: CALL_GAS, value, args: args.span())
         let b = evm.try_call_raw(addr: self.theirs, gas: CALL_GAS, value, args: args.span())
         if !same_outcome(a, b) {

@@ -74,6 +74,14 @@ passes it.
 
 ## Fixed upstream (master only; we stay on 26.5.1)
 
+- **An integer literal too wide for its type is cut short without an error.** `fe check`
+  accepts `f(0x100000005)` for a parameter `_ s: u32`, and `f` gets 5. Fe0 has only `u256`,
+  so this affects our Fe test code, not the programs Fe0 accepts. Master fixed it in
+  `1a890a056` ("Reject integer literals out of range for their type"), so it was not
+  reported.
+  - **Workaround on 26.5.1:** `Call` in `tools/fegen.py` checks that a selector fits in
+    4 bytes before it writes the literal for `difftest::Payload.push_selector`.
+
 - **The optimizer drops the operand of an unused checked operation, but keeps its check.** At
   `-O 1` and above, `var x: u256 = 2 - (a ^ 5)` with `x` unused and `a = 1` checks `2 - a`
   instead of `2 - 4`. So the call succeeds where it should revert with `Panic(0x11)`. The
