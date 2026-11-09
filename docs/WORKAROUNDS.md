@@ -78,10 +78,21 @@ passes it.
   `Read`, `Write`, `read_char`, `write_char`, `host()` and `main(argc, argv)` are gone.
   `Stdout`/`Stdin` effects, `print!` and `StdinReader` replace them.
   - So the compiler core reads its input through **its own `fe0::io::Source` effect**
-    ([ADR 0010](adr/0010-source-effect.md)). Only the edge adapters touch std. `fe0` passes
-    on both 26.5.1 and master `95ec05413`.
+    ([ADR 0010](adr/0010-source-effect.md)). Only the edge adapters touch std.
   - The native CLI (`fe0-cli`) is not written yet. It will use 26.5.1's `std::io`, and it
     needs a port to the new API only if we leave 26.5.1.
+
+- **Master makes `DynString`, `Bytes` and `DynArray` own their memory** (newsfragment
+  `1914.removal`, commit `e2a0bb8d7`). They are no longer `Copy`, and `DynString::as_bytes` is
+  gone. Master also renames `MemBuffer::alloc` to `MemBuffer::new` (`bb6110dff`). So master
+  `b182b0126` rejects `fe0` in three places:
+  - `fe0/src/io.fe`, `text`: `s.as_bytes()` on a `DynString`;
+  - `fe0/src/parser_tests.fe`, `Printer.matches`: `want.as_bytes()`;
+  - `fe0/src/difftest.fe`, `theirs`: `MemBuffer::alloc`.
+
+  We stay on 26.5.1 ([ADR 0009](adr/0009-freeze-on-26-5-1.md)), so these stay as they are.
+  The two `as_bytes` calls could use `len()` and `byte_at()`, which both versions have. No
+  spelling of the `MemBuffer` constructor works on both.
 
 ## Fixed upstream (master only; we stay on 26.5.1)
 
