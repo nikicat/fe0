@@ -3,7 +3,7 @@
 # recorded in docs/adr/, SPEC.md and DESIGN.md. Usage: tools/spikes.sh [path/to/fe]
 # Many probe tests fail on purpose to report a value via Panic(code); we compare that code.
 set -u
-FE=${1:-$HOME/src/fe/target/release/fe}
+FE=${1:-fe}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 fails=0
 

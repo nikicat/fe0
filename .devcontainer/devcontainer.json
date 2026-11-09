@@ -1,0 +1,7 @@
+{
+  "name": "fe-contest",
+  "build": { "dockerfile": "Containerfile" },
+  "remoteUser": "vscode",
+  // the Fe extension's language server runs the image's compiler
+  "remoteEnv": { "FE_PATH": "/usr/local/bin/fe" }
+}
