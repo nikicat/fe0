@@ -76,6 +76,12 @@ check "keccak round (native)" "$("$ROOT/spike-keccak/out/spike_keccak" 2>&1)" "0
 check "lexer (native)" "$(printf 'fn f(x) -> u8 { x == 42 }' | "$ROOT/spike-lexer/out/spike_lexer" | tr '\n' ';')" \
     "1 0 2;0 3 1;3 4 1;0 5 1;3 6 1;3 8 2;0 11 2;3 14 1;0 16 1;3 18 2;2 21 2;3 24 1;4 25 0;"
 
+# spike-native/probe_stderr: stderr through libc's `write`, which 26.5.1's std::io lacks
+"$FE" build --backend native -e executable --out-dir "$ROOT/out/spikes" \
+    "$ROOT/spike-native/probe_stderr.fe" >/dev/null 2>&1
+r=$("$ROOT/out/spikes/probe_stderr" 2>&1 >/dev/null; echo "exit $?")
+check "stderr (native)" "$(echo "$r" | tr '\n' ';')" "oops!;exit 3;"
+
 # compile-time probes: accept/reject as recorded in spike-conform/compile
 for f in "$ROOT"/spike-conform/compile/*.fe; do
     n=$(basename "$f" .fe)

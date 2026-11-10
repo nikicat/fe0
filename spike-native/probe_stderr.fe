@@ -1,0 +1,30 @@
+// Probe: can a native program on Fe 26.5.1 write to stderr? 26.5.1's std::io has only
+// putchar, so this declares libc's `malloc` and `write` and writes a buffer to fd 2.
+use std::io::{Write, host, write_char}
+
+extern {
+    fn malloc(_ size: u64) -> *u8
+    fn write(_ fd: i32, _ buf: *u8, _ n: u64) -> i64
+}
+
+// Writes `len` bytes of `text` to file descriptor `fd`, and returns what `write` returned.
+fn write_fd<const N: usize>(_ fd: i32, _ text: String<N>, _ len: u64) -> i64 {
+    let bytes = text.as_bytes()
+    let buf = malloc(len)
+    var i: u64 = 0
+    while i < len {
+        unsafe { *core::ptr::offset(buf, i as u256) = bytes[i as usize] }
+        i += 1
+    }
+    unsafe { write(fd, buf, len) }
+}
+
+pub fn main() -> i32 {
+    with (Write = host()) {
+        write_char(111)
+        write_char(107)
+        write_char(10)
+    }
+    let text: String<6> = "oops!\n"
+    if write_fd(2, text, 6) == 6 { 3 } else { 4 }
+}
