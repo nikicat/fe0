@@ -3,5 +3,10 @@
   "build": { "dockerfile": "Containerfile" },
   "remoteUser": "vscode",
   // the Fe extension's language server runs the image's compiler
-  "remoteEnv": { "FE_PATH": "/usr/local/bin/fe" }
+  "remoteEnv": { "FE_PATH": "/usr/local/bin/fe" },
+  "customizations": {
+    "vscode": { "extensions": ["tamasfe.even-better-toml"] }
+  },
+  // Fe's extension is not on the marketplace, so the image holds its VSIX (Containerfile)
+  "postAttachCommand": "code --install-extension /usr/local/share/vscode/fe-language.vsix"
 }

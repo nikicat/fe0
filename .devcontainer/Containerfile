@@ -43,6 +43,15 @@ RUN set -e; arch=$(dpkg --print-architecture); \
     tar -C /usr/local --strip-components=1 -xJf /tmp/node.txz "node-v$NODE-linux-$narch/bin" "node-v$NODE-linux-$narch/lib"; \
     rm /tmp/node.txz
 
+# Fe's VS Code extension (highlighting and the language server), which is published only as a
+# VSIX on GitHub; devcontainer.json's postAttachCommand installs it
+ARG VSCODE_FE=0.1.0
+ARG VSCODE_FE_SHA256=13ff65dfbf74592a0a4990bb686be1d16b9e3742de3ec625c694278d2c71eca0
+RUN set -e; mkdir -p /usr/local/share/vscode; \
+    f=/usr/local/share/vscode/fe-language.vsix; \
+    curl -fsSLo "$f" "https://github.com/fe-lang/vscode-fe/releases/download/v$VSCODE_FE/fe-language-$VSCODE_FE.vsix"; \
+    echo "$VSCODE_FE_SHA256  $f" | sha256sum -c -
+
 # the user VS Code connects as (devcontainer.json's remoteUser)
 RUN useradd -m -u 1000 -U vscode
 
