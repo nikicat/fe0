@@ -86,8 +86,8 @@ so a fix on master removes nothing before we move to a release that has it.
   hard-coded host checks block it: Cranelift and the linking already support AArch64 Linux.
   - **Where it bites:** the dev container on an arm64 host. There, the native reject tests
     of `tools/embed.py`, the native spikes and the native CLI (`fe0-cli`) do not build.
-  - **Upstream:** the check is still on master. An issue with the patch is drafted in
-    `out/upstream/native-aarch64-linux.md` and not filed yet.
+  - **Upstream:** the check is still on master. The issue argotorg/fe#1975 asks to open it,
+    with the patch. It is open.
   - **Workaround:** on an arm64 host, build 26.5.1 from source with the two checks opened,
     and pass it as `FE=…` (or as the argument of `tools/spikes.sh`). With it, Fe's own
     native tests pass (34 and 685), and so do our corpus, reject programs and spikes
@@ -100,8 +100,8 @@ so a fix on master removes nothing before we move to a release that has it.
     (cd crates/tree-sitter-fe && npm ci)
     cargo build --locked --profile dist -p fe --features fe/cranelift   # target/dist/fe
     ```
-  - **Remove when:** a release we use builds native code on AArch64 Linux, or the dev
-    container runs on an x86-64 host.
+  - **Remove when:** a release we use builds native code on AArch64 Linux (#1975), or the
+    dev container runs on an x86-64 host.
 
 ## Upstream API churn (master, unreleased)
 

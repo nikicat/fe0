@@ -75,8 +75,8 @@ Its output must match the on-chain compile byte for byte.
 ## Decisions
 - Develop and test the CLI on this aarch64 Linux host with a patched Fe 26.5.1, at
   `/workspaces/fe-26.5.1/target/dist/fe` (`FE=…`). Stock 26.5.1 refuses native builds on
-  aarch64 Linux, and the patch only opens that gate (upstream draft in
-  `out/upstream/native-aarch64-linux.md`). CI and the submission keep the official release.
+  aarch64 Linux, and the patch only opens that gate (argotorg/fe#1975). CI and the
+  submission keep the official release.
 - Errors to stderr through `extern write`, not to stdout. The spike above showed it works.
 - No CLI parsing library: the CLI takes no arguments, and Fe has no such library.
 
