@@ -89,14 +89,14 @@ so a fix on master removes nothing before we move to a release that has it.
   - **Upstream:** the check is still on master. The issue argotorg/fe#1975 asks to open it,
     with the patch. It is open.
   - **Workaround:** on an arm64 host, build 26.5.1 from source with the two checks opened,
-    and pass it as `FE=…` (or as the argument of `tools/spikes.sh`). With it, Fe's own
-    native tests pass (34 and 685), and so do our corpus, reject programs and spikes
-    (Nov 10). CI runs on x86-64 with the official release, so it needs no patch.
+    and pass it as `FE=…` (or as the argument of `tools/spikes.sh`). The branch
+    `native-aarch64-linux-v26.5.1` of our fork holds `v26.5.1` with that one commit. With
+    it, Fe's own native tests pass (34 and 685), and so do our corpus, reject programs and
+    spikes (Nov 10). CI runs on x86-64 with the official release, so it needs no patch.
 
     ```sh
-    git clone --depth 1 --branch v26.5.1 https://github.com/argotorg/fe.git fe-26.5.1
-    cd fe-26.5.1    # add aarch64 Linux to native_executable_host_supported() in
-                    # crates/fe/src/build.rs and to the check in crates/fe/src/test/native.rs
+    git clone --depth 1 -b native-aarch64-linux-v26.5.1 https://github.com/nikicat/fe.git fe-26.5.1
+    cd fe-26.5.1
     (cd crates/tree-sitter-fe && npm ci)
     cargo build --locked --profile dist -p fe --features fe/cranelift   # target/dist/fe
     ```
