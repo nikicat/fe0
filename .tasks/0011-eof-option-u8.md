@@ -20,3 +20,5 @@ these as its methods. Keep `Lexer.peeked` a plain value and wrap it where it is 
 Measure the cost first: the lexer costs about 800 gas per byte on the EVM. Use spike-lexer's
 `lex_gas` pattern (DESIGN.md §8a), then decide. Findings b1-21, b2-6, x-3 of unsmell run
 20261104-190143.
+
+Td28x8 covers this site with the others, and plans a named byte type instead of `Option<u8>`.

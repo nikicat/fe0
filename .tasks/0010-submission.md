@@ -22,4 +22,4 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
 - Declaration: pre-existing work (everything before commit of Nov 3, see git log), reused code
   (none), AI assistance (most work AI-assisted, verified by probes and tests).
 - Make the repo public (Apache-2.0 LICENSE is in place), record the exact commit SHA and
-  `fe 26.5.1`.
+  `fe 26.6.0`. The README explains the move from 26.5.1 (ADR 0015).

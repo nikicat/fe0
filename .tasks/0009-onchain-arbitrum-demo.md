@@ -1,6 +1,6 @@
 ---
 status: todo
-deps: [T0003, T0005]
+deps: [T0003, T0005, T324k1]
 due: 2026-11-21
 tags: [onchain]
 ---
@@ -21,7 +21,7 @@ the result with `create_raw`. Deploy to Arbitrum One and script the demo: compil
   217 gas per byte, so five phase contracts of 60–70 KB should take 13–16M gas, about
   0.0003 ETH at Arbitrum's 0.02 gwei floor plus the L1 data fee. The probe deploys on a
   Cancun-only anvil and compiles there by `eth_call`, so Fe 26.5.1's output needs no opcode
-  newer than Arbitrum supports.
+  newer than Arbitrum supports. Check this again on Fe 26.6.0 (T324k1).
 - Deploy close to submission: the deployment is public, and PLAN.md risk 5 keeps the
   project private until Nov 24.
 - Sign the deployments with `browser-web3-signer` (installed in `~/.local/bin`), so that

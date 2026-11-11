@@ -21,3 +21,7 @@ join their lines into a module by hand. They should use fegen's function for tha
 re-check finding rc1-3).
 
 Found by the /unsmell run of 2026-11-10 on T0008 (change c19).
+
+Also make `Selector` in `tools/fegen.py` a type that checks its own 4-byte width, instead of a
+`NewType` documented as 4 bytes. Today a selector too wide for a `u32` is rejected only when
+fe0 is checked. The /unsmell run of 2026-11-11 kept this for here (finding b3-3, option B).
