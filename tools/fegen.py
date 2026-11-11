@@ -31,12 +31,21 @@ TestName = NewType("TestName", str)
 Push = NewType("Push", str)
 # An amount of wei.
 Wei = NewType("Wei", int)
-# The 4-byte selector of a msg variant.
-Selector = NewType("Selector", int)
 # A 256-bit ABI word.
 Word = NewType("Word", int)
 # The code of a Panic that a test fails with (`Kind` says what it names).
 PanicCode = NewType("PanicCode", int)
+
+
+class Selector(int):
+    """The 4-byte selector of a msg variant. Errors when the value does not fit in 4 bytes."""
+
+    def __new__(cls, value: int) -> Self:
+        if not 0 <= value < 1 << 32:
+            raise ValueError(f"selector {value:#x} does not fit in 4 bytes")
+        return super().__new__(cls, value)
+
+
 # A byte offset into a FeSource.
 ByteOffset = NewType("ByteOffset", int)
 # The letter of a phase of Fe0, such as "E" for effects.
@@ -131,9 +140,7 @@ class Deploy(Payload):
 
 
 class Call(Payload):
-    """Calldata: a 4-byte selector, words, then `extra` bytes. A `sel` that does not fit in
-    4 bytes is rejected by `fe check`, as a literal too wide for the u32 parameter of
-    `difftest::Payload.push_selector`."""
+    """Calldata: a 4-byte selector, words, then `extra` bytes."""
 
     def __init__(self, sel: Selector, *words: Word, extra: int = 0, value: Wei = Wei(0)) -> None:
         super().__init__(value)
