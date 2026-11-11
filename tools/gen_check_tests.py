@@ -7,7 +7,57 @@ it, so the offsets stay right.
 
 usage: [FE=path/to/fe] gen_check_tests.py
 """
+from dataclasses import dataclass
+from enum import Enum
+
 from fegen import CHAIN_LEN, FE0, lit, write_formatted
+
+
+@dataclass(frozen=True)
+class Accepts:
+    """A case that the checker accepts without warnings."""
+
+    src: str
+
+    def line(self):
+        """The test's line that checks the case."""
+        assert "|" not in self.src or "||" in self.src, self.src
+        return f"    accepts({lit(self.src)})"
+
+
+class Helper(Enum):
+    """The function of check_tests.fe that checks a diagnosed case."""
+
+    WARNS = "warns"
+    REJECTS = "rejects"
+
+
+@dataclass(frozen=True)
+class Diagnosed:
+    """A case that the checker warns about or rejects. `src` marks with `|` the byte that the
+    diagnostic points at, and `code` names the diagnostic's code in fe0/src/diag.fe."""
+
+    helper: Helper
+    src: str
+    code: str
+
+    def line(self):
+        """The test's line that checks the case, with the mark turned into a byte offset."""
+        i = self.src.index("|")
+        return f"    {self.helper.value}({lit(self.src[:i] + self.src[i + 1:])}, {self.code}, {i})"
+
+
+def ok(src):
+    return Accepts(src)
+
+
+def warn(src, code):
+    return Diagnosed(Helper.WARNS, src, code)
+
+
+def err(src, code):
+    return Diagnosed(Helper.REJECTS, src, code)
+
 
 # The msg that every contract case receives.
 MSG = "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\n"
@@ -22,161 +72,161 @@ def contract(arms, body_fields=FIELD_A, init="", msgs="", recvs=""):
 RECV_N = "    recv N {\n        O {} { }\n    }\n"
 groups = {
 "types_of_operators": [
-    ("ok", "fn f(_ a: u256, _ b: bool, _ c: Address, _ d: Address) -> bool {\n    a + 1 * 2 / 3 % 4 & 5 | 6 ^ 7 << 8 >> 9 > 0 && !b || c == d && ~a != 0\n}"),
-    ("ok", "fn f(_ a: u256) -> bool { a < 1 || a <= 1 || a > 1 || a >= 1 }"),
-    ("err", "fn f(_ b: bool) -> u256 { |b + 1 }", "T_MISMATCH"),
-    ("err", "fn f(_ a: u256) -> bool { |a && true }", "T_MISMATCH"),
-    ("err", "fn f(_ a: Address, _ b: Address) -> bool { |a < b }", "T_MISMATCH"),
-    ("err", "fn f(_ a: u256) -> bool { a == |true }", "T_MISMATCH"),
-    ("err", "fn f(_ a: u256) -> bool { !|a }", "T_MISMATCH"),
-    ("err", "fn f(_ b: bool) -> bool { ~|b }", "T_MISMATCH"),
-    ("err", "fn g() {}\nfn f() -> bool { |g() == g() }", "T_NO_VALUE"),
+    ok("fn f(_ a: u256, _ b: bool, _ c: Address, _ d: Address) -> bool {\n    a + 1 * 2 / 3 % 4 & 5 | 6 ^ 7 << 8 >> 9 > 0 && !b || c == d && ~a != 0\n}"),
+    ok("fn f(_ a: u256) -> bool { a < 1 || a <= 1 || a > 1 || a >= 1 }"),
+    err("fn f(_ b: bool) -> u256 { |b + 1 }", "T_MISMATCH"),
+    err("fn f(_ a: u256) -> bool { |a && true }", "T_MISMATCH"),
+    err("fn f(_ a: Address, _ b: Address) -> bool { |a < b }", "T_MISMATCH"),
+    err("fn f(_ a: u256) -> bool { a == |true }", "T_MISMATCH"),
+    err("fn f(_ a: u256) -> bool { !|a }", "T_MISMATCH"),
+    err("fn f(_ b: bool) -> bool { ~|b }", "T_MISMATCH"),
+    err("fn g() {}\nfn f() -> bool { |g() == g() }", "T_NO_VALUE"),
 ],
 "if_and_blocks": [
-    ("ok", "fn f(_ c: bool) -> u256 { if c { 1 } else if !c { 2 } else { 3 } }"),
-    ("ok", "fn f(_ c: bool) { if c { f(c) } }"),
-    ("ok", "fn f(_ c: bool) -> u256 {\n    let x = {\n        let y: u256 = 2\n        y * 2\n    }\n    x\n}"),
-    ("err", "fn f(_ c: bool) -> u256 { if c |{ 1 } }", "T_MISMATCH"),
-    ("err", "fn f(_ c: bool) -> u256 { if c { 1 } else if c { 2 } else |{ true } }", "T_MISMATCH"),
-    ("err", "fn f(_ c: bool) -> u256 { if c { 1 } else if c |{ 2 } }", "T_MISMATCH"),
-    ("err", "fn f() -> u256 { if |1 { 1 } else { 2 } }", "T_MISMATCH"),
-    ("err", "fn f() { assert!(|1) }", "T_MISMATCH"),
-    ("ok", "fn f(_ a: u256) { assert!(a > 0, \"zero\") }"),
+    ok("fn f(_ c: bool) -> u256 { if c { 1 } else if !c { 2 } else { 3 } }"),
+    ok("fn f(_ c: bool) { if c { f(c) } }"),
+    ok("fn f(_ c: bool) -> u256 {\n    let x = {\n        let y: u256 = 2\n        y * 2\n    }\n    x\n}"),
+    err("fn f(_ c: bool) -> u256 { if c |{ 1 } }", "T_MISMATCH"),
+    err("fn f(_ c: bool) -> u256 { if c { 1 } else if c { 2 } else |{ true } }", "T_MISMATCH"),
+    err("fn f(_ c: bool) -> u256 { if c { 1 } else if c |{ 2 } }", "T_MISMATCH"),
+    err("fn f() -> u256 { if |1 { 1 } else { 2 } }", "T_MISMATCH"),
+    err("fn f() { assert!(|1) }", "T_MISMATCH"),
+    ok("fn f(_ a: u256) { assert!(a > 0, \"zero\") }"),
 ],
 "return_paths": [
-    ("ok", "fn f() -> u256 { return 1 }"),
-    ("ok", "fn f(_ c: bool) -> u256 { if c { return 1 } else { return 2 } }"),
-    ("ok", "fn f(_ c: bool) -> u256 {\n    if c { return 1 }\n    2\n}"),
-    ("ok", "fn f() { return }"),
-    ("err", "fn f(_ c: bool) -> u256 |{ if c { return 1 } }", "T_MISMATCH"),
-    ("err", "fn f() -> u256 |{ while true { return 1 } }", "T_MISMATCH"),
-    ("err", "fn f() { return |1 }", "T_MISMATCH"),
-    ("err", "fn f() -> u256 { |return }", "T_MISMATCH"),
+    ok("fn f() -> u256 { return 1 }"),
+    ok("fn f(_ c: bool) -> u256 { if c { return 1 } else { return 2 } }"),
+    ok("fn f(_ c: bool) -> u256 {\n    if c { return 1 }\n    2\n}"),
+    ok("fn f() { return }"),
+    err("fn f(_ c: bool) -> u256 |{ if c { return 1 } }", "T_MISMATCH"),
+    err("fn f() -> u256 |{ while true { return 1 } }", "T_MISMATCH"),
+    err("fn f() { return |1 }", "T_MISMATCH"),
+    err("fn f() -> u256 { |return }", "T_MISMATCH"),
     # A tail after a diverging statement still gives the block its type (SPEC §5).
-    ("ok", "fn f() -> u256 {\n    return 1\n    2\n}"),
-    ("err", "fn f() -> u256 |{\n    return 1\n    true\n}", "T_MISMATCH"),
-    ("err", "fn f() {\n    while true |{\n        break\n        5\n    }\n}", "T_MISMATCH"),
-    ("err", "fn f() |{ 1 }", "T_MISMATCH"),
+    ok("fn f() -> u256 {\n    return 1\n    2\n}"),
+    err("fn f() -> u256 |{\n    return 1\n    true\n}", "T_MISMATCH"),
+    err("fn f() {\n    while true |{\n        break\n        5\n    }\n}", "T_MISMATCH"),
+    err("fn f() |{ 1 }", "T_MISMATCH"),
 ],
 "locals": [
-    ("ok", "fn f() -> u256 {\n    let x: u256 = 1\n    let x = x + 1\n    x\n}"),
-    ("ok", "fn f() -> u256 {\n    var x: u256 = 1\n    x += 2\n    x = x * 3\n    x\n}"),
-    ("err", "fn f() -> u256 {\n    { let x: u256 = 1 }\n    |x\n}", "N_UNKNOWN_NAME"),
-    ("err", "fn f() -> u256 {\n    let x = |x\n    x\n}", "N_UNKNOWN_NAME"),
-    ("err", "fn f() { let x: bool = |1 }", "T_MISMATCH"),
-    ("err", "fn g() {}\nfn f() { let x = |g() }", "T_NO_VALUE"),
-    ("err", "fn f() {\n    let x: u256 = 1\n    |x = 2\n}", "N_ASSIGN_IMMUTABLE"),
-    ("err", "fn f(_ p: u256) { |p = 2 }", "N_ASSIGN_IMMUTABLE"),
-    ("err", "const A: u256 = 1\nfn f() { |A = 2 }", "N_ASSIGN_IMMUTABLE"),
-    ("err", "fn f() {\n    var b = true\n    |b += true\n}", "T_MISMATCH"),
-    ("err", "fn f() {\n    var x: u256 = 1\n    x = |true\n}", "T_MISMATCH"),
-    ("err", "fn f() { |y = 1 }", "N_UNKNOWN_NAME"),
-    ("ok", "const A: u256 = 1\nfn F() -> u256 { A }"),
-    ("err", "fn f() -> u256 {\n    |let Some: u256 = 1\n    Some\n}", "N_UPPERCASE_LOCAL"),
-    ("err", "fn f(|_ X: u256) -> u256 { X }", "N_UPPERCASE_LOCAL"),
-    ("err", contract(GET_OK + "        Set { |v: V } { }\n"), "N_UPPERCASE_LOCAL"),
-    ("err", "const n: u256 = 5\n" + contract(GET_OK + "        Set { |v: n } { }\n"), "N_SHADOWS_ITEM"),
-    ("err", "const n: u256 = 5\nfn f() -> u256 {\n    |let n: u256 = 2\n    n\n}", "N_SHADOWS_ITEM"),
-    ("err", "fn g() -> u256 { 1 }\nfn f(|_ g: u256) -> u256 { g }", "N_SHADOWS_ITEM"),
-    ("err", "msg m {\n    #[selector = 0x01]\n    A {},\n}\nfn f(|_ m: u256) -> u256 { m }", "N_SHADOWS_ITEM"),
-    ("err", "contract k {\n}\nfn f(|_ k: u256) -> u256 { k }", "N_SHADOWS_ITEM"),
+    ok("fn f() -> u256 {\n    let x: u256 = 1\n    let x = x + 1\n    x\n}"),
+    ok("fn f() -> u256 {\n    var x: u256 = 1\n    x += 2\n    x = x * 3\n    x\n}"),
+    err("fn f() -> u256 {\n    { let x: u256 = 1 }\n    |x\n}", "N_UNKNOWN_NAME"),
+    err("fn f() -> u256 {\n    let x = |x\n    x\n}", "N_UNKNOWN_NAME"),
+    err("fn f() { let x: bool = |1 }", "T_MISMATCH"),
+    err("fn g() {}\nfn f() { let x = |g() }", "T_NO_VALUE"),
+    err("fn f() {\n    let x: u256 = 1\n    |x = 2\n}", "N_ASSIGN_IMMUTABLE"),
+    err("fn f(_ p: u256) { |p = 2 }", "N_ASSIGN_IMMUTABLE"),
+    err("const A: u256 = 1\nfn f() { |A = 2 }", "N_ASSIGN_IMMUTABLE"),
+    err("fn f() {\n    var b = true\n    |b += true\n}", "T_MISMATCH"),
+    err("fn f() {\n    var x: u256 = 1\n    x = |true\n}", "T_MISMATCH"),
+    err("fn f() { |y = 1 }", "N_UNKNOWN_NAME"),
+    ok("const A: u256 = 1\nfn F() -> u256 { A }"),
+    err("fn f() -> u256 {\n    |let Some: u256 = 1\n    Some\n}", "N_UPPERCASE_LOCAL"),
+    err("fn f(|_ X: u256) -> u256 { X }", "N_UPPERCASE_LOCAL"),
+    err(contract(GET_OK + "        Set { |v: V } { }\n"), "N_UPPERCASE_LOCAL"),
+    err("const n: u256 = 5\n" + contract(GET_OK + "        Set { |v: n } { }\n"), "N_SHADOWS_ITEM"),
+    err("const n: u256 = 5\nfn f() -> u256 {\n    |let n: u256 = 2\n    n\n}", "N_SHADOWS_ITEM"),
+    err("fn g() -> u256 { 1 }\nfn f(|_ g: u256) -> u256 { g }", "N_SHADOWS_ITEM"),
+    err("msg m {\n    #[selector = 0x01]\n    A {},\n}\nfn f(|_ m: u256) -> u256 { m }", "N_SHADOWS_ITEM"),
+    err("contract k {\n}\nfn f(|_ k: u256) -> u256 { k }", "N_SHADOWS_ITEM"),
 ],
 "literal_types": [
     # Integers of type TY_INT (SPEC §2). Fe rejects each err case here with 8-0031 too, except
     # `var i = 0`, whose type Fe infers from the later use of `i`.
-    ("ok", "fn f() -> u256 {\n    let x: u256 = 1 + 2\n    x << 3\n}"),
-    ("ok", "fn f(_ a: u256) -> bool { 1 < a && a == 2 && ~0 != a }"),
-    ("ok", "fn f(_ c: bool) -> u256 { if c { 1 } else { 2 } * 3 }"),
-    ("ok", "fn g(_ a: u256) {}\nfn f() { g(1 + 1) }"),
-    ("ok", "const A: u256 = 1\nfn f() -> bool { A == 1 }"),
-    ("err", "fn f() {\n    let x = |1\n}", "T_NEEDS_TYPE"),
-    ("err", "fn f() -> u256 {\n    var i = |0\n    i\n}", "T_NEEDS_TYPE"),
-    ("err", "fn f() {\n    1 |+ 2\n    f()\n}", "T_NEEDS_TYPE"),
-    ("err", "fn f(_ c: bool) {\n    |if c { 1 } else { 2 }\n    f(c)\n}", "T_NEEDS_TYPE"),
+    ok("fn f() -> u256 {\n    let x: u256 = 1 + 2\n    x << 3\n}"),
+    ok("fn f(_ a: u256) -> bool { 1 < a && a == 2 && ~0 != a }"),
+    ok("fn f(_ c: bool) -> u256 { if c { 1 } else { 2 } * 3 }"),
+    ok("fn g(_ a: u256) {}\nfn f() { g(1 + 1) }"),
+    ok("const A: u256 = 1\nfn f() -> bool { A == 1 }"),
+    err("fn f() {\n    let x = |1\n}", "T_NEEDS_TYPE"),
+    err("fn f() -> u256 {\n    var i = |0\n    i\n}", "T_NEEDS_TYPE"),
+    err("fn f() {\n    1 |+ 2\n    f()\n}", "T_NEEDS_TYPE"),
+    err("fn f(_ c: bool) {\n    |if c { 1 } else { 2 }\n    f(c)\n}", "T_NEEDS_TYPE"),
     # As a body\'s tail, a literal integer is a value where none may be.
-    ("err", "fn f() |{ 1 + 2 }", "T_MISMATCH"),
-    ("err", "fn f() -> bool { 1 |== 1 }", "T_NEEDS_TYPE"),
-    ("err", "fn f() { assert!(~1 |< 2) }", "T_NEEDS_TYPE"),
-    ("err", "const B: bool = 1 |== 1", "T_NEEDS_TYPE"),
-    ("err", "const C: bool = 1 |< 2", "T_NEEDS_TYPE"),
+    err("fn f() |{ 1 + 2 }", "T_MISMATCH"),
+    err("fn f() -> bool { 1 |== 1 }", "T_NEEDS_TYPE"),
+    err("fn f() { assert!(~1 |< 2) }", "T_NEEDS_TYPE"),
+    err("const B: bool = 1 |== 1", "T_NEEDS_TYPE"),
+    err("const C: bool = 1 |< 2", "T_NEEDS_TYPE"),
 ],
 "loops": [
-    ("ok", "fn f() -> u256 {\n    var i: u256 = 0\n    while i < 10 {\n        i += 1\n        if i == 5 { break }\n        continue\n    }\n    i\n}"),
-    ("err", "fn f() { |break }", "N_OUTSIDE_LOOP"),
-    ("err", "fn f() { |continue }", "N_OUTSIDE_LOOP"),
-    ("err", "fn f() { while |1 { } }", "T_MISMATCH"),
-    ("err", "fn f() { while true |{ 1 } }", "T_MISMATCH"),
+    ok("fn f() -> u256 {\n    var i: u256 = 0\n    while i < 10 {\n        i += 1\n        if i == 5 { break }\n        continue\n    }\n    i\n}"),
+    err("fn f() { |break }", "N_OUTSIDE_LOOP"),
+    err("fn f() { |continue }", "N_OUTSIDE_LOOP"),
+    err("fn f() { while |1 { } }", "T_MISMATCH"),
+    err("fn f() { while true |{ 1 } }", "T_MISMATCH"),
 ],
 "items_and_names": [
-    ("ok", "fn g() -> u256 { h() }\nfn h() -> u256 { 1 }"),
-    ("err", "fn f() {}\n|const f: u256 = 1", "N_DUPLICATE"),
-    ("err", "fn f(_ a: u256, |_ a: u256) {}", "N_DUPLICATE"),
-    ("err", "fn f() -> u256 { |nope }", "N_UNKNOWN_NAME"),
-    ("err", "fn g() {}\nfn f() { let x = |g }", "N_NOT_A_VALUE"),
-    ("err", "const A: u256 = 1\nfn f() { |A() }", "N_NOT_A_FUNCTION"),
-    ("err", "fn f() { |g() }", "N_UNKNOWN_NAME"),
-    ("err", "contract A {}\n|contract B {}", "N_TWO_CONTRACTS"),
+    ok("fn g() -> u256 { h() }\nfn h() -> u256 { 1 }"),
+    err("fn f() {}\n|const f: u256 = 1", "N_DUPLICATE"),
+    err("fn f(_ a: u256, |_ a: u256) {}", "N_DUPLICATE"),
+    err("fn f() -> u256 { |nope }", "N_UNKNOWN_NAME"),
+    err("fn g() {}\nfn f() { let x = |g }", "N_NOT_A_VALUE"),
+    err("const A: u256 = 1\nfn f() { |A() }", "N_NOT_A_FUNCTION"),
+    err("fn f() { |g() }", "N_UNKNOWN_NAME"),
+    err("contract A {}\n|contract B {}", "N_TWO_CONTRACTS"),
 ],
 "calls": [
-    ("ok", "fn g(_ a: u256, b: bool) -> u256 { a }\nfn f(b: bool) -> u256 { g(1, b: b) + g(2, b) }"),
-    ("err", "fn g(_ a: u256) {}\nfn f() { |g(1, 2) }", "T_ARG_COUNT"),
-    ("err", "fn g(_ a: u256) {}\nfn f() { g(|true) }", "T_MISMATCH"),
-    ("err", "fn g(_ a: u256) {}\nfn f() { g(|a: 1) }", "N_BAD_LABEL"),
-    ("err", "fn g(a: u256) {}\nfn f() { g(|1) }", "N_BAD_LABEL"),
-    ("err", "fn g(a: u256, b: u256) {}\nfn f() { g(|b: 1, a: 2) }", "N_BAD_LABEL"),
-    ("ok", "fn g() {}\nfn f() { g() }"),
+    ok("fn g(_ a: u256, b: bool) -> u256 { a }\nfn f(b: bool) -> u256 { g(1, b: b) + g(2, b) }"),
+    err("fn g(_ a: u256) {}\nfn f() { |g(1, 2) }", "T_ARG_COUNT"),
+    err("fn g(_ a: u256) {}\nfn f() { g(|true) }", "T_MISMATCH"),
+    err("fn g(_ a: u256) {}\nfn f() { g(|a: 1) }", "N_BAD_LABEL"),
+    err("fn g(a: u256) {}\nfn f() { g(|1) }", "N_BAD_LABEL"),
+    err("fn g(a: u256, b: u256) {}\nfn f() { g(|b: 1, a: 2) }", "N_BAD_LABEL"),
+    ok("fn g() {}\nfn f() { g() }"),
 ],
 "constants": [
-    ("ok", "const A: u256 = 2 + 3\nconst B: u256 = A * 4 - 1 / 1 % 7\nconst C: bool = B == 19 && !false\nconst D: u256 = 1 << 256"),
-    ("err", "const A: u256 = |B\nconst B: u256 = 1", "N_FORWARD_CONST"),
-    ("err", "const A: u256 = |A", "N_FORWARD_CONST"),
-    ("err", "const A: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff |+ 1", "C_OVERFLOW"),
-    ("err", "const A: u256 = 0 |- 1", "C_OVERFLOW"),
-    ("err", "const A: u256 = 0x8000000000000000000000000000000000000000000000000000000000000000 |* 2", "C_OVERFLOW"),
-    ("err", "const A: u256 = 1 |/ 0", "C_DIV_ZERO"),
-    ("err", "const A: u256 = 1 |% 0", "C_DIV_ZERO"),
-    ("err", "fn g() -> u256 { 1 }\nconst A: u256 = |g()", "C_NOT_CONST"),
-    ("err", "const A: bool = |1", "T_MISMATCH"),
-    ("err", "const A: u256 = 1 + |true", "T_MISMATCH"),
+    ok("const A: u256 = 2 + 3\nconst B: u256 = A * 4 - 1 / 1 % 7\nconst C: bool = B == 19 && !false\nconst D: u256 = 1 << 256"),
+    err("const A: u256 = |B\nconst B: u256 = 1", "N_FORWARD_CONST"),
+    err("const A: u256 = |A", "N_FORWARD_CONST"),
+    err("const A: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff |+ 1", "C_OVERFLOW"),
+    err("const A: u256 = 0 |- 1", "C_OVERFLOW"),
+    err("const A: u256 = 0x8000000000000000000000000000000000000000000000000000000000000000 |* 2", "C_OVERFLOW"),
+    err("const A: u256 = 1 |/ 0", "C_DIV_ZERO"),
+    err("const A: u256 = 1 |% 0", "C_DIV_ZERO"),
+    err("fn g() -> u256 { 1 }\nconst A: u256 = |g()", "C_NOT_CONST"),
+    err("const A: bool = |1", "T_MISMATCH"),
+    err("const A: u256 = 1 + |true", "T_MISMATCH"),
 ],
 "effects": [
-    ("ok", contract(ARMS_OK, init="    init(x: u256) uses (mut a) { a = x }\n")),
-    ("err", contract("        Get {} -> u256 { |a }\n        Set { v } uses (mut a) { a = v }\n"), "E_NOT_IN_USES"),
-    ("err", contract(GET_OK + "        Set { v } uses (a) { |a = v }\n"), "E_NOT_MUT"),
-    ("err", contract(GET_OK + "        Set { v } uses (a) { |a += v }\n"), "E_NOT_MUT"),
-    ("err", contract("        Get {} -> u256 uses (|b) { 1 }\n        Set { v } { }\n"), "E_UNKNOWN_FIELD"),
-    ("err", contract("        Get {} -> u256 uses (a, |mut a) { a }\n        Set { v } { }\n"), "E_DUPLICATE_USE"),
-    ("err", contract(ARMS_OK) + "fn f() -> u256 { |a }", "E_NOT_IN_USES"),
-    ("warn", contract("        Get {} -> u256 uses (a, |b) { a }\n        Set { v } uses (mut a) { a = v }\n", FIELD_A + "    mut b: u256\n"), "E_UNUSED_USE"),
-    ("warn", contract(ARMS_OK, init="    init() uses (|mut a) { }\n"), "E_UNUSED_USE"),
-    ("ok", contract("        Get {} -> u256 uses (mut a) { a }\n        Set { v } uses (mut a) { a = v }\n")),
-    ("err", contract(ARMS_OK, init="    init(|a: u256) { }\n"), "N_SHADOWS_FIELD"),
-    ("err", contract("        Get {} -> u256 {\n            |let a: u256 = 1\n            a\n        }\n        Set { v } { }\n"), "N_SHADOWS_FIELD"),
-    ("err", contract(ARMS_OK, FIELD_A + "    mut |a: bool\n"), "N_DUPLICATE"),
-    ("err", "const a: u256 = 1\n" + contract(ARMS_OK, "    mut |a: u256\n"), "N_DUPLICATE"),
+    ok(contract(ARMS_OK, init="    init(x: u256) uses (mut a) { a = x }\n")),
+    err(contract("        Get {} -> u256 { |a }\n        Set { v } uses (mut a) { a = v }\n"), "E_NOT_IN_USES"),
+    err(contract(GET_OK + "        Set { v } uses (a) { |a = v }\n"), "E_NOT_MUT"),
+    err(contract(GET_OK + "        Set { v } uses (a) { |a += v }\n"), "E_NOT_MUT"),
+    err(contract("        Get {} -> u256 uses (|b) { 1 }\n        Set { v } { }\n"), "E_UNKNOWN_FIELD"),
+    err(contract("        Get {} -> u256 uses (a, |mut a) { a }\n        Set { v } { }\n"), "E_DUPLICATE_USE"),
+    err(contract(ARMS_OK) + "fn f() -> u256 { |a }", "E_NOT_IN_USES"),
+    warn(contract("        Get {} -> u256 uses (a, |b) { a }\n        Set { v } uses (mut a) { a = v }\n", FIELD_A + "    mut b: u256\n"), "E_UNUSED_USE"),
+    warn(contract(ARMS_OK, init="    init() uses (|mut a) { }\n"), "E_UNUSED_USE"),
+    ok(contract("        Get {} -> u256 uses (mut a) { a }\n        Set { v } uses (mut a) { a = v }\n")),
+    err(contract(ARMS_OK, init="    init(|a: u256) { }\n"), "N_SHADOWS_FIELD"),
+    err(contract("        Get {} -> u256 {\n            |let a: u256 = 1\n            a\n        }\n        Set { v } { }\n"), "N_SHADOWS_FIELD"),
+    err(contract(ARMS_OK, FIELD_A + "    mut |a: bool\n"), "N_DUPLICATE"),
+    err("const a: u256 = 1\n" + contract(ARMS_OK, "    mut |a: u256\n"), "N_DUPLICATE"),
 ],
 "selectors": [
-    ("ok", "msg N {\n    #[selector = 0xffffffff]\n    A {},\n    #[selector = 0]\n    B {},\n}"),
-    ("err", "msg N {\n    |#[selector = 0x100000000]\n    A {},\n}", "T_SELECTOR_TOO_LARGE"),
-    ("err", "msg N {\n    #[selector = 1]\n    A {},\n    |#[selector = 0x01]\n    B {},\n}", "N_DUPLICATE_SELECTOR"),
-    ("ok", contract(ARMS_OK, msgs="msg N {\n    #[selector = 0x03]\n    O {},\n}\n", recvs=RECV_N)),
-    ("err", contract(ARMS_OK, msgs="msg N {\n    |#[selector = 0x02]\n    O {},\n}\n", recvs=RECV_N), "N_DUPLICATE_SELECTOR"),
+    ok("msg N {\n    #[selector = 0xffffffff]\n    A {},\n    #[selector = 0]\n    B {},\n}"),
+    err("msg N {\n    |#[selector = 0x100000000]\n    A {},\n}", "T_SELECTOR_TOO_LARGE"),
+    err("msg N {\n    #[selector = 1]\n    A {},\n    |#[selector = 0x01]\n    B {},\n}", "N_DUPLICATE_SELECTOR"),
+    ok(contract(ARMS_OK, msgs="msg N {\n    #[selector = 0x03]\n    O {},\n}\n", recvs=RECV_N)),
+    err(contract(ARMS_OK, msgs="msg N {\n    |#[selector = 0x02]\n    O {},\n}\n", recvs=RECV_N), "N_DUPLICATE_SELECTOR"),
 ],
 "messages": [
-    ("ok", contract("        Set { v: w } uses (mut a) { a = w }\n" + GET_OK)),
-    ("err", contract(GET_OK) .replace("    recv M", "    |recv M"), "N_MISSING_ARM"),
-    ("err", contract(ARMS_OK + "        |Get {} -> u256 { 1 }\n"), "N_DUPLICATE"),
-    ("err", contract(ARMS_OK + "        |Put {} { }\n"), "N_UNKNOWN_VARIANT"),
-    ("err", contract("        |Get {} uses (a) { }\n        Set { v } uses (mut a) { a = v }\n"), "T_MISMATCH"),
-    ("err", contract(GET_OK + "        Set { |w } { }\n"), "N_UNKNOWN_FIELD"),
-    ("err", contract(GET_OK + "        |Set {} { }\n"), "N_MISSING_BIND"),
-    ("err", contract(GET_OK + "        Set { |v: a } { }\n"), "N_SHADOWS_FIELD"),
-    ("err", "fn N() {}\n" + contract("", "").replace("recv M", "|recv N"), "N_NOT_A_MSG"),
-    ("err", contract(ARMS_OK, recvs="    |recv M {\n" + ARMS_OK + "    }\n"), "N_DUPLICATE"),
-    ("err", contract(GET_OK + "        Set { v } |{ true }\n"), "T_MISMATCH"),
+    ok(contract("        Set { v: w } uses (mut a) { a = w }\n" + GET_OK)),
+    err(contract(GET_OK) .replace("    recv M", "    |recv M"), "N_MISSING_ARM"),
+    err(contract(ARMS_OK + "        |Get {} -> u256 { 1 }\n"), "N_DUPLICATE"),
+    err(contract(ARMS_OK + "        |Put {} { }\n"), "N_UNKNOWN_VARIANT"),
+    err(contract("        |Get {} uses (a) { }\n        Set { v } uses (mut a) { a = v }\n"), "T_MISMATCH"),
+    err(contract(GET_OK + "        Set { |w } { }\n"), "N_UNKNOWN_FIELD"),
+    err(contract(GET_OK + "        |Set {} { }\n"), "N_MISSING_BIND"),
+    err(contract(GET_OK + "        Set { |v: a } { }\n"), "N_SHADOWS_FIELD"),
+    err("fn N() {}\n" + contract("", "").replace("recv M", "|recv N"), "N_NOT_A_MSG"),
+    err(contract(ARMS_OK, recvs="    |recv M {\n" + ARMS_OK + "    }\n"), "N_DUPLICATE"),
+    err(contract(GET_OK + "        Set { v } |{ true }\n"), "T_MISMATCH"),
 ],
 }
-codes = sorted({c[2] for g in groups.values() for c in g if c[0] != "ok"} | {"E_TOO_MANY_FIELDS"})
+codes = sorted({c.code for g in groups.values() for c in g if isinstance(c, Diagnosed)} | {"E_TOO_MANY_FIELDS"})
 code_uses = "\n".join(f"    {c}," for c in codes)
 out = f"""// Generated by tools/gen_check_tests.py. Edit the cases there and rerun it.
 // Tests for the checker: cases per rule of SPEC §2 and §4–6, each of which accepts, warns or
@@ -223,18 +273,7 @@ fn rejects(_ s: own DynString, _ code: DiagCode, _ pos: usize) {{
     assert!(d.pos() == Pos::at(pos))
 }}""".split("\n")
 for name, cases in groups.items():
-    out += ["", "#[test]", f"fn {name}() {{"]
-    for c in cases:
-        if c[0] == "ok":
-            assert "|" not in c[1] or "||" in c[1], c
-            out.append(f"    accepts({lit(c[1])})")
-        else:
-            src = c[1]
-            i = src.index("|")
-            src = src[:i] + src[i + 1:]
-            helper = "warns" if c[0] == "warn" else "rejects"
-            out.append(f"    {helper}({lit(src)}, {c[2]}, {i})")
-    out.append("}")
+    out += ["", "#[test]", f"fn {name}() {{"] + [c.line() for c in cases] + ["}"]
 SIDE = ("const A: u256 = 6 * 7\nfn f(_ p: u256) -> u256 {\n    let x = p + A\n    var y = x\n    y\n}\n"
         + contract(GET_OK + "        Set { v } uses (mut b) { b = v == A }\n",
                    FIELD_A + "    mut b: bool\n"))
