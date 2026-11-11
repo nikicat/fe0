@@ -1,6 +1,5 @@
-// expect: N018 15:15
+// expect: N018 14:15
 // A bind may not take a constant's name (SPEC §5.2).
-// fe: accepts
 msg M {
     #[selector = 1]
     Get -> u256,

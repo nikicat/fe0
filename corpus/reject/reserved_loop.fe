@@ -1,0 +1,6 @@
+// expect: L005 4:9
+// `loop` is a keyword since Fe 26.6.0, so Fe0 reserves it (SPEC §1).
+fn f() -> u256 {
+    let loop: u256 = 1
+    loop
+}

@@ -46,21 +46,21 @@ use ingot::parser::{MAX_DEPTH, parse}
 use ingot::parser_tests::{DEEPEST_BLOCKS, DEEPEST_PARENS, Nested}
 use std::abi::DynString
 
-fn checked(_ s: DynString) -> Checked {
+fn checked(_ s: own DynString) -> Checked {
     with (Source = text(s)) {
         check(parse())
     }
 }
 
 // Asserts that the checker accepts `s` without warnings.
-fn accepts(_ s: DynString) {
+fn accepts(_ s: own DynString) {
     let c = checked(s)
     assert!(c.err.is_none())
     assert!(c.warns.len() == 0)
 }
 
 // Asserts that the checker accepts `s` with one warning, of `code` at byte `pos`.
-fn warns(_ s: DynString, _ code: DiagCode, _ pos: usize) {
+fn warns(_ s: own DynString, _ code: DiagCode, _ pos: usize) {
     let c = checked(s)
     assert!(c.err.is_none())
     assert!(c.warns.len() == 1)
@@ -68,7 +68,7 @@ fn warns(_ s: DynString, _ code: DiagCode, _ pos: usize) {
     assert!(c.warns[0].pos() == Pos::at(pos))
 }
 
-fn rejects(_ s: DynString, _ code: DiagCode, _ pos: usize) {
+fn rejects(_ s: own DynString, _ code: DiagCode, _ pos: usize) {
     let d = checked(s).err.unwrap()
     assert!(d.code == code)
     assert!(d.pos() == Pos::at(pos))

@@ -477,7 +477,7 @@ fn unescape(_ c: i32) -> i32 {
 
 // Returns the value of the hex digit `c`, in either case. Any other byte gives a meaningless
 // value.
-pub(ingot) fn digit_value(_ c: i32) -> u256 {
+fn digit_value(_ c: i32) -> u256 {
     let v = if is_digit(c) {
         c - C_ZERO
     } else if c >= C_LOWER_A {
@@ -631,6 +631,7 @@ impl Lexer {
             || self.word("static_assert")
             || self.word("match")
             || self.word("for")
+            || self.word("loop")
             || self.word("in")
             || self.word("where")
             || self.word("yield")

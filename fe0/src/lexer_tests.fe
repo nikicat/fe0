@@ -12,19 +12,20 @@ use ingot::io::{Source, text}
 use ingot::lexer::*
 use std::abi::DynString
 
-fn lex_text(_ s: DynString) -> Lexed {
+fn lexed(_ s: own DynString) -> Lexed {
     with (Source = text(s)) {
-        let l = lex()
-        assert!(l.err.is_none())
-        l
+        lex()
     }
 }
 
-fn lex_err(_ s: DynString) -> Diag {
-    with (Source = text(s)) {
-        let l = lex()
-        l.err.unwrap()
-    }
+fn lex_text(_ s: own DynString) -> Lexed {
+    let l = lexed(s)
+    assert!(l.err.is_none())
+    l
+}
+
+fn lex_err(_ s: own DynString) -> Diag {
+    lexed(s).err.unwrap()
 }
 
 fn kinds(_ l: Lexed) -> MemVec<Tok> {
@@ -35,7 +36,7 @@ fn kinds(_ l: Lexed) -> MemVec<Tok> {
     v
 }
 
-fn expect<const N: usize>(_ s: DynString, _ want: [Tok; N]) {
+fn expect<const N: usize>(_ s: own DynString, _ want: [Tok; N]) {
     let k = kinds(lex_text(s))
     assert!(k.len() == N)
     var i: usize = 0
@@ -81,6 +82,7 @@ fn keywords_and_idents() {
 #[test]
 fn reserved_words_are_errors() {
     assert!(lex_err("let for = 1").code == L_RESERVED_WORD)
+    assert!(lex_err("let loop = 1").code == L_RESERVED_WORD)
     assert!(lex_err("let x = with").pos() == Pos::at(8))
     assert!(lex_err("struct").code == L_RESERVED_WORD)
 }
@@ -272,7 +274,7 @@ fn line_col() {
 }
 
 // Line and column where token `tok` of `s` starts.
-fn line_col_of(_ s: DynString, _ tok: usize) -> LineCol {
+fn line_col_of(_ s: own DynString, _ tok: usize) -> LineCol {
     let l = lex_text(s)
     l.text.line_col(l.toks[tok].span.start)
 }

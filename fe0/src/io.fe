@@ -1,5 +1,6 @@
 // The compiler core reads its input only through the `Source` effect. The adapters here decide
-// where the bytes come from. WORKAROUNDS.md says why the core does not use std I/O.
+// where the bytes come from. docs/adr/0010-source-effect.md says why the core does not use
+// std I/O.
 
 use std::abi::{Bytes, DynString}
 
@@ -9,12 +10,12 @@ pub trait Source {
 }
 
 // Returns a `Source` over the bytes of `s`, such as a test source.
-pub fn text(_ s: DynString) -> BytesReader {
-    bytes(s.as_bytes())
+pub fn text(_ s: own DynString) -> BytesReader {
+    bytes(s.into_bytes())
 }
 
 // Returns a `Source` over `data`, such as source passed in calldata.
-pub fn bytes(_ data: Bytes) -> BytesReader {
+pub fn bytes(_ data: own Bytes) -> BytesReader {
     BytesReader { data, pos: 0 }
 }
 

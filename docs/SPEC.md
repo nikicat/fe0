@@ -14,7 +14,8 @@ Marks used below:
 - **[✓]** — confirmed by a probe. The probes are in `spike-*/`, and the ADRs in `docs/adr/`
   summarise what they found. The programs in `corpus/` and `corpus/reject/` are probes too (§8).
 
-Reference toolchain: Fe 26.5.1. Probes ran on master `d217a51bf`.
+Reference toolchain: Fe 26.6.0 ([ADR 0015](adr/0015-move-to-26-6-0.md)). `tools/spikes.sh`
+reruns the probes on it.
 
 ---
 
@@ -32,9 +33,9 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 | Decimal integer | `[0-9]+(_[0-9]+)*` | The value must fit in 256 bits |
 | Hex integer | `0[xX][0-9a-fA-F]+` | No `_` separators. Must fit in 256 bits |
 | String | `"` … `"` with escapes `\" \\ \n \r \t` | Only allowed as the message of `assert!`, and at most 31 bytes after decoding. Fe accepts longer messages **[✓]**; Fe0 v1 restricts them so `Error(string)` stays one data word |
-| Punctuation | `( ) { } [ ] : , -> # .` | `;` is not a token: Fe 26.5.1 rejects it after a statement, even at the end of a line **[✓]** |
+| Punctuation | `( ) { } [ ] : , -> # .` | `;` is not a token: Fe 26.6.0 rejects it after a statement, even at the end of a line **[✓]** |
 | Operators | `+ - * / % ~ ! ^ & \| && \|\| < > = == !=` | |
-| Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside, and rejects spaced forms. Fe 26.5.1 rejects `x + = 1` too **[✓]** |
+| Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside, and rejects spaced forms. Fe 26.6.0 rejects `x + = 1` too **[✓]** |
 
 - **No block comments.** Fe's compiler lexer has none, even though the tree-sitter grammar does.
 - **Doc comments.** A comment that starts with `///`, including `////`, is a doc comment. It may
@@ -64,9 +65,13 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
   could be added later.
 
 **Reserved words.** These are every keyword of Fe's lexer, so Fe0 rejects any of them as an
-identifier: `as true false break uses continue contract msg fn mod const static_assert if else
-match for in where while pub return yield self Self struct enum trait impl type let var mut ref
-own use extern unsafe ingot super`.
+identifier (`tools/spikes.sh` checks this list against Fe's source):
+
+```
+as true false break uses continue contract msg fn mod const static_assert if else
+match for in loop where while pub return yield self Self struct enum trait impl type let var
+mut ref own use extern unsafe ingot super
+```
 
 `init`, `recv`, `assert` and `with` are contextual words in Fe, not keywords. Fe0 **also
 rejects them as identifiers**, which keeps the parser simple and is allowed by the subset rule.
@@ -305,10 +310,11 @@ ABI-encoded string.
    - Fe's rule is narrower, and it differs by the kind of name. Fe reads a `let`, `var` or
      bind name that names a contract as a pattern, and rejects it (`8-0000`) **[✓]**. It
      reads a `let` or `var` name that names a constant as a pattern too, and rejects it as
-     refutable (`8-0101`) **[✓]**. It accepts a bind `a: n` for a constant `n` **[✓]**. It
-     probably reads that bind as a pattern as well and matches the field against `n`. Then a
-     plain local there would change what the program does **[V]**. Fe accepts a parameter
-     named like any item, and a local named like a function or a msg **[✓]**.
+     refutable (`8-0101`) **[✓]**. It reads a bind `a: n` for a constant `n` as a pattern
+     too, and rejects it as refutable (`8-0153`) **[✓]**. Fe 26.5.1 accepted that bind. It ran
+     the arm for any value of the field, and `n` in the body was still the constant **[✓]**.
+     Fe accepts a parameter named like any item, and a local named like a function or a msg
+     **[✓]**.
    - The name of a local or a parameter may not start with an uppercase letter (`N017`).
    - Fe's rule is narrower. Fe reads an uppercase local or bind that names a type or a variant
      in scope, such as `let Some` or `x: Option`, as a pattern, and rejects it **[✓]**. Fe

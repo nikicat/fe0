@@ -4,7 +4,7 @@
 use ingot::codegen::{Output, compile}
 use ingot::diag::{Diag, E_NOT_IN_USES, diag}
 use ingot::io::{Source, text}
-use ingot::lexer::{Pos, digit_value}
+use ingot::lexer::Pos
 use std::abi::DynString
 use std::evm::{Call, CallOutcome, Create, RawOps}
 
@@ -86,14 +86,14 @@ fn diag_word_layout() {
 }
 
 // Fe0's build of `s`.
-pub fn compiled(_ s: DynString) -> Output {
+pub fn compiled(_ s: own DynString) -> Output {
     with (Source = text(s)) {
         compile()
     }
 }
 
 // Fe0's deploy code for `s`. Fails with Panic(`DiagWord::of(d)`) when Fe0 rejects `s` with `d`.
-pub fn ours(_ s: DynString) -> MemVec<u8> {
+pub fn ours(_ s: own DynString) -> MemVec<u8> {
     let out = compiled(s)
     match out.err {
         Option::Some(d) => core::panic_code(DiagWord::of(d).word),
@@ -105,31 +105,24 @@ pub fn ours(_ s: DynString) -> MemVec<u8> {
 // Checks that Fe0's deploy code for `s` is the code that `hex` spells in lowercase hex, as the
 // native CLI prints it. Otherwise fails with Panic(`CODE_DIFFERS` plus the offset of the first
 // byte that differs), or with Panic(`DiagWord`) when Fe0 rejects `s`.
-pub fn same_code(_ s: DynString, _ hex: DynString) {
+pub fn same_code(_ s: own DynString, _ hex: DynString) {
     let code = ours(s)
-    let len = hex.len() / 2
+    let want = core::text::decode_hex(hex).unwrap()
     var i: usize = 0
-    while i < len && i < code.len() {
-        if code[i] != hex_byte(hex, i) {
+    while i < want.len() && i < code.len() {
+        if code[i] != want.byte_at(i) {
             core::panic_code(CODE_DIFFERS + i as u256)
         }
         i += 1
     }
-    if code.len() != len {
+    if code.len() != want.len() {
         core::panic_code(CODE_DIFFERS + i as u256)
     }
 }
 
-// Returns byte `i` of the hex string `hex`.
-fn hex_byte(_ hex: DynString, _ i: usize) -> u8 {
-    let high = digit_value(hex.byte_at(2 * i) as i32)
-    let low = digit_value(hex.byte_at(2 * i + 1) as i32)
-    (high << 4 | low).downcast_truncate()
-}
-
 // Checks that Fe0 rejects `s` with the error `expected`. Otherwise fails with Panic(`DiagWord`)
 // of the error Fe0 gave, or Panic(`ACCEPTED`) when Fe0 accepted `s`.
-pub fn rejects(_ s: DynString, _ expected: DiagWord) {
+pub fn rejects(_ s: own DynString, _ expected: DiagWord) {
     match compiled(s).err {
         Option::Some(d) => {
             let got = DiagWord::of(d)
@@ -144,7 +137,7 @@ pub fn rejects(_ s: DynString, _ expected: DiagWord) {
 // The official deploy code of a contract. It is the `len` bytes at `offset` in the code of the
 // running test, as `C::init_code_offset()` and `C::init_code_len()` give them.
 pub fn theirs(_ offset: u256, _ len: u256) -> MemVec<u8> uses (evm: mut Evm) {
-    var buf = MemBuffer::alloc(len as usize)
+    var buf = MemBuffer::new(len.downcast_unchecked())
     evm.codecopy(dest: mut buf, dest_offset: 0, src_offset: offset, len)
     var v: MemVec<u8> = MemVec::new()
     v.extend_from_slice(buf.span())

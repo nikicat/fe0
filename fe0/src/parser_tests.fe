@@ -58,36 +58,38 @@ use ingot::lexer::{
 use ingot::parser::{MAX_DEPTH, parse}
 use std::abi::DynString
 
-fn parse_text(_ s: DynString) -> Ast {
+fn parsed(_ s: own DynString) -> Ast {
     with (Source = text(s)) {
-        let a = parse()
-        assert!(a.err.is_none())
-        a
+        parse()
     }
 }
 
-fn parse_err(_ s: DynString) -> Diag {
-    with (Source = text(s)) {
-        parse().err.unwrap()
-    }
+fn parse_text(_ s: own DynString) -> Ast {
+    let a = parsed(s)
+    assert!(a.err.is_none())
+    a
+}
+
+fn parse_err(_ s: own DynString) -> Diag {
+    parsed(s).err.unwrap()
 }
 
 // Asserts that parsing `src` fails with `code` at byte `at`.
-fn rejects(_ src: DynString, _ code: DiagCode, _ at: usize) {
+fn rejects(_ src: own DynString, _ code: DiagCode, _ at: usize) {
     let d = parse_err(src)
     assert!(d.code == code)
     assert!(d.pos() == Pos::at(at))
 }
 
 // Asserts that the first item of `src` prints as `want`.
-fn item_is(_ src: DynString, _ want: DynString) {
+fn item_is(_ src: own DynString, _ want: DynString) {
     let ast = parse_text(src)
     let i = ast.list_at(ast.items, 0)
     prints(ast, i, want)
 }
 
 // Asserts that the tail expression of the first item, a function, prints as `want`.
-fn tail_is(_ src: DynString, _ want: DynString) {
+fn tail_is(_ src: own DynString, _ want: DynString) {
     let ast = parse_text(src)
     let f = ast.node(ast.list_at(ast.items, 0))
     let i = ast.node(f.body()).value()
@@ -98,7 +100,7 @@ fn tail_is(_ src: DynString, _ want: DynString) {
 fn prints(_ ast: own Ast, _ i: NodeId, _ want: DynString) {
     var p = Printer { ast, out: MemVec::new() }
     p.node(i)
-    assert!(p.matches(want))
+    assert!(p.out.as_slice() == want)
 }
 
 // Renders nodes as S-expressions: `(op a b)` for operators and items, `{s; s; tail}` for
@@ -106,21 +108,6 @@ fn prints(_ ast: own Ast, _ i: NodeId, _ want: DynString) {
 struct Printer { ast: Ast, out: MemVec<u8> }
 
 impl Printer {
-    fn matches(self, _ want: DynString) -> bool {
-        let w = want.as_bytes()
-        if w.len() != self.out.len() {
-            return false
-        }
-        var i: usize = 0
-        while i < w.len() {
-            if w.byte_at(i) != self.out[i] {
-                return false
-            }
-            i += 1
-        }
-        true
-    }
-
     fn put<const N: usize>(mut self, _ w: String<N>) {
         let b = w.as_bytes()
         var i: usize = 0
