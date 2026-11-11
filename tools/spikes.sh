@@ -14,6 +14,11 @@ code() { # dir test [extra fe test args...]
         grep -oE '0x4e487b71[0-9a-f]+|Test halted: [A-Za-z(]+' | head -1 | sed -E 's/^0x4e487b71//'
 }
 
+# 1 if every test of an ingot passes, 0 otherwise
+passes() { # dir
+    (cd "$1" && "$FE" test 2>&1) | grep -c 'test result: ok'
+}
+
 check() { # label actual expected
     if [ "$2" = "$3" ]; then printf 'ok    %-34s %s\n' "$1" "$2"
     else printf 'DIFF  %-34s got %s, expected %s\n' "$1" "$2" "$3"; fails=$((fails + 1)); fi
@@ -21,7 +26,39 @@ check() { # label actual expected
 
 hexword() { printf '%064x' "$1"; }
 
+# Builds a native binary and runs it on this script's stdin. Prints "build failed", or the
+# binary's stdout, stderr and exit code as "out a;b;err c;exit N;". Deletes the old binary
+# first, so that a failed build cannot leave it to be checked.
+native() { # out-dir binary-name [fe build args...]
+    local dir=$1 bin=$1/$2 err out status; shift 2
+    rm -f "$bin"
+    if ! "$FE" build --backend native --out-dir "$dir" "$@" </dev/null >/dev/null 2>&1 ||
+        [ ! -x "$bin" ]; then
+        echo "build failed"; return
+    fi
+    err=$(mktemp)
+    out=$("$bin" 2>"$err"); status=$?
+    stream out "$out"; stream err "$(cat "$err")"; echo "exit $status;"
+    rm -f "$err"
+}
+stream() { # name text -> "name line;line;", or nothing for empty text
+    [ -z "$2" ] || printf '%s %s;' "$1" "$(printf '%s' "$2" | tr '\n' ';')"
+}
+
 echo "fe: $("$FE" --version)"
+
+# SPEC's reserved words must be exactly the keywords of Fe's lexer at the pinned tag
+tag=$(sed -n 's/^ARG FE=//p' "$ROOT/.devcontainer/Containerfile")
+if src=$(curl -fsSL "https://raw.githubusercontent.com/argotorg/fe/$tag/crates/parser/src/syntax_kind.rs"); then
+    words() { tr ' ' '\n' | sed '/^$/d' | sort; }
+    fe_kw=$(printf '%s\n' "$src" | sed -nE 's/^ *#\[token\("([A-Za-z_]+)"\)\].*/\1/p' | words)
+    spec_kw=$(awk '/^\*\*Reserved words\.\*\*/ { s = 1 } s && /^```/ { if (f) exit; f = 1; next }
+                   f' "$ROOT/docs/SPEC.md" | words)
+    check "Fe $tag keywords not in SPEC" "$(comm -23 <(echo "$fe_kw") <(echo "$spec_kw") | xargs)" ""
+    check "SPEC reserved words not Fe keywords" "$(comm -13 <(echo "$fe_kw") <(echo "$spec_kw") | xargs)" ""
+else
+    check "fetch Fe $tag syntax_kind.rs" failed ok
+fi
 
 # spike-lexer: plain tests pass; gas for lexing 1 KB; create_raw and Bytes-split checks
 for t in lexes_a_small_function create_raw_then_call create_raw_bad_initcode_gives_zero_address \
@@ -29,9 +66,11 @@ for t in lexes_a_small_function create_raw_then_call create_raw_bad_initcode_giv
     r=$(cd "$ROOT/spike-lexer" && "$FE" test --filter "$t" 2>&1 | grep -cE "PASS .* $t$")
     check "spike-lexer $t" "$r" 1
 done
-# gas drifts with every compiler update, so allow +-5% around the recorded 802,865
+# Gas per KB on Fe 26.6.0, with the tests reading through the shared BufferReader.
+# Gas drifts with every compiler update, so the check allows +-5%.
+want=726253
 g=$((16#$(code spike-lexer lex_gas -O 1)))
-check "lexer gas per KB (-O1) within 5%" "$(( g * 100 / 802865 >= 95 && g * 100 / 802865 <= 105 ))" 1
+check "lexer gas per KB (-O1) within 5%" "$(( g * 100 / want >= 95 && g * 100 / want <= 105 ))" 1
 echo "      (lexer gas per KB: $g)"
 
 # spike-layout: storage/revert payloads
@@ -62,25 +101,31 @@ check "init with value"     "$(code spike-conform init_with_value)" "$(hexword 0
 check "recursion depth"     "$(code spike-limits recursion_depth)"  "$(hexword 1019)"
 check "fe test EIP-170"     "$(code spike-limits contract_size_limit)" "$(hexword 0x111)"
 
-# spike-deps: duplicate contract names (argotorg/fe#1887) — expect the crash until fixed
-r=$(cd "$ROOT/spike-deps/user" && "$FE" test 2>&1 | grep -c 'test result: ok')
-check "path dependency"     "$r" 1
+# spike-deps/user: a path dependency, and a msg named M in two modules
+check "path dependency"     "$(passes "$ROOT/spike-deps/user")" 1
+# spike-deps/dupname: a contract named C in two modules (argotorg/fe#1887). The batches of
+# generated programs rely on it, because every generated program names its contract C.
+check "same contract name: test" "$(passes "$ROOT/spike-deps/dupname")" 1
+r=$("$FE" build --out-dir "$ROOT/out/spikes/dupname" "$ROOT/spike-deps/dupname" 2>&1 |
+    grep -c '__C\.runtime\.bin$')
+check "same contract name: build" "$r" 2
 
 # spike-keccak: one round, EVM vs native vs Python reference
 check "keccak round (EVM)"  "$(code spike-keccak keccak_round_evm)" "$(printf '%064x' 0x01ac8e14a6e6ea79)"
-(cd "$ROOT/spike-keccak" && "$FE" build --backend native >/dev/null 2>&1)
-check "keccak round (native)" "$("$ROOT/spike-keccak/out/spike_keccak" 2>&1)" "01ac8e14a6e6ea79"
+check "keccak round (native)" "$(native "$ROOT/spike-keccak/out" spike_keccak "$ROOT/spike-keccak")" \
+    "out 01ac8e14a6e6ea79;exit 0;"
 
 # spike-lexer native: same token stream as recorded
-(cd "$ROOT/spike-lexer" && "$FE" build --backend native >/dev/null 2>&1)
-check "lexer (native)" "$(printf 'fn f(x) -> u8 { x == 42 }' | "$ROOT/spike-lexer/out/spike_lexer" | tr '\n' ';')" \
-    "1 0 2;0 3 1;3 4 1;0 5 1;3 6 1;3 8 2;0 11 2;3 14 1;0 16 1;3 18 2;2 21 2;3 24 1;4 25 0;"
+check "lexer (native)" \
+    "$(printf 'fn f(x) -> u8 { x == 42 }' | native "$ROOT/spike-lexer/out" spike_lexer "$ROOT/spike-lexer")" \
+    "out 1 0 2;0 3 1;3 4 1;0 5 1;3 6 1;3 8 2;0 11 2;3 14 1;0 16 1;3 18 2;2 21 2;3 24 1;4 25 0;exit 0;"
 
-# spike-native/probe_stderr: stderr through libc's `write`, which 26.5.1's std::io lacks
-"$FE" build --backend native -e executable --out-dir "$ROOT/out/spikes" \
-    "$ROOT/spike-native/probe_stderr.fe" >/dev/null 2>&1
-r=$("$ROOT/out/spikes/probe_stderr" 2>&1 >/dev/null; echo "exit $?")
-check "stderr (native)" "$(echo "$r" | tr '\n' ';')" "oops!;exit 3;"
+# spike-native: stderr, a native panic, and keccak of data known only at run time
+probe() { native "$ROOT/out/spikes" "$1" "$ROOT/spike-native/$1.fe" -e executable; }
+check "stderr (native)" "$(probe probe_stderr)" "out ok;err oops!;exit 3;"
+check "panic (native)" "$(probe probe_panic)" "out before;err panicked: boom;exit 134;"
+check "keccak at run time (native)" "$(probe probe_keccak)" \
+    "out 85bb7d697da88b85d62f8208a31e948249a6098aff453edda20a9b1afc9557c1;exit 0;"
 
 # compile-time probes: accept/reject as recorded in spike-conform/compile
 for f in "$ROOT"/spike-conform/compile/*.fe; do

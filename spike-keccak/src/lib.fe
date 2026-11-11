@@ -71,17 +71,10 @@ pub fn digest(_ s: [u64; 25]) -> u64 {
     h
 }
 
-pub fn main() -> i32 {
+// Prints the digest as 16 hex digits.
+#[cfg(target = "native")]
+pub fn main() -> i32 uses (stdout: mut std::io::Stdout) {
     let h = digest(round(input(), 0x8000000080008081))
-    with (std::io::Write = std::io::host()) {
-        var i: u64 = 0
-        while i < 16 {
-            let n: u64 = (h >> (60 - i * 4)) & 0xf
-            let ch: u64 = if n < 10 { 48 + n } else { 87 + n }
-            std::io::write_char(ch.downcast_truncate())
-            i += 1
-        }
-        std::io::write_char(10)
-    }
+    println!(core::text::hex(h as u256, 8))
     0
 }

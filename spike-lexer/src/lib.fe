@@ -1,7 +1,13 @@
 // Spike: a lexer for a Fe subset that pulls source bytes through the `Read`
 // effect, so the same code lexes stdin natively and a byte array under `fe test`.
 
-use std::io::{Read, Write, read_char, write_char}
+use std::io::{Stdin, Stdout, read_to_end}
+
+// Where the lexer gets its bytes. Fe's std::io had this effect until Fe 26.6.0.
+pub trait Read {
+    // The next byte, or -1 at the end of the input.
+    fn read_char(mut self) -> i32
+}
 
 pub enum Kind {
     Ident,
@@ -50,13 +56,13 @@ fn is_space(_ c: i32) -> bool {
 
 impl Lexer {
     pub fn new() -> Self uses (r: mut Read) {
-        Lexer { src: MemVec::new(), peeked: read_char() }
+        Lexer { src: MemVec::new(), peeked: r.read_char() }
     }
 
     // Consume the peeked byte into `src` and read the next one.
     fn bump(mut self) uses (r: mut Read) {
         self.src.push(self.peeked.downcast_truncate())
-        self.peeked = read_char()
+        self.peeked = r.read_char()
     }
 
     fn span_is<const N: usize>(self, _ start: usize, _ len: usize, _ word: [u8; N]) -> bool {
@@ -141,27 +147,49 @@ pub fn lex_all() -> MemVec<Token> uses (r: mut Read) {
     tokens
 }
 
-fn write_usize(_ n: usize) uses (w: mut Write) {
-    if n >= 10 {
-        write_usize(n / 10)
+// Feeds the bytes of a buffer, such as stdin, through the `Read` effect.
+pub struct BufferReader {
+    bytes: MemBuffer,
+    pos: usize,
+}
+
+impl BufferReader {
+    pub fn new(_ bytes: own MemBuffer) -> Self {
+        BufferReader { bytes, pos: 0 }
     }
-    write_char((48 + n % 10).downcast_truncate())
+
+    pub fn from_array<const N: usize>(_ array: [u8; N]) -> Self {
+        var bytes = MemBuffer::with_capacity(N)
+        for b in array {
+            bytes.push(b)
+        }
+        BufferReader::new(bytes)
+    }
+}
+
+impl Read for BufferReader {
+    fn read_char(mut self) -> i32 {
+        if self.pos >= self.bytes.len() {
+            return -1
+        }
+        let c = self.bytes[self.pos]
+        self.pos += 1
+        c as i32
+    }
 }
 
 // Native entry point: `fe build --backend native`, then pipe Fe source to stdin.
 // Prints one `kind start len` line per token.
-pub fn main() -> i32 {
-    with (Read = std::io::host(), Write = std::io::host()) {
+#[cfg(target = "native")]
+pub fn main() -> i32 uses (stdin: mut Stdin, stdout: mut Stdout) {
+    var src = MemBuffer::empty()
+    read_to_end(mut src)
+    with (Read = BufferReader::new(src)) {
         let tokens = lex_all()
         var i: usize = 0
         while i < tokens.len() {
             let t = ref tokens[i]
-            write_usize(t.kind.code() as usize)
-            write_char(32)
-            write_usize(t.start)
-            write_char(32)
-            write_usize(t.len)
-            write_char(10)
+            println!(t.kind.code(), " ", t.start, " ", t.len)
             i += 1
         }
     }
@@ -178,7 +206,7 @@ pub contract LexProbe {
     recv LexMsg {
         Count -> u256 {
             let src: [u8; 4] = [102, 110, 32, 120]
-            with (std::io::Read = tests::ArrayReader { bytes: src, pos: 0 }) {
+            with (Read = BufferReader::from_array(src)) {
                 lex_all().len() as u256
             }
         }

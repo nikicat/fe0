@@ -1,3 +1,4 @@
+#![cfg(target = "evm")]
 use ingot::{digest, input, round}
 
 #[test]

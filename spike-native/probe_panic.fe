@@ -1,0 +1,9 @@
+// Probe: a native panic prints its reason on stderr and aborts.
+use std::io::Stdout
+
+pub fn main() -> i32 uses (stdout: mut Stdout) {
+    println!("before")
+    let x: u256 = 0
+    assert!(x == 1, "boom")
+    0
+}

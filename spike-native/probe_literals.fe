@@ -1,7 +1,0 @@
-pub fn main(argc: i32, argv: **u8) -> i32 {
-    let _ = argv
-    let s: String<2> = "fn"
-    let kw = s.as_bytes()
-    let i: usize = (argc - 1).downcast_truncate()
-    if kw[i] == 102 { 0 } else { 1 }
-}

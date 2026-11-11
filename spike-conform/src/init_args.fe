@@ -23,12 +23,12 @@ fn deploy_with(_ w0: u256, _ w1: u256, _ w2: u256, _ n: u256, _ extra: u256) use
 fn deploy_value(_ w0: u256, _ w1: u256, _ w2: u256, _ n: u256, _ extra: u256, _ value: Wei) uses (evm: mut Evm) {
     let init_len = WithInit::init_code_len()
     let total = init_len + n * 32 + extra
-    var buf = MemBuffer::alloc(total as usize)
+    var buf = MemBuffer::new(total.downcast_unchecked())
     evm.codecopy(dest: mut buf, dest_offset: 0, src_offset: WithInit::init_code_offset(), len: init_len)
     let words: [u256; 3] = [w0, w1, w2]
     var i: u256 = 0
     while i < n {
-        buf.span().write_word(offset: (init_len + i * 32) as usize, value: words[i as usize])
+        buf.span().write_word(offset: (init_len + i * 32).downcast_unchecked(), value: words[i.downcast_unchecked()])
         i += 1
     }
     let addr = evm.create_raw(value, init_code: buf.span())
