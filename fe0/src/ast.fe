@@ -612,11 +612,6 @@ impl Ast {
         self.nodes.set(i.id, n)
     }
 
-    // Adds the value of integer token `t` to `words` and returns its index.
-    pub fn add_int(mut self, _ t: Token) -> WordId {
-        self.add_word(self.lexed.text.int_value(t.span).unwrap())
-    }
-
     // Adds `v` to `words` and returns its index.
     pub fn add_word(mut self, _ v: u256) -> WordId {
         self.words.push(v)

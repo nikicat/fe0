@@ -7,7 +7,6 @@ use ingot::diag::{
     diag,
     L_BAD_ESCAPE,
     L_BAD_INT,
-    L_INT_TOO_LARGE,
     L_NON_ASCII,
     L_RESERVED_WORD,
     L_UNEXPECTED_CHAR,
@@ -220,6 +219,13 @@ impl Text {
         Text { bytes: MemVec::new() }
     }
 
+    // Returns a text that holds a copy of `bytes`.
+    pub fn of(_ bytes: MemSlice<u8>) -> Text {
+        var text = Text::new()
+        text.bytes.extend_from_slice(bytes)
+        text
+    }
+
     fn push(mut self, _ b: u8) {
         self.bytes.push(b)
     }
@@ -237,6 +243,19 @@ impl Text {
     // Whether span `s` spells `w`.
     pub fn spells<const N: usize>(self, _ s: Span, _ w: String<N>) -> bool {
         s.len == N && self.holds(s, w.as_bytes())
+    }
+
+    // Whether span `s` is `u` or `i` followed by one or more digits, as in `u8` or `i128`.
+    fn is_sized_int_name(self, _ s: Span) -> bool {
+        let c = self.span_byte(s, 0) as i32
+        var k: usize = 1
+        if (c == C_LOWER_U || c == C_LOWER_I) && k < s.len {
+            while k < s.len && is_digit(self.span_byte(s, k) as i32) {
+                k += 1
+            }
+            return k == s.len
+        }
+        false
     }
 
     // Whether span `s` starts with an uppercase letter.
@@ -456,8 +475,9 @@ fn unescape(_ c: i32) -> i32 {
     } else if c == C_LOWER_T { C_TAB } else { c }
 }
 
-// Value of a hex digit.
-fn digit_value(_ c: i32) -> u256 {
+// Returns the value of the hex digit `c`, in either case. Any other byte gives a meaningless
+// value.
+pub(ingot) fn digit_value(_ c: i32) -> u256 {
     let v = if is_digit(c) {
         c - C_ZERO
     } else if c >= C_LOWER_A {
@@ -633,6 +653,8 @@ impl Lexer {
 
     // Kind of the token read so far when it is a type name, or T_IDENT when it is not (SPEC.md
     // §1).
+    // ponytail: a chain of fixed spellings. A table of (spelling, Tok) pairs scanned by one loop
+    // cost 647 more bytes in LexProbe and 610 more in CompileProbe at -O s (task bhv52).
     fn type_kind(self) -> Tok {
         if self.word("u256") {
             return T_U256
@@ -643,18 +665,10 @@ impl Lexer {
         if self.word("Address") {
             return T_ADDRESS
         }
-        let s = self.span()
-        let c = self.text.span_byte(s, 0) as i32
-        var k: usize = 1
-        if (c == C_LOWER_U || c == C_LOWER_I) && k < s.len {
-            while k < s.len && is_digit(self.text.span_byte(s, k) as i32) {
-                k += 1
-            }
-            if k == s.len {
-                return T_TYPE
-            }
-        }
-        if self.word("usize") || self.word("isize") || self.word("String") {
+        if self.text.is_sized_int_name(self.span())
+            || self.word("usize")
+            || self.word("isize")
+            || self.word("String") {
             return T_TYPE
         }
         T_IDENT
@@ -874,7 +888,7 @@ impl Lexer {
         one
     }
 
-    // Reads an integer literal. SPEC.md §1 gives its syntax.
+    // Reads an integer literal. SPEC.md §1 gives its syntax. Its value is not checked here.
     fn number(mut self) -> Result<Diag, Token> uses (input: mut Source) {
         let first = self.peeked
         self.bump()
@@ -905,11 +919,7 @@ impl Lexer {
         if is_ident_start(self.peeked) {
             return self.err(L_BAD_INT)
         }
-        let t = self.tok(T_INT)
-        if self.text.int_value(t.span).is_none() {
-            return self.err(L_INT_TOO_LARGE)
-        }
-        Result::Ok(t)
+        Result::Ok(self.tok(T_INT))
     }
 
     // Reads a string literal. SPEC.md §1 gives its syntax. It may not span lines.

@@ -2,6 +2,7 @@ use ingot::ast::*
 use ingot::diag::{
     Diag,
     DiagCode,
+    L_INT_TOO_LARGE,
     L_RESERVED_WORD,
     P_CHAINED_COMPARISON,
     P_EXPECTED_END,
@@ -660,6 +661,32 @@ fn errors() {
     )
     // The error points at the offending token.
     rejects("fn f() { a < b < c }", P_CHAINED_COMPARISON, 15)
+}
+
+#[test]
+fn int_too_large() {
+    // The error points at the literal, in an expression and in a selector.
+    rejects(
+        "fn f() { 115792089237316195423570985008687907853269984665640564039457584007913129639936 }",
+        L_INT_TOO_LARGE,
+        9,
+    )
+    rejects(
+        "msg M {\n    #[selector = 0x1ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff]\n    A\n}",
+        L_INT_TOO_LARGE,
+        25,
+    )
+    // The first error in source order wins.
+    rejects(
+        "fn f() { 0x1ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff + }",
+        L_INT_TOO_LARGE,
+        9,
+    )
+    rejects(
+        "fn f() { 1 + }\nfn g() { 0x1ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff }",
+        P_EXPECTED_EXPR,
+        13,
+    )
 }
 
 #[test]

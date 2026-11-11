@@ -51,6 +51,8 @@ impl Diag {
 pub const L_UNEXPECTED_CHAR: DiagCode = DiagCode { raw: 1001 }
 pub const L_UNTERMINATED_STRING: DiagCode = DiagCode { raw: 1002 }
 pub const L_BAD_ESCAPE: DiagCode = DiagCode { raw: 1003 }
+// An integer literal over 256 bits. It keeps the lexer's letter, because the rule is about the
+// literal itself.
 pub const L_INT_TOO_LARGE: DiagCode = DiagCode { raw: 1004 }
 pub const L_RESERVED_WORD: DiagCode = DiagCode { raw: 1005 }
 pub const L_UNSUPPORTED_LITERAL: DiagCode = DiagCode { raw: 1006 }

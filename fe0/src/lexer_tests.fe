@@ -2,7 +2,6 @@ use ingot::diag::{
     Diag,
     L_BAD_ESCAPE,
     L_BAD_INT,
-    L_INT_TOO_LARGE,
     L_NON_ASCII,
     L_RESERVED_WORD,
     L_UNEXPECTED_CHAR,
@@ -202,19 +201,10 @@ fn integers() {
         m.text.int_value(m.toks[1].span).unwrap()
             == 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
     )
-    assert!(
-        lex_err(
-                "115792089237316195423570985008687907853269984665640564039457584007913129639936",
-            )
-                .code
-            == L_INT_TOO_LARGE,
+    let big = lex_text(
+        "115792089237316195423570985008687907853269984665640564039457584007913129639936",
     )
-    assert!(
-        lex_err(
-                "0x1ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-            ).code
-            == L_INT_TOO_LARGE,
-    )
+    assert!(big.text.int_value(big.toks[0].span).is_none())
     assert!(lex_err("1__0").code == L_BAD_INT)
     assert!(lex_err("12ab").code == L_BAD_INT)
     assert!(lex_err("0x").code == L_BAD_INT)
