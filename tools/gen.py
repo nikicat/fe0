@@ -91,7 +91,7 @@ OPS: list[Op] = [
     Op("%", MUL, True, lambda a, b: a % b if b else None),
 ]
 CMP_OPS = ["==", "!=", "<", ">", "<=", ">="]
-# Outside constant declarations, every shift amount that is not a literal is masked with this.
+# Keeps a shift amount below 512.
 SHIFT_MASK = 0x1ff
 EDGES = [0, 1, 2, 255, 256, 2**128, 2**255, MAX - 1, MAX]
 MAX_LOOP = 8
@@ -435,12 +435,18 @@ class BodyWriter:
         return self.expr(Ty.U256, d, typed)
 
     def shift_amount(self, d: int, typed: bool) -> E:
-        """A shift amount below 512, so that Fe's backend does not crash on it
-        (docs/WORKAROUNDS.md). Amounts of 256 and more still occur."""
+        """A right operand of a shift, of depth at most `d`.
+
+        A literal amount comes from a short list. Other amounts are often large, such as `~x`,
+        and a shift by 256 or more gives 0. So they are masked with SHIFT_MASK, except one in
+        ten. The unmasked ones test shifts by large amounts, such as a constant of 2^64 or more
+        (docs/adr/0015-move-to-26-6-0.md)."""
         g = self.gen
         if not typed and g.chance(0.6):
             return E(g.literal(self.rng.choice([0, 1, 8, 128, 255, 256, 300])), ATOM, False)
         e = self.expr(Ty.U256, d, typed)
+        if g.chance(0.1):
+            return e
         return E(f"{e.at(BITAND)} & {g.literal(SHIFT_MASK)}", BITAND, e.typed)
 
     def depth(self) -> int:

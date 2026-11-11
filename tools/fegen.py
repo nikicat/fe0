@@ -6,7 +6,9 @@ writes them through this module, so that all of them call it the same way.
 import bisect
 import os
 import re
+import shutil
 import subprocess
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -40,9 +42,17 @@ ByteOffset = NewType("ByteOffset", int)
 # The letter of a phase of Fe0, such as "E" for effects.
 PhaseLetter = NewType("PhaseLetter", str)
 
-# The fe binary when the environment variable FE is not set.
-FE_DEFAULT: Path = Path.home() / ".fe/bin/fe"
-FE: str = os.environ.get("FE") or str(FE_DEFAULT)
+
+def find_fe() -> str:
+    """Returns the path of the fe binary. The environment variable FE sets it, and the `fe` on
+    PATH is the default. Exits with a message when there is neither."""
+    fe = os.environ.get("FE") or shutil.which("fe")
+    if fe is None:
+        sys.exit("no fe on PATH: install Fe, or set FE to the path of the fe binary")
+    return fe
+
+
+FE: str = find_fe()
 ROOT: Path = Path(__file__).resolve().parent.parent
 FE0: Path = ROOT / "fe0"
 MAX: Word = Word((1 << 256) - 1)
@@ -107,14 +117,11 @@ class Deploy(Payload):
 
 
 class Call(Payload):
-    """Calldata: a 4-byte selector, words, then `extra` bytes. Errors when `sel` does not fit
-    in 4 bytes."""
+    """Calldata: a 4-byte selector, words, then `extra` bytes. A `sel` that does not fit in
+    4 bytes is rejected by `fe check`, as a literal too wide for the u32 parameter of
+    `difftest::Payload.push_selector`."""
 
     def __init__(self, sel: Selector, *words: Word, extra: int = 0, value: Wei = Wei(0)) -> None:
-        # Fe cuts a literal that is too wide for its type without an error, so the u32 parameter
-        # of `difftest::Payload.push_selector` would not catch it (docs/WORKAROUNDS.md).
-        if sel not in range(1 << 32):
-            raise ValueError(f"the selector {sel:#x} does not fit in 4 bytes")
         super().__init__(value)
         self.sel, self.words, self.extra = sel, words, extra
 
