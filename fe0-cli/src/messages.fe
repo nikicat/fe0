@@ -1,25 +1,17 @@
 // The message that the CLI prints after each error code.
 
 use fe0::diag::*
-use ingot::stderr::Line
+use std::io::Display
 
 // An error code and its message.
 pub struct Message { code: DiagCode, text: String<31> }
 
 impl Copy for Message {}
 
-impl Message {
-    // Appends the text to `line`. A text shorter than 31 bytes is padded with zero bytes at the
-    // front, and they are left out.
-    pub fn append_to(self, _ line: mut Line) {
-        let b = self.text.as_bytes()
-        var i: usize = 0
-        while i < b.len() {
-            if b[i] != 0 {
-                line.byte(b[i])
-            }
-            i += 1
-        }
+// The text alone.
+impl Display for Message {
+    fn fmt(self, _ out: mut MemBuffer) {
+        write!(mut out, self.text)
     }
 }
 
@@ -84,13 +76,12 @@ const MESSAGES: [Message; COUNT] = [
 ]
 
 // Returns the message of `code`. Every code has one, and tools/cli_check.py checks that the
-// table is complete. A code missing from the table is a bug in Fe0, and the lookup panics. A
-// native panic exits with code 132 (docs/WORKAROUNDS.md, "A native panic is a silent trap").
+// table is complete. A code missing from the table is a bug in Fe0, and the lookup panics.
 pub fn message(_ code: DiagCode) -> Message {
     var i: usize = 0
     while i < COUNT && !(MESSAGES[i].code == code) {
         i += 1
     }
-    assert!(i < COUNT)
+    assert!(i < COUNT, "no message for an error code")
     MESSAGES[i]
 }

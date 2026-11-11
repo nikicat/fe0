@@ -1,6 +1,7 @@
 [ingot]
 name = "fe0_cli"
 version = "0.1.0"
+target = "native"
 
 [dependencies]
 fe0 = { path = "../fe0" }
