@@ -1,0 +1,7 @@
+// expect: L009 5:10
+// A line break before `<` in an `if` condition inside parentheses (SPEC §3.4). Fe ends
+// the condition there.
+fn f(_ a: u256, _ b: u256) -> u256 {
+    (if a
+        < b { 1 } else { 2 })
+}

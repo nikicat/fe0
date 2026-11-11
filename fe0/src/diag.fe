@@ -58,6 +58,8 @@ pub const L_RESERVED_WORD: DiagCode = DiagCode { raw: 1005 }
 pub const L_UNSUPPORTED_LITERAL: DiagCode = DiagCode { raw: 1006 }
 pub const L_NON_ASCII: DiagCode = DiagCode { raw: 1007 }
 pub const L_BAD_INT: DiagCode = DiagCode { raw: 1008 }
+// A line break inside parentheses where Fe0 allows none (SPEC.md §3.4).
+pub const L_LINE_BREAK: DiagCode = DiagCode { raw: 1009 }
 
 // Parser
 pub const P_EXPECTED_ITEM: DiagCode = DiagCode { raw: 2001 }

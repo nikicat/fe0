@@ -1,0 +1,14 @@
+// expect: L009 12:8
+// A line break between a call label and its `:` (SPEC §3.4).
+fn k(_ v: u256) -> u256 {
+    v
+}
+
+fn h(x: u256) -> u256 {
+    x
+}
+
+fn f(_ a: u256) -> u256 {
+    h(x
+        : a)
+}

@@ -1,0 +1,9 @@
+// expect: L009 7:7
+// fe: accepts
+// A line inside parentheses that starts with `+` (SPEC §3.4). Fe accepts it, but Fe0's
+// rule allows a line break inside parentheses only after `(`, `,` or a binary operator, or
+// before `)`.
+fn f(_ a: u256, _ b: u256) -> u256 {
+    (a
+        + b)
+}

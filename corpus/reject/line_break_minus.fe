@@ -1,0 +1,7 @@
+// expect: L009 5:7
+// A line inside parentheses that starts with `-` (SPEC §3.4). Fe reads it as a new
+// expression, not as a subtraction.
+fn f(_ a: u256, _ b: u256) -> u256 {
+    (a
+        - b)
+}

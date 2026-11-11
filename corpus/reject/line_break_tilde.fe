@@ -1,0 +1,6 @@
+// expect: L009 4:7
+// A line break after `~` inside parentheses (SPEC §3.4).
+fn f(_ a: u256) -> u256 {
+    (~
+        a)
+}

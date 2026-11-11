@@ -7,6 +7,7 @@ use ingot::diag::{
     diag,
     L_BAD_ESCAPE,
     L_BAD_INT,
+    L_LINE_BREAK,
     L_NON_ASCII,
     L_RESERVED_WORD,
     L_UNEXPECTED_CHAR,
@@ -54,6 +55,22 @@ impl Tok {
     // Whether this is a comparison operator, such as `==` or `<`.
     pub fn is_comparison(self) -> bool {
         self == O_EQ || self == O_NE || self == O_LT || self == O_GT || self == O_LE || self == O_GE
+    }
+
+    // Whether this is a binary operator, such as `+` or `&&`. The binary operators are the
+    // operators from O_PLUS to O_SHR, except `~`, `!` and `=`.
+    pub fn is_binary(self) -> bool {
+        self.code >= O_PLUS.code
+            && self.code <= O_SHR.code
+            && self != O_TILDE
+            && self != O_BANG
+            && self != O_ASSIGN
+    }
+
+    // Whether a line inside parentheses may end with this token: `(`, `,` or a binary operator
+    // (SPEC.md §3.4).
+    fn may_end_line_in_parens(self) -> bool {
+        self == P_LPAREN || self == P_COMMA || self.is_binary()
     }
 }
 
@@ -517,6 +534,8 @@ struct Lexer {
     peeked: i32,
     // A newline is a token unless the innermost open bracket is `(` (SPEC §3.4).
     open: Brackets,
+    // The kind of the token that `next` returned last.
+    last: Tok,
     // Offset in `text` where the token being read starts.
     start: Pos,
     // A `/` operator or a doc comment that skip_trivia read. `next` returns it after the
@@ -530,6 +549,7 @@ impl Lexer {
             text: Text::new(),
             peeked: input.next_byte(),
             open: Brackets { bits: 0 },
+            last: T_EOF,
             start: SOURCE_START,
             queued: Option::None,
         }
@@ -683,7 +703,11 @@ impl Lexer {
         Result::Err(diag(code, self.start))
     }
 
+    // Returns the next token. Inside parentheses, a line may end only with a token that
+    // `may_end_line_in_parens`, or before a `)` (SPEC §3.4).
     fn next(mut self) -> Result<Diag, Token> uses (input: mut Source) {
+        // Where a line inside parentheses ends with a token that may not end it.
+        var bad_break: Option<Pos> = Option::None
         if self.queued.is_none() {
             match self.skip_trivia() {
                 Option::Some(pos) => {
@@ -692,10 +716,32 @@ impl Lexer {
                             Token { kind: T_NEWLINE, span: Span { start: pos, len: 1 } },
                         )
                     }
+                    if !self.last.may_end_line_in_parens() {
+                        bad_break = Option::Some(pos)
+                    }
                 },
                 Option::None => {},
             }
         }
+        match self.token() {
+            Result::Ok(t) => {
+                match bad_break {
+                    Option::Some(pos) => {
+                        if t.kind != P_RPAREN {
+                            return Result::Err(diag(L_LINE_BREAK, pos))
+                        }
+                    },
+                    Option::None => {},
+                }
+                self.last = t.kind
+                Result::Ok(t)
+            },
+            Result::Err(d) => Result::Err(d),
+        }
+    }
+
+    // Reads the token that starts at the peeked byte, or the one that `skip_trivia` queued.
+    fn token(mut self) -> Result<Diag, Token> uses (input: mut Source) {
         match self.queued.take() {
             Option::Some(t) => {
                 return Result::Ok(t)

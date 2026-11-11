@@ -56,7 +56,9 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
 - **Keywords:** compared against `String<N>` constants (`s.as_bytes()[i]`).
 - **Newline tokens** are kept, except where the innermost open bracket is `(` (SPEC §3.4).
   `Lexer.open` tracks the open brackets. Where a newline is kept, the parser decides whether
-  it ends a statement.
+  it ends a statement. Where it is dropped, the lexer checks that the line ends with `(`, `,`
+  or a binary operator (`Tok.may_end_line_in_parens`), or that `)` comes next, and reports
+  `L_LINE_BREAK` otherwise.
 - **Doc comments** are `T_DOC` tokens, even inside `( )`. `Parser.skip_docs` skips them only
   where SPEC §1 allows them, so a doc comment anywhere else is a syntax error.
 - **Positions:** line and column are computed only when an error is reported, by scanning the

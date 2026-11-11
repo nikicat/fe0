@@ -32,7 +32,7 @@ pub const MAX_DEPTH: usize = 20
 const MAX_MESSAGE: usize = 31
 
 // How tightly a binary operator binds its operands, from 1 for `||` to 9 for `*`.
-struct Power { level: usize }
+pub struct Power { level: usize }
 
 impl Copy for Power {}
 
@@ -55,7 +55,7 @@ impl Power {
 }
 
 // The power of a token that is not a binary operator.
-const NOT_BINARY: Power = Power { level: 0 }
+pub const NOT_BINARY: Power = Power { level: 0 }
 
 // The power of `||`, the loosest binary operator.
 const LOOSEST: Power = Power { level: 1 }
@@ -64,7 +64,7 @@ const LOOSEST: Power = Power { level: 1 }
 const CMP_POWER: Power = Power { level: 3 }
 
 // Returns the binding power of a token, or `NOT_BINARY` for a token that is not a binary operator.
-fn binding_power(_ t: Tok) -> Power {
+pub fn binding_power(_ t: Tok) -> Power {
     if t == O_OROR {
         return LOOSEST
     }

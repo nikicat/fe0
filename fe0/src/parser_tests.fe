@@ -50,12 +50,15 @@ use ingot::lexer::{
     O_SLASH,
     O_STAR,
     O_TILDE,
+    P_COMMA,
+    P_LPAREN,
     Pos,
     Span,
     StrValue,
+    T_IDENT,
     Tok,
 }
-use ingot::parser::{MAX_DEPTH, parse}
+use ingot::parser::{MAX_DEPTH, NOT_BINARY, binding_power, parse}
 use std::abi::DynString
 
 fn parsed(_ s: own DynString) -> Ast {
@@ -491,6 +494,43 @@ fn nested(_ brackets: String<2>, _ depth: usize) -> Option<Diag> {
     }
 }
 
+// The lexer's `Tok.is_binary`, which decides where a line inside parentheses may end, names
+// exactly the operators that the parser gives a binding power.
+#[test]
+fn binary_operators_have_a_binding_power() {
+    let toks = [
+        O_PLUS,
+        O_MINUS,
+        O_STAR,
+        O_SLASH,
+        O_PERCENT,
+        O_TILDE,
+        O_BANG,
+        O_CARET,
+        O_AMP,
+        O_PIPE,
+        O_ANDAND,
+        O_OROR,
+        O_LT,
+        O_GT,
+        O_ASSIGN,
+        O_EQ,
+        O_NE,
+        O_LE,
+        O_GE,
+        O_SHL,
+        O_SHR,
+        A_PLUS,
+        A_SHR,
+        P_LPAREN,
+        P_COMMA,
+        T_IDENT,
+    ]
+    for t in toks {
+        assert!(t.is_binary() == !(binding_power(t) == NOT_BINARY))
+    }
+}
+
 #[test]
 fn binary_precedence() {
     tail_is(
@@ -609,7 +649,7 @@ fn doc_comments() {
         parse_err("fn f() {\n    /// a\n    1\n}").code == P_EXPECTED_EXPR,
     )
     assert!(
-        parse_err("fn f(\n    /// a\n    x: u256,\n) {}").code == P_EXPECTED_IDENT,
+        parse_err("fn f(x: u256, /// a\n) {}").code == P_EXPECTED_IDENT,
     )
     assert!(
         parse_err("fn f() {} /// a\nfn g() {}").code == P_EXPECTED_END,

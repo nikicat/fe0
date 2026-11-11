@@ -1,0 +1,15 @@
+// expect: L009 13:7
+// A line break between a function's name and the `(` of its call, inside parentheses
+// (SPEC §3.4).
+fn k(_ v: u256) -> u256 {
+    v
+}
+
+fn h(x: u256) -> u256 {
+    x
+}
+
+fn f(_ a: u256) -> u256 {
+    (k
+        (a))
+}

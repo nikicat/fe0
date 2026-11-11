@@ -16,7 +16,7 @@ impl Display for Message {
 }
 
 // The number of error codes in fe0/src/diag.fe.
-const COUNT: usize = 54
+const COUNT: usize = 55
 
 const MESSAGES: [Message; COUNT] = [
     Message { code: L_UNEXPECTED_CHAR, text: "unexpected character" },
@@ -27,6 +27,7 @@ const MESSAGES: [Message; COUNT] = [
     Message { code: L_UNSUPPORTED_LITERAL, text: "only decimal and hex integers" },
     Message { code: L_NON_ASCII, text: "byte outside ASCII" },
     Message { code: L_BAD_INT, text: "malformed integer" },
+    Message { code: L_LINE_BREAK, text: "line break inside parentheses" },
     Message { code: P_EXPECTED_ITEM, text: "expected an item" },
     Message { code: P_EXPECTED_TOKEN, text: "unexpected token" },
     Message { code: P_EXPECTED_IDENT, text: "expected a name" },

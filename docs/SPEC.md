@@ -225,6 +225,9 @@ A statement ends at a newline, right before the `}` that closes its block, as in
 - A newline is ignored where the innermost open bracket is `(`. So it is ignored inside
   `( … )`, but not on the lines of a `{ … }` block inside the parentheses. A `(` inside that
   block makes newlines ignored again, until its `)`.
+- Inside `( … )`, a line may end only with `(`, `,` or a binary operator, or before `)`.
+  Anywhere else, the line break is an error (`L009`). Fe reads some of those line breaks
+  differently, so Fe0 rejects them all **[✓]**.
 - Anywhere else, a newline ends the statement if the tokens so far form a complete statement.
   Otherwise the program is a syntax error.
 - A statement must end before the next one starts, so `while c { } x = 1` on one line is
@@ -238,9 +241,9 @@ A statement ends at a newline, right before the `}` that closes its block, as in
   Fe accepts `1 + x` at the end of the line, and Fe0 rejects it. Both accept `(x)` and
   `x + 1` there.
 
-So an expression may span lines only where the innermost open bracket is `(`. Fe's automatic
-semicolon rule is more permissive, for example a line may start with `||`, so this is a valid
-subset.
+So an expression may span lines only where the innermost open bracket is `(`, and only after
+`(`, `,` or a binary operator, or before `)`. Fe's rule is more permissive in some places, for
+example a line inside parentheses may start with `||`, so this is a valid subset.
 
 Probed **[✓]**:
 - Fe accepts a parenthesised expression spread over several lines.
@@ -253,9 +256,14 @@ Probed **[✓]**:
   on two lines of such a block. Fe rejects it with `8-0013`. Fe0 rejects both probes, because
   `g` is not a value and that `return` has no value.
 - Fe accepts the `{` of an `if` or `while` on the next line.
-
-Still **[V]**: a systematic check that Fe reads every Fe0-accepted line break the same way.
-This becomes a parser differential test over the corpus.
+- Inside parentheses, Fe rejects a line that starts with `-` or `*`, a line break before or
+  after the `:` of a call label, after `!` or `~`, and between a function's name and the `(`
+  of its call. In an `if` condition, Fe ends the condition at a line break before `<`. The
+  probes are `corpus/reject/line_break_*.fe`. Fe0 rejects them all with `L009`.
+- `tools/newline_check.py` compares how Fe and Fe0 split programs into statements, with Fe's
+  own parser. It checks the corpus, the reject programs that Fe0 parses, and generated
+  programs, each also with random line breaks wherever the rule above allows one. On Nov 11,
+  they split all 1,084 programs (60,630 blocks) the same way.
 
 ## 4. Expression semantics
 
@@ -471,9 +479,9 @@ the harness runs them.
 ## 9. Open questions
 
 Answered by the probes in `spike-conform/` (Oct 28): shifts by 256 or more, left-to-right
-evaluation order, `uses` duplicates and unused entries, and extra calldata bytes. Still open:
+evaluation order, `uses` duplicates and unused entries, and extra calldata bytes. Also answered
+(Oct 28): `init` with missing or malformed arguments, and `Address` storage alignment.
 
-1. The **newline rule**, the last [V] item of §3.4.
-
-Also answered (Oct 28): `init` with missing or malformed arguments, and `Address` storage
-alignment.
+The newline rule of §3.4 was answered on Nov 11, by `tools/newline_check.py`. It found that Fe
+reads some line breaks inside parentheses differently, and Fe0's rule became narrower. No
+question is open.

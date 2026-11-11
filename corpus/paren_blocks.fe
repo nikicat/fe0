@@ -18,8 +18,8 @@ contract ParenBlocks {
                 twice(
                     a,
                 )
-            }
-                + 3)
+            } +
+                3)
             y
         }
         Pick { c } -> u256 {
@@ -27,8 +27,8 @@ contract ParenBlocks {
                 10
             } else {
                 20
-            }
-                + 1)
+            } +
+                1)
         }
     }
 }
