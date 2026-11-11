@@ -1,0 +1,9 @@
+# The type checks of the scripts here. Run `mypy` and `pyright` in this directory; CI does.
+# The dev container pins both (.devcontainer/Containerfile).
+
+[tool.mypy]
+strict = true
+files = ["."]
+
+[tool.pyright]
+include = ["."]

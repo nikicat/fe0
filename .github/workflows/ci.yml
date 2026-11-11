@@ -32,6 +32,9 @@ jobs:
             echo "::group::fe --version"
             fe --version
             echo "::endgroup::"
+            echo "::group::tools types"
+            (cd tools && mypy && pyright)
+            echo "::endgroup::"
             # CI skips the spike-*/ probes, because several of their tests fail on purpose to
             # report values. tools/spikes.sh runs them.
             echo "::group::fe0"
