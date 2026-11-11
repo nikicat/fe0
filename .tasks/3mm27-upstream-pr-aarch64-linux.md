@@ -15,10 +15,11 @@ When a release includes it, our fork and the WORKAROUNDS.md entry can go.
   help us in the window, because a release with it will probably come after Nov 24.
 - The PR is complete. Opening the `Os::host()` gate alone would make `std::fs` read the wrong
   field as a file's mode on AArch64, with no error (offset 24 instead of 16).
-- Read metadata with `statx` (option c in our #1975 comment). Its layout is the same on every
-  Linux architecture (glibc 2.28 and later). It needs no new language surface, unlike a
-  `target_arch` cfg (option a), and no run-time switch (option b). The PR says why, and offers
-  a or b if the maintainers prefer one.
+- Use a `target_arch` cfg (option a in our #1975 comment). sbillig chose it on Nov 11. Fe's
+  `#[cfg]` gains a `target_arch` predicate beside `target_os`, and `sys/linux.fe` gives
+  `stat_mode` its AArch64 offset (16) under it. The maintainers plan cross-target builds later
+  (as in zig), so the architecture comes from the compilation target, carried in
+  `CompilationSettings` like the OS, not from the host.
 - The PR text does not name or quote this project (PLAN.md risk 5).
 
 ## State
@@ -32,9 +33,10 @@ When a release includes it, our fork and the WORKAROUNDS.md entry can go.
 
 ## Next
 1. Branch from Fe master, not from the release. Port the gate commit to it.
-2. On Linux, read metadata with `statx(AT_FDCWD, path, 0, STATX_TYPE | STATX_SIZE, buf)`:
-   `stx_mode` is a `u16` at offset 28, and `stx_size` a `u64` at offset 40. Keep `stat` on
-   macOS. Check the offsets with a C program on both architectures, as for the comment.
+2. Add `target_arch` to cfg: the target's architecture in `CompilationSettings` (beside the
+   OS that `Os::host()` gives), its evaluation in HIR's cfg lowering
+   (`crates/hir/src/core/lower/attr.rs`, which knows `target`, `target_os` and
+   `target_family`), CLI.md's cfg docs and tests. Then split `stat_mode` in `sys/linux.fe`.
 3. Run Fe's `std::fs` tests and the native suites (`native_runtime`, `cli_output`) on AArch64
    Linux. The suites take over an hour on this host. Get x86-64 coverage from Fe's own CI.
 4. Open the PR with "Fixes #1975", and link it from the issue.
