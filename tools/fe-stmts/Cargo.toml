@@ -1,0 +1,11 @@
+# Prints how Fe's parser splits a source into statements, for tools/newline_check.py.
+[package]
+name = "fe-stmts"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# The parser of the Fe release that .devcontainer/Containerfile pins. Change both together.
+fe-parser = { git = "https://github.com/argotorg/fe", tag = "v26.6.0" }
+rowan = "0.16.1"
