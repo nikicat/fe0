@@ -11,6 +11,7 @@
       "settings": { "python.defaultInterpreterPath": "/usr/local/bin/python3" }
     }
   },
-  // Fe's extension is not on the marketplace, so the image holds its VSIX (Containerfile)
-  "postAttachCommand": "code --install-extension /usr/local/share/vscode/fe-language.vsix"
+  // Fe's extension is not on the marketplace, so the image holds its VSIX (Containerfile).
+  // CI attaches without VS Code, so the install runs only where `code` exists.
+  "postAttachCommand": "if command -v code >/dev/null; then code --install-extension /usr/local/share/vscode/fe-language.vsix; fi"
 }
