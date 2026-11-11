@@ -322,7 +322,7 @@ impl Parser {
         Result::Ok(TY_NONE)
     }
 
-    // program = { NL } { item TERM { NL } }
+    // SPEC.md §3.1, rule `program`.
     fn program(mut self) -> Result<Diag, ListId> {
         let mark = self.open_list()
         self.skip_docs()
@@ -354,7 +354,7 @@ impl Parser {
         Result::Err(self.err(P_EXPECTED_ITEM))
     }
 
-    // const = "const" IDENT ":" type "=" expr
+    // SPEC.md §3.1, rule `const`.
     fn const_item(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let name = self.ident()?
@@ -365,7 +365,7 @@ impl Parser {
         Result::Ok(self.ast.add_node(Node::new_const(pos, name, ty, value)))
     }
 
-    // function = "fn" IDENT "(" [ params ] ")" [ "->" type ] block
+    // SPEC.md §3.1, rule `function`.
     fn fn_item(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let name = self.ident()?
@@ -377,13 +377,13 @@ impl Parser {
         )
     }
 
-    // "(" [ params ] ")", where params = param { "," param } [ "," ]
+    // SPEC.md §3.1, `"(" [ params ] ")"` with rule `params`.
     fn params(mut self) -> Result<Diag, ListId> {
         self.expect(P_LPAREN)?
         self.comma_list(P_RPAREN, NODE_PARAM)
     }
 
-    // param = [ "_" ] IDENT ":" type
+    // SPEC.md §3.1, rule `param`.
     fn param(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let positional = self.eat(T_UNDERSCORE)
@@ -395,7 +395,7 @@ impl Parser {
         )
     }
 
-    // msg = "msg" IDENT "{" [ variants ] "}"
+    // SPEC.md §3.1, rule `msg`.
     fn msg_item(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let name = self.ident()?
@@ -404,8 +404,7 @@ impl Parser {
         Result::Ok(self.ast.add_node(Node::new_msg(pos, name, variants)))
     }
 
-    // variant = selector NL IDENT [ "{" [ fields ] "}" ] [ "->" type ]
-    // selector = "#" "[" "selector" "=" INT "]"
+    // SPEC.md §3.1, rules `variant` and `selector`.
     fn variant(mut self) -> Result<Diag, NodeId> {
         let hash = self.expect(P_HASH)?
         self.expect(P_LBRACKET)?
@@ -429,7 +428,7 @@ impl Parser {
         Result::Ok(self.ast.add_node(n))
     }
 
-    // field = IDENT ":" type
+    // SPEC.md §3.1, rule `field`.
     fn field(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let name = self.ident()?
@@ -438,8 +437,7 @@ impl Parser {
         Result::Ok(self.ast.add_node(Node::new_field(pos, name, ty)))
     }
 
-    // contract = "contract" IDENT "{" { cfield } [ init ] { recv } "}"
-    // cfield = "mut" IDENT ":" type [ "," ]
+    // SPEC.md §3.1, rules `contract` and `cfield`.
     fn contract_item(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let name = self.ident()?
@@ -477,7 +475,7 @@ impl Parser {
         )
     }
 
-    // init = "init" "(" [ params ] ")" [ uses ] block
+    // SPEC.md §3.1, rule `init`.
     fn init(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let params = self.params()?
@@ -488,7 +486,7 @@ impl Parser {
         )
     }
 
-    // recv = "recv" IDENT "{" { arm } "}"
+    // SPEC.md §3.1, rule `recv`.
     fn recv(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let name = self.ident()?
@@ -504,7 +502,7 @@ impl Parser {
         Result::Ok(self.ast.add_node(Node::new_recv(pos, name, arms)))
     }
 
-    // arm = IDENT "{" [ binds ] "}" [ "->" type ] [ uses ] block
+    // SPEC.md §3.1, rule `arm`.
     fn arm(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let variant = self.ident()?
@@ -518,7 +516,7 @@ impl Parser {
         )
     }
 
-    // bind = IDENT [ ":" IDENT ]
+    // SPEC.md §3.1, rule `bind`.
     fn bind(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let field = self.ident()?
@@ -538,7 +536,7 @@ impl Parser {
         self.comma_list(P_RPAREN, NODE_USE)
     }
 
-    // use = [ "mut" ] IDENT
+    // SPEC.md §3.1, rule `use`.
     fn use_entry(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let mutable = self.eat(K_MUT)
@@ -546,7 +544,7 @@ impl Parser {
         Result::Ok(self.ast.add_node(Node::new_use(pos, field, mutable)))
     }
 
-    // block = "{" { NL } { stmt { NL } } [ expr { NL } ] "}"
+    // SPEC.md §3.1, rule `block`.
     fn block(mut self) -> Result<Diag, NodeId> {
         let pos = self.expect(P_LBRACE)?.span.start
         self.enter()?
@@ -700,9 +698,9 @@ impl Parser {
         i
     }
 
-    // unary = ( "!" | "~" ) unary | primary. Written as a loop, so a run of operators does not
-    // recurse. The operators are consecutive tokens, so the primary is wrapped in them from the
-    // last back to the first.
+    // SPEC.md §3.1, rule `unary`. Written as a loop, so a run of operators does not recurse.
+    // The operators are consecutive tokens, so the primary is wrapped in them from the last back
+    // to the first.
     fn unary(mut self) -> Result<Diag, NodeId> {
         let first = self.at
         while self.peek() == O_BANG || self.peek() == O_TILDE {
@@ -718,8 +716,7 @@ impl Parser {
         Result::Ok(e)
     }
 
-    // primary = INT | "true" | "false" | IDENT "(" [ args ] ")" | IDENT | "(" expr ")" | block | if
-    //     | assert
+    // SPEC.md §3.1, rule `primary`.
     fn primary(mut self) -> Result<Diag, NodeId> {
         let t = self.tok()
         let k = t.kind
@@ -759,7 +756,7 @@ impl Parser {
         Result::Err(self.err(P_EXPECTED_EXPR))
     }
 
-    // IDENT "(" [ args ] ")", where args = arg { "," arg } [ "," ]
+    // SPEC.md §3.1, `IDENT "(" [ args ] ")"` in rule `primary`, with rule `args`.
     fn call(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let name = self.ident()?
@@ -768,7 +765,7 @@ impl Parser {
         Result::Ok(self.ast.add_node(Node::new_call(pos, name, args)))
     }
 
-    // arg = [ IDENT ":" ] expr
+    // SPEC.md §3.1, rule `arg`.
     fn arg(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         var label = NO_SYM
@@ -780,8 +777,8 @@ impl Parser {
         Result::Ok(self.ast.add_node(Node::new_arg(pos, label, value)))
     }
 
-    // if = "if" expr block [ "else" ( if | block ) ]. An `else if` chain is read in a loop, each
-    // IF linked to the next as it is read, so it does not recurse.
+    // SPEC.md §3.1, rule `if`. An `else if` chain is read in a loop, each IF linked to the next
+    // as it is read, so it does not recurse.
     fn if_expr(mut self) -> Result<Diag, NodeId> {
         var first = NO_NODE
         var prev = NO_NODE
@@ -806,7 +803,7 @@ impl Parser {
         Result::Ok(first)
     }
 
-    // assert = "assert" "!" "(" expr [ "," STRING ] ")"
+    // SPEC.md §3.1, rule `assert`.
     fn assert(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         self.expect(O_BANG)?
