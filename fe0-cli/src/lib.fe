@@ -1,0 +1,109 @@
+// The native command line compiler: Fe0 source on stdin, the deploy code as hex on stdout, and
+// errors and warnings on stderr. It is the only part of Fe0 that touches std I/O
+// (docs/WORKAROUNDS.md, "Master removes character I/O").
+
+use fe0::codegen::{Output, compile}
+use fe0::diag::Diag
+use fe0::io::{Source, bytes}
+use fe0::lexer::Text
+use ingot::messages::message
+use ingot::stderr::{Line, NEWLINE}
+use std::abi::Bytes
+use std::io::{Read, Write, host, read_char, write_char}
+
+// Exit codes.
+const COMPILED: i32 = 0
+const REJECTED: i32 = 1
+const USAGE: i32 = 2
+
+const HEX_DIGITS: String<16> = "0123456789abcdef"
+
+// The program read from stdin, held twice: as bytes for the compiler, and as a `Text` that
+// turns an offset into a line and a column.
+struct Stdin { source: Bytes, text: Text }
+
+pub fn main(argc: i32, argv: **u8) -> i32 {
+    let _ = argv
+    if argc != 1 {
+        return usage()
+    }
+    let stdin = read_stdin()
+    let out = with (Source = bytes(stdin.source)) {
+        compile()
+    }
+    report(out, stdin.text)
+}
+
+// Prints the usage line on stderr and returns the exit code for a wrong command line.
+fn usage() -> i32 {
+    var line = Line::new()
+    line.text("usage: fe0_cli < program.fe")
+    line.print()
+    USAGE
+}
+
+// Reads stdin to its end.
+fn read_stdin() -> Stdin {
+    var source: MemVec<u8> = MemVec::new()
+    with (Read = host()) {
+        var c = read_char()
+        while c >= 0 {
+            source.push(c.downcast_truncate())
+            c = read_char()
+        }
+    }
+    let text = Text::of(source.as_slice())
+    Stdin { source: Bytes::from_payload(source: source.into_array().span()), text }
+}
+
+// Prints the warnings of `out` on stderr. Then prints its error on stderr, or its code as hex
+// on stdout. Returns the exit code.
+fn report(_ out: Output, _ text: Text) -> i32 {
+    var i: usize = 0
+    while i < out.warns.len() {
+        print_diag(out.warns[i], text, label: "warning: ")
+        i += 1
+    }
+    match out.err {
+        Option::Some(d) => {
+            print_diag(d, text, label: "")
+            return REJECTED
+        },
+        Option::None => {},
+    }
+    print_hex(out.code)
+    COMPILED
+}
+
+// Prints `code` as lowercase hex and a newline on stdout.
+fn print_hex(_ code: MemVec<u8>) {
+    let digits = HEX_DIGITS.as_bytes()
+    with (Write = host()) {
+        var i: usize = 0
+        while i < code.len() {
+            let b = code[i]
+            write_char(digits[(b >> 4) as usize] as i32)
+            write_char(digits[(b & 15) as usize] as i32)
+            i += 1
+        }
+        write_char(NEWLINE as i32)
+    }
+}
+
+// Prints `d` as `<stdin>:line:col: CODE message`, with `label` before the code: "warning: " for
+// a warning, and nothing for an error.
+fn print_diag<const N: usize>(_ d: Diag, _ text: Text, label: String<N>) {
+    let at = text.line_col(d.pos())
+    var line = Line::new()
+    line.text("<stdin>:")
+    line.number(at.line, digits: 1)
+    line.text(":")
+    line.number(at.col, digits: 1)
+    line.text(": ")
+    line.text(label)
+    line.byte(d.code.letter())
+    line.number(d.code.number() as usize, digits: 3)
+    line.text(" ")
+    message(d.code).append_to(mut line)
+    line.print()
+}

@@ -50,7 +50,9 @@ Its output must match the on-chain compile byte for byte.
 ### Exit codes
 - 0: compiled. Warnings may have been printed.
 - 1: Fe0 rejected the program.
-- 2: stdin could not be read.
+- 2: an argument was given. The usage line goes to stderr.
+- `getchar` returns -1 both at the end of input and on a read error, so a read error looks
+  like the end of the program. It has no exit code of its own.
 - 132 (SIGILL): a bug in Fe0, such as an assertion that failed.
 
 ### Messages
@@ -60,7 +62,7 @@ Its output must match the on-chain compile byte for byte.
 - A test checks that every `DiagCode` in diag.fe has a message.
 
 ### Arguments
-- None. Anything in argv is an error, with a one-line usage on exit code 2.
+- None. Anything in argv is an error (exit code 2).
 
 ### The byte-for-byte check
 - A new tool, `tools/cli_check.py`, builds the CLI and runs it on every program of
@@ -80,5 +82,20 @@ Its output must match the on-chain compile byte for byte.
 - Errors to stderr through `extern write`, not to stdout. The spike above showed it works.
 - No CLI parsing library: the CLI takes no arguments, and Fe has no such library.
 
+## State
+- Steps 1 to 3 are done, and the CLI is finished:
+  - fe0 gives the CLI `Text::of`, which builds a `Text` from the bytes read on stdin.
+  - `fe0-cli/` (`lib.fe`, `messages.fe`, `stderr.fe`) builds natively in 11 s.
+  - `tools/cli_check.py` runs it on all programs and reject programs and checks its code on the
+    EVM with `difftest::same_code`. On Nov 10 with the patched Fe: 69 of 69 programs (44 of
+    the corpus, 25 generated) give the same code byte for byte, and 70 of 70 reject programs
+    give their error. A wrong digit is reported at the right byte. It takes about 30 s.
+  - CI runs it after the generated programs.
+- A `String<N>` literal shorter than N is padded with zero bytes at the front. The message
+  table's `Message.append_to` drops that padding.
+- The /unsmell run of Nov 10 reshaped the CLI and the tools. It moved the literal range
+  check (L004) to the parser, and gave the Python tools full types (mypy --strict, pyright).
+- The README does not exist yet. T0010 writes it, and now lists the CLI's part of it.
+
 ## Next
-Make `Text::new` and `Text.push` public, then write the ingot.
+Check that CI passes on x86-64 with the official release, then close the task.

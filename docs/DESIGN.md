@@ -12,9 +12,9 @@ Guiding rules:
 ## 1. Repository layout (in the window)
 
 ```
-fe.toml         a workspace with fe0 as its member. Without it, Fe's language server loads
-                every .fe file outside an ingot as a standalone file and reports its errors.
-                With it, the server analyses fe0 only
+fe.toml         a workspace whose members are the compiler's ingots. Without it, Fe's language
+                server loads every .fe file outside an ingot as a standalone file and reports
+                its errors. With it, the server analyses the member ingots only
 fe0/            ingot: the compiler as a library; no I/O, target-agnostic
   src/lexer.fe  tokens
   src/ast.fe    arena AST
@@ -25,14 +25,19 @@ fe0/            ingot: the compiler as a library; no I/O, target-agnostic
   src/diag.fe   error codes and positions
   src/io.fe     the `Source` effect and its adapter, BytesReader (`text` and `bytes`)
   src/difftest.fe what each differential test calls: both builds, deploy, call, compare (§10)
-fe0-cli/        ingot: native `main`, stdin → hex on stdout
+fe0-cli/        ingot: native `main`, stdin → hex on stdout, errors on stderr (§9)
 fe0-chain/      ingot: one contract per phase plus Compiler (on-chain split, §8)
 corpus/         Fe0 programs (*.fe) + call scripts (*.calls); generated ones under corpus/gen/
 corpus/reject/  programs that Fe0 must reject, each with the error it expects
-out/difftest/   batch ingots of differential tests, written by tools/embed.py (not committed);
-                out/gen/ holds those of tools/gen.py
+out/            written by the tools, not committed
+  difftest/     batch ingots of the differential tests, written by tools/embed.py
+  gen/          batch ingots of the random programs, written by tools/gen.py
+  cli-check/    batch ingots of tools/cli_check.py
+  cli/          the CLI executable, built by tools/cli_check.py
 tools/          embed.py, fegen.py (shared by the generators), gen.py (random programs),
-                corpus_scan.py
+                cli_check.py (the native CLI against the EVM, §10), corpus_scan.py,
+                gen_codegen_tests.py and gen_check_tests.py (the unit-test generators),
+                spikes.sh (the spike probes)
 ```
 
 The `fe0` library is shared by every target. Only the edge ingots know where bytes come from.
@@ -44,6 +49,9 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
   `Source` is fe0's own effect, and WORKAROUNDS.md says why it is not std I/O.
 - **Tokens** are spans of the source buffer, so the lexer never copies the text. `Token` is
   declared in `fe0/src/lexer.fe`.
+- **Integer literals:** the lexer checks only their syntax. The parser computes each value once,
+  with `Text.int_value`, when it stores it in the AST. It reports `L004` there if the value
+  needs more than 256 bits, so the first error in source order wins.
 - **Keywords:** compared against `String<N>` constants (`s.as_bytes()[i]`).
 - **Newline tokens** are kept, except where the innermost open bracket is `(` (SPEC §3.4).
   `Lexer.open` tracks the open brackets. Where a newline is kept, the parser decides whether
@@ -294,23 +302,25 @@ Measured Oct 28 on master `d217a51bf` (`spike-limits/`, 30M gas per call):
 ## 9. Diagnostics
 
 Every phase reports an error as a `Diag`. `fe0/src/diag.fe` declares it and defines how codes
-are numbered and printed. The message comes from a table indexed by code.
+are numbered and printed. The messages are a table in `fe0-cli/src/messages.fe`, because only
+the CLI prints them, so the on-chain compiler does not pay for them in bytecode.
 
 | Phase | Examples |
 |---|---|
-| Lexer | bad character, unterminated string, literal over 256 bits |
-| Parser | expected token, end of statement, chained comparison |
+| Lexer | bad character, unterminated string, malformed integer |
+| Parser | expected token, end of statement, chained comparison, literal over 256 bits (`L004`) |
 | Names | unknown name, duplicate item, local shadows a field |
 | Types | mismatch, missing return path |
 | Effects | field not in `uses`, write without `mut`, unknown field, duplicate entry |
 | Constants | overflow (`C034`), division by zero (`C025`) |
 | Generation | no contract (`G001`), code too large (`G002`) |
 
-The CLI prints `file:line:col: CODE message`. On chain, the message is the code, the line and
-the column.
+The CLI prints `<stdin>:line:col: CODE message` on stderr and exits with 1. On chain, the
+message is the code, the line and the column.
 
 The checker also reports warnings, in `Checked.warns`. They never stop the compile.
-- The CLI prints each one as `file:line:col: warning: CODE message` and still writes its output.
+- The CLI prints each one on stderr as `<stdin>:line:col: warning: CODE message` and still
+  writes its output.
 - On chain, the `Checker` contract does not serialize them. `deploy` returns only an address,
   so nothing would read them.
 
@@ -375,6 +385,10 @@ and reports the ones it rejects.
 tests run Fe0 and check the error code and position. Separately, `embed.py` runs `fe check` on
 each file and checks the result against the rule of SPEC.md §8.
 
+**The native CLI.** `tools/cli_check.py` compares what the native CLI prints with what Fe0
+does on the EVM, for every program of `corpus/`, `corpus/gen/` and `corpus/reject/`. Its
+docstring lists what it checks.
+
 ## 11. Random program generator (`tools/gen.py`)
 
 `tools/gen.py --seed S -n N` writes the programs of seeds S to S+N−1 to
@@ -413,3 +427,4 @@ Shrinking a failing program is a stretch goal. It would delete lines while the f
 | Codegen | Differential, as in §10. The tests are in `fe0/src/codegen_tests.fe`, generated by `tools/gen_codegen_tests.py` |
 | Assembler | Pushes, and fixups of labels bound before and after their use |
 | End-to-end | The §10 harness, run by `tools/embed.py` over `corpus/` and `corpus/reject/`, and by `tools/gen.py` over `corpus/gen/` (§11) |
+| Native CLI | `tools/cli_check.py`, against Fe0 on the EVM (§10) |

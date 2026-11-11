@@ -4,7 +4,7 @@
 use ingot::codegen::{Output, compile}
 use ingot::diag::{Diag, E_NOT_IN_USES, diag}
 use ingot::io::{Source, text}
-use ingot::lexer::Pos
+use ingot::lexer::{Pos, digit_value}
 use std::abi::DynString
 use std::evm::{Call, CallOutcome, Create, RawOps}
 
@@ -24,6 +24,8 @@ const CALL_GAS: u256 = 10000000
 const TOO_LARGE: u256 = 2 << 32
 // The code of `rejects` when Fe0 accepts the program. It is `Kind.ACCEPTED`.
 const ACCEPTED: u256 = 4 << 32
+// The start of the panic codes of `same_code`. It is `Kind.CODE_DIFFERS`.
+const CODE_DIFFERS: u256 = 5 << 32
 
 // The panic code of one deployment or call of a differential test. tools/fegen.py makes it as
 // `Kind.case_code`, in the CASE or the PROBE range.
@@ -98,6 +100,31 @@ pub fn ours(_ s: DynString) -> MemVec<u8> {
         Option::None => {},
     }
     out.code
+}
+
+// Checks that Fe0's deploy code for `s` is the code that `hex` spells in lowercase hex, as the
+// native CLI prints it. Otherwise fails with Panic(`CODE_DIFFERS` plus the offset of the first
+// byte that differs), or with Panic(`DiagWord`) when Fe0 rejects `s`.
+pub fn same_code(_ s: DynString, _ hex: DynString) {
+    let code = ours(s)
+    let len = hex.len() / 2
+    var i: usize = 0
+    while i < len && i < code.len() {
+        if code[i] != hex_byte(hex, i) {
+            core::panic_code(CODE_DIFFERS + i as u256)
+        }
+        i += 1
+    }
+    if code.len() != len {
+        core::panic_code(CODE_DIFFERS + i as u256)
+    }
+}
+
+// Returns byte `i` of the hex string `hex`.
+fn hex_byte(_ hex: DynString, _ i: usize) -> u8 {
+    let high = digit_value(hex.byte_at(2 * i) as i32)
+    let low = digit_value(hex.byte_at(2 * i + 1) as i32)
+    (high << 4 | low).downcast_truncate()
 }
 
 // Checks that Fe0 rejects `s` with the error `expected`. Otherwise fails with Panic(`DiagWord`)

@@ -1,0 +1,96 @@
+// The message that the CLI prints after each error code.
+
+use fe0::diag::*
+use ingot::stderr::Line
+
+// An error code and its message.
+pub struct Message { code: DiagCode, text: String<31> }
+
+impl Copy for Message {}
+
+impl Message {
+    // Appends the text to `line`. A text shorter than 31 bytes is padded with zero bytes at the
+    // front, and they are left out.
+    pub fn append_to(self, _ line: mut Line) {
+        let b = self.text.as_bytes()
+        var i: usize = 0
+        while i < b.len() {
+            if b[i] != 0 {
+                line.byte(b[i])
+            }
+            i += 1
+        }
+    }
+}
+
+// The number of error codes in fe0/src/diag.fe.
+const COUNT: usize = 54
+
+const MESSAGES: [Message; COUNT] = [
+    Message { code: L_UNEXPECTED_CHAR, text: "unexpected character" },
+    Message { code: L_UNTERMINATED_STRING, text: "unterminated string" },
+    Message { code: L_BAD_ESCAPE, text: "unknown escape in a string" },
+    Message { code: L_INT_TOO_LARGE, text: "integer over 256 bits" },
+    Message { code: L_RESERVED_WORD, text: "reserved word" },
+    Message { code: L_UNSUPPORTED_LITERAL, text: "only decimal and hex integers" },
+    Message { code: L_NON_ASCII, text: "byte outside ASCII" },
+    Message { code: L_BAD_INT, text: "malformed integer" },
+    Message { code: P_EXPECTED_ITEM, text: "expected an item" },
+    Message { code: P_EXPECTED_TOKEN, text: "unexpected token" },
+    Message { code: P_EXPECTED_IDENT, text: "expected a name" },
+    Message { code: P_EXPECTED_TYPE, text: "expected a type" },
+    Message { code: P_EXPECTED_EXPR, text: "expected an expression" },
+    Message { code: P_EXPECTED_END, text: "expected the end of a line" },
+    Message { code: P_CHAINED_COMPARISON, text: "comparisons cannot be chained" },
+    Message { code: P_TOO_DEEP, text: "nested too deeply" },
+    Message { code: P_MESSAGE_TOO_LONG, text: "assert message over 31 bytes" },
+    Message { code: P_FIELD_NOT_MUT, text: "a contract field must be mut" },
+    Message { code: P_GENERIC_ARGS, text: "ambiguous `<` after a name" },
+    Message { code: P_RECORD_LITERAL, text: "ambiguous `{` at line start" },
+    Message { code: N_DUPLICATE, text: "name declared twice" },
+    Message { code: N_UNKNOWN_NAME, text: "unknown name" },
+    Message { code: N_NOT_A_VALUE, text: "not a value" },
+    Message { code: N_NOT_A_FUNCTION, text: "not a function" },
+    Message { code: N_SHADOWS_FIELD, text: "name shadows a contract field" },
+    Message { code: N_FORWARD_CONST, text: "constant used before it is set" },
+    Message { code: N_NOT_A_MSG, text: "not a msg" },
+    Message { code: N_UNKNOWN_VARIANT, text: "unknown variant" },
+    Message { code: N_MISSING_ARM, text: "missing arm for a variant" },
+    Message { code: N_UNKNOWN_FIELD, text: "unknown field" },
+    Message { code: N_MISSING_BIND, text: "pattern misses a field" },
+    Message { code: N_BAD_LABEL, text: "wrong argument label" },
+    Message { code: N_OUTSIDE_LOOP, text: "break or continue outside loop" },
+    Message { code: N_ASSIGN_IMMUTABLE, text: "cannot assign to this name" },
+    Message { code: N_TWO_CONTRACTS, text: "more than one contract" },
+    Message { code: N_DUPLICATE_SELECTOR, text: "selector used twice" },
+    Message { code: N_UPPERCASE_LOCAL, text: "local name starts uppercase" },
+    Message { code: N_SHADOWS_ITEM, text: "name shadows an item" },
+    Message { code: T_MISMATCH, text: "type mismatch" },
+    Message { code: T_ARG_COUNT, text: "wrong number of arguments" },
+    Message { code: T_NO_VALUE, text: "expression has no value" },
+    Message { code: T_SELECTOR_TOO_LARGE, text: "selector over 32 bits" },
+    Message { code: T_NEEDS_TYPE, text: "integer needs a type" },
+    Message { code: E_NOT_IN_USES, text: "field not listed in `uses`" },
+    Message { code: E_NOT_MUT, text: "field not `mut` in `uses`" },
+    Message { code: E_UNKNOWN_FIELD, text: "`uses` names no field" },
+    Message { code: E_DUPLICATE_USE, text: "field listed twice in `uses`" },
+    Message { code: E_TOO_MANY_FIELDS, text: "too many contract fields" },
+    Message { code: E_UNUSED_USE, text: "field in `uses` is never used" },
+    Message { code: C_NOT_CONST, text: "not a constant expression" },
+    Message { code: C_DIV_ZERO, text: "division by zero" },
+    Message { code: C_OVERFLOW, text: "arithmetic overflow" },
+    Message { code: G_NO_CONTRACT, text: "no contract to deploy" },
+    Message { code: G_CODE_TOO_LARGE, text: "code too large" },
+]
+
+// Returns the message of `code`. Every code has one, and tools/cli_check.py checks that the
+// table is complete. A code missing from the table is a bug in Fe0, and the lookup panics. A
+// native panic exits with code 132 (docs/WORKAROUNDS.md, "A native panic is a silent trap").
+pub fn message(_ code: DiagCode) -> Message {
+    var i: usize = 0
+    while i < COUNT && !(MESSAGES[i].code == code) {
+        i += 1
+    }
+    assert!(i < COUNT)
+    MESSAGES[i]
+}

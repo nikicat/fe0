@@ -110,9 +110,8 @@ so a fix on master removes nothing before we move to a release that has it.
   `Stdout`/`Stdin` effects, `print!` and `StdinReader` replace them.
   - So the compiler core reads its input through **its own `fe0::io::Source` effect**
     ([ADR 0010](adr/0010-source-effect.md)). Only the edge adapters touch std.
-  - The native CLI (`fe0-cli`) is not written yet. It will use 26.5.1's `std::io`, and it
-    needs a port to the new API only if we leave 26.5.1. Its stderr workaround (below)
-    becomes `eprintln!` then.
+  - The native CLI (`fe0-cli`) uses 26.5.1's `std::io`. It needs a port to the new API only
+    if we leave 26.5.1.
 
 - **Master makes `DynString`, `Bytes` and `DynArray` own their memory** (newsfragment
   `1914.removal`, commit `e2a0bb8d7`). They are no longer `Copy`, and `DynString::as_bytes` is
