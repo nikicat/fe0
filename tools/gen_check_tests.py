@@ -9,20 +9,25 @@ usage: [FE=path/to/fe] gen_check_tests.py
 """
 from dataclasses import dataclass
 from enum import Enum
+from typing import NewType
 
-from fegen import CHAIN_LEN, FE0, lit, write_formatted
+from fegen import (CHAIN_LEN, FE0, FeLine, FeName, FeSource, TestName, lines, lit, source,
+                   write_formatted)
+
+# A Fe source with one `|`, which marks the byte that a diagnostic points at.
+MarkedSource = NewType("MarkedSource", str)
 
 
 @dataclass(frozen=True)
 class Accepts:
     """A case that the checker accepts without warnings."""
 
-    src: str
+    src: FeSource
 
-    def line(self):
+    def line(self) -> FeLine:
         """The test's line that checks the case."""
         assert "|" not in self.src or "||" in self.src, self.src
-        return f"    accepts({lit(self.src)})"
+        return FeLine(f"    accepts({lit(self.src)})")
 
 
 class Helper(Enum):
@@ -34,29 +39,38 @@ class Helper(Enum):
 
 @dataclass(frozen=True)
 class Diagnosed:
-    """A case that the checker warns about or rejects. `src` marks with `|` the byte that the
-    diagnostic points at, and `code` names the diagnostic's code in fe0/src/diag.fe."""
+    """A case that the checker warns about or rejects, with the constant of fe0/src/diag.fe that
+    names the diagnostic's code."""
 
     helper: Helper
-    src: str
-    code: str
+    src: MarkedSource
+    code: FeName
 
-    def line(self):
+    def line(self) -> FeLine:
         """The test's line that checks the case, with the mark turned into a byte offset."""
         i = self.src.index("|")
-        return f"    {self.helper.value}({lit(self.src[:i] + self.src[i + 1:])}, {self.code}, {i})"
+        unmarked = self.src[:i] + self.src[i + 1:]
+        return FeLine(f"    {self.helper.value}({lit(unmarked)}, {self.code}, {i})")
 
 
-def ok(src):
-    return Accepts(src)
+Case = Accepts | Diagnosed
 
 
-def warn(src, code):
-    return Diagnosed(Helper.WARNS, src, code)
+def ok(src: str) -> Accepts:
+    """The case of the source `src`, which the checker accepts."""
+    return Accepts(FeSource(src))
 
 
-def err(src, code):
-    return Diagnosed(Helper.REJECTS, src, code)
+def warn(src: str, code: str) -> Diagnosed:
+    """The case of the marked source `src`, which the checker warns about with the diag code
+    `code`."""
+    return Diagnosed(Helper.WARNS, MarkedSource(src), FeName(code))
+
+
+def err(src: str, code: str) -> Diagnosed:
+    """The case of the marked source `src`, which the checker rejects with the diag code
+    `code`."""
+    return Diagnosed(Helper.REJECTS, MarkedSource(src), FeName(code))
 
 
 # The msg that every contract case receives.
@@ -66,12 +80,13 @@ FIELD_A = "    mut a: u256\n"
 GET_OK = "        Get {} -> u256 uses (a) { a }\n"
 ARMS_OK = GET_OK + "        Set { v } uses (mut a) { a = v }\n"
 # `msgs` go after MSG and `recvs` after `recv M`.
-def contract(arms, body_fields=FIELD_A, init="", msgs="", recvs=""):
+def contract(arms: str, body_fields: str = FIELD_A, init: str = "", msgs: str = "",
+             recvs: str = "") -> str:
     return (MSG + msgs + "contract K {\n" + body_fields + init + "    recv M {\n" + arms + "    }\n"
             + recvs + "}\n")
 RECV_N = "    recv N {\n        O {} { }\n    }\n"
-groups = {
-"types_of_operators": [
+groups: dict[TestName, list[Case]] = {
+TestName("types_of_operators"): [
     ok("fn f(_ a: u256, _ b: bool, _ c: Address, _ d: Address) -> bool {\n    a + 1 * 2 / 3 % 4 & 5 | 6 ^ 7 << 8 >> 9 > 0 && !b || c == d && ~a != 0\n}"),
     ok("fn f(_ a: u256) -> bool { a < 1 || a <= 1 || a > 1 || a >= 1 }"),
     err("fn f(_ b: bool) -> u256 { |b + 1 }", "T_MISMATCH"),
@@ -82,7 +97,7 @@ groups = {
     err("fn f(_ b: bool) -> bool { ~|b }", "T_MISMATCH"),
     err("fn g() {}\nfn f() -> bool { |g() == g() }", "T_NO_VALUE"),
 ],
-"if_and_blocks": [
+TestName("if_and_blocks"): [
     ok("fn f(_ c: bool) -> u256 { if c { 1 } else if !c { 2 } else { 3 } }"),
     ok("fn f(_ c: bool) { if c { f(c) } }"),
     ok("fn f(_ c: bool) -> u256 {\n    let x = {\n        let y: u256 = 2\n        y * 2\n    }\n    x\n}"),
@@ -93,7 +108,7 @@ groups = {
     err("fn f() { assert!(|1) }", "T_MISMATCH"),
     ok("fn f(_ a: u256) { assert!(a > 0, \"zero\") }"),
 ],
-"return_paths": [
+TestName("return_paths"): [
     ok("fn f() -> u256 { return 1 }"),
     ok("fn f(_ c: bool) -> u256 { if c { return 1 } else { return 2 } }"),
     ok("fn f(_ c: bool) -> u256 {\n    if c { return 1 }\n    2\n}"),
@@ -108,7 +123,7 @@ groups = {
     err("fn f() {\n    while true |{\n        break\n        5\n    }\n}", "T_MISMATCH"),
     err("fn f() |{ 1 }", "T_MISMATCH"),
 ],
-"locals": [
+TestName("locals"): [
     ok("fn f() -> u256 {\n    let x: u256 = 1\n    let x = x + 1\n    x\n}"),
     ok("fn f() -> u256 {\n    var x: u256 = 1\n    x += 2\n    x = x * 3\n    x\n}"),
     err("fn f() -> u256 {\n    { let x: u256 = 1 }\n    |x\n}", "N_UNKNOWN_NAME"),
@@ -131,7 +146,7 @@ groups = {
     err("msg m {\n    #[selector = 0x01]\n    A {},\n}\nfn f(|_ m: u256) -> u256 { m }", "N_SHADOWS_ITEM"),
     err("contract k {\n}\nfn f(|_ k: u256) -> u256 { k }", "N_SHADOWS_ITEM"),
 ],
-"literal_types": [
+TestName("literal_types"): [
     # Integers of type TY_INT (SPEC §2). Fe rejects each err case here with 8-0031 too, except
     # `var i = 0`, whose type Fe infers from the later use of `i`.
     ok("fn f() -> u256 {\n    let x: u256 = 1 + 2\n    x << 3\n}"),
@@ -150,14 +165,14 @@ groups = {
     err("const B: bool = 1 |== 1", "T_NEEDS_TYPE"),
     err("const C: bool = 1 |< 2", "T_NEEDS_TYPE"),
 ],
-"loops": [
+TestName("loops"): [
     ok("fn f() -> u256 {\n    var i: u256 = 0\n    while i < 10 {\n        i += 1\n        if i == 5 { break }\n        continue\n    }\n    i\n}"),
     err("fn f() { |break }", "N_OUTSIDE_LOOP"),
     err("fn f() { |continue }", "N_OUTSIDE_LOOP"),
     err("fn f() { while |1 { } }", "T_MISMATCH"),
     err("fn f() { while true |{ 1 } }", "T_MISMATCH"),
 ],
-"items_and_names": [
+TestName("items_and_names"): [
     ok("fn g() -> u256 { h() }\nfn h() -> u256 { 1 }"),
     err("fn f() {}\n|const f: u256 = 1", "N_DUPLICATE"),
     err("fn f(_ a: u256, |_ a: u256) {}", "N_DUPLICATE"),
@@ -167,7 +182,7 @@ groups = {
     err("fn f() { |g() }", "N_UNKNOWN_NAME"),
     err("contract A {}\n|contract B {}", "N_TWO_CONTRACTS"),
 ],
-"calls": [
+TestName("calls"): [
     ok("fn g(_ a: u256, b: bool) -> u256 { a }\nfn f(b: bool) -> u256 { g(1, b: b) + g(2, b) }"),
     err("fn g(_ a: u256) {}\nfn f() { |g(1, 2) }", "T_ARG_COUNT"),
     err("fn g(_ a: u256) {}\nfn f() { g(|true) }", "T_MISMATCH"),
@@ -176,7 +191,7 @@ groups = {
     err("fn g(a: u256, b: u256) {}\nfn f() { g(|b: 1, a: 2) }", "N_BAD_LABEL"),
     ok("fn g() {}\nfn f() { g() }"),
 ],
-"constants": [
+TestName("constants"): [
     ok("const A: u256 = 2 + 3\nconst B: u256 = A * 4 - 1 / 1 % 7\nconst C: bool = B == 19 && !false\nconst D: u256 = 1 << 256"),
     err("const A: u256 = |B\nconst B: u256 = 1", "N_FORWARD_CONST"),
     err("const A: u256 = |A", "N_FORWARD_CONST"),
@@ -189,7 +204,7 @@ groups = {
     err("const A: bool = |1", "T_MISMATCH"),
     err("const A: u256 = 1 + |true", "T_MISMATCH"),
 ],
-"effects": [
+TestName("effects"): [
     ok(contract(ARMS_OK, init="    init(x: u256) uses (mut a) { a = x }\n")),
     err(contract("        Get {} -> u256 { |a }\n        Set { v } uses (mut a) { a = v }\n"), "E_NOT_IN_USES"),
     err(contract(GET_OK + "        Set { v } uses (a) { |a = v }\n"), "E_NOT_MUT"),
@@ -205,14 +220,14 @@ groups = {
     err(contract(ARMS_OK, FIELD_A + "    mut |a: bool\n"), "N_DUPLICATE"),
     err("const a: u256 = 1\n" + contract(ARMS_OK, "    mut |a: u256\n"), "N_DUPLICATE"),
 ],
-"selectors": [
+TestName("selectors"): [
     ok("msg N {\n    #[selector = 0xffffffff]\n    A {},\n    #[selector = 0]\n    B {},\n}"),
     err("msg N {\n    |#[selector = 0x100000000]\n    A {},\n}", "T_SELECTOR_TOO_LARGE"),
     err("msg N {\n    #[selector = 1]\n    A {},\n    |#[selector = 0x01]\n    B {},\n}", "N_DUPLICATE_SELECTOR"),
     ok(contract(ARMS_OK, msgs="msg N {\n    #[selector = 0x03]\n    O {},\n}\n", recvs=RECV_N)),
     err(contract(ARMS_OK, msgs="msg N {\n    |#[selector = 0x02]\n    O {},\n}\n", recvs=RECV_N), "N_DUPLICATE_SELECTOR"),
 ],
-"messages": [
+TestName("messages"): [
     ok(contract("        Set { v: w } uses (mut a) { a = w }\n" + GET_OK)),
     err(contract(GET_OK) .replace("    recv M", "    |recv M"), "N_MISSING_ARM"),
     err(contract(ARMS_OK + "        |Get {} -> u256 { 1 }\n"), "N_DUPLICATE"),
@@ -226,9 +241,10 @@ groups = {
     err(contract(GET_OK + "        Set { v } |{ true }\n"), "T_MISMATCH"),
 ],
 }
-codes = sorted({c.code for g in groups.values() for c in g if isinstance(c, Diagnosed)} | {"E_TOO_MANY_FIELDS"})
+codes = sorted({c.code for g in groups.values() for c in g if isinstance(c, Diagnosed)}
+               | {FeName("E_TOO_MANY_FIELDS")})
 code_uses = "\n".join(f"    {c}," for c in codes)
-out = f"""// Generated by tools/gen_check_tests.py. Edit the cases there and rerun it.
+out = lines(FeSource(f"""// Generated by tools/gen_check_tests.py. Edit the cases there and rerun it.
 // Tests for the checker: cases per rule of SPEC §2 and §4–6, each of which accepts, warns or
 // rejects. A warn or reject case names the diagnostic's code and the byte offset it points at.
 
@@ -271,14 +287,15 @@ fn rejects(_ s: own DynString, _ code: DiagCode, _ pos: usize) {{
     let d = checked(s).err.unwrap()
     assert!(d.code == code)
     assert!(d.pos() == Pos::at(pos))
-}}""".split("\n")
+}}"""))
 for name, cases in groups.items():
-    out += ["", "#[test]", f"fn {name}() {{"] + [c.line() for c in cases] + ["}"]
+    out += [FeLine(""), FeLine("#[test]"), FeLine(f"fn {name}() {{")] + [c.line() for c in cases]
+    out.append(FeLine("}"))
 SIDE = ("const A: u256 = 6 * 7\nfn f(_ p: u256) -> u256 {\n    let x = p + A\n    var y = x\n    y\n}\n"
         + contract(GET_OK + "        Set { v } uses (mut b) { b = v == A }\n",
                    FIELD_A + "    mut b: bool\n"))
 CHAIN = "fn f(_ c: bool) -> u256 { " + " else ".join(f"if c {{ {k} }}" for k in range(CHAIN_LEN)) + " else { 0 } }"
-out += f"""
+out += lines(FeSource(f"""
 // The side tables that code generation reads.
 #[test]
 fn side_tables() {{
@@ -318,10 +335,10 @@ fn deep_nesting_and_long_chains() {{
     assert!({CHAIN_LEN} > MAX_DEPTH)
     accepts({lit(CHAIN)})
 }}
-""".split("\n")
+"""))
 # A contract with more fields than the checker allows, generated by a Source so that the file
 # holds no 257-line literal.
-out += r'''
+out += lines(FeSource(r'''
 // A `Source` of a contract with `count` fields named f000, f001 and so on.
 struct Fields { count: usize, pos: usize }
 
@@ -370,5 +387,5 @@ fn too_many_fields() {
     // The name of field 256, after the 13-byte head and 256 lines of 19 bytes.
     assert!(d.pos() == Pos::at(13 + 256 * 19 + 8))
 }
-'''.rstrip("\n").split("\n")
-write_formatted(FE0 / "src/check_tests.fe", "\n".join(out) + "\n")
+'''.rstrip("\n")))
+write_formatted(FE0 / "src/check_tests.fe", source(out))
