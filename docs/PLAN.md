@@ -34,7 +34,7 @@ Fe Builders Challenge 2026. Build window Nov 3–24 (UTC), register by Nov 17.
 - Results are identical: the test passes, gas is 802,865 per KB at -O1/-O2, runtime code is
   3,144 bytes, and the native output matches.
 - `--version` still says 26.5.0, so the native-pipeline improvements the Fe team mentioned have
-  not landed yet. Watching master continues as T0012.
+  not landed yet. We watched master by hand until Nov 11 (T0012).
 
 ## 2. How the official compiler is built (for reference)
 
@@ -158,7 +158,7 @@ Likelihood and impact are rated H, M or L.
 
 | # | Risk | L | I | Mitigation |
 |---|---|---|---|---|
-| 1 | **Toolchain drift between master and the release.** We experiment on master (as the Fe team advises), but the submission must pin a *release* of 26.5.0 or later. Features or fixes we rely on might exist only on master | H | H | Frozen on Fe 26.5.1 ([ADR 0009](adr/0009-freeze-on-26-5-1.md)), then moved once, on Nov 11, to Fe 26.6.0 ([ADR 0015](adr/0015-move-to-26-6-0.md)). Master is checked by hand (T0012) |
+| 1 | **Toolchain drift between master and the release.** We experiment on master (as the Fe team advises), but the submission must pin a *release* of 26.5.0 or later. Features or fixes we rely on might exist only on master | H | H | Frozen on Fe 26.5.1 ([ADR 0009](adr/0009-freeze-on-26-5-1.md)), then moved once, on Nov 11, to Fe 26.6.0 ([ADR 0015](adr/0015-move-to-26-6-0.md)). After the move, we stop watching master and stay on 26.6.0 through the submission |
 | 2 | **Language churn mid-window.** Fe changes fast; 26.5 alone changed reference semantics. A release during Nov 3–24 could break our code or invite a costly upgrade | M | M | No further upgrade mid-window unless a blocking bug needs it ([ADR 0015](adr/0015-move-to-26-6-0.md)) |
 | 3 | **Compiler bugs, especially in the native backend.** The Fe team expects us to hit some ("as I suspect you will"). The native backend is experimental | H | M | Keep the core target-agnostic, so the EVM path under `fe test` is always the primary oracle and the native build is a bonus. Reduce each bug to a minimal example and file it; fix it upstream if it's cheap (welcome, and good for usefulness); keep `WORKAROUNDS.md` |
 | 4 | **Experts on the jury.** Two judges are Fe core developers with a personal interest in Fe-in-Fe and a Lean-formalizable subset. Claims of correctness or "strict subset" will be scrutinised | M | H | Claim only what the tests show. Write a precise Fe0 spec (grammar and semantics) and a frank limitations section. Every difference from Fe found by testing is either fixed or documented |
