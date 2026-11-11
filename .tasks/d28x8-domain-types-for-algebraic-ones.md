@@ -13,10 +13,13 @@ because every phase contract must stay under 24,576 bytes (ADR 0014).
 ## Sites (survey of Nov 11, on Fe 26.6.0)
 - **End of input as -1.** `Source::next_byte() -> i32` (`fe0/src/io.fe`), `Lexer.peeked`,
   and the `C_*` byte constants that are `i32` only because of it (`fe0/src/lexer.fe:378`).
-  T0011 plans `Option<u8>`, which is algebraic too. Plan a named type instead: a byte case
-  and an end case, with the byte helpers (`is_digit`, `unescape`, …) as methods of the byte.
-  Fe 26.6.0's byte literals (`b'\n'`) can then replace the `C_*` constants. Merge T0011 into
-  this task, or update its plan.
+  End of input is compared as `< 0` at several sites, and a forgotten check could push it as
+  byte 255. Use a named type, not `Option<u8>` (closed T0011 planned that): a byte case and an
+  end case, with the 12 byte helpers (`is_digit`, `unescape`, …, `lexer.fe:410-470`) as
+  methods of the byte. Fe 26.6.0's byte literals (`b'\n'`) can then replace the `C_*`
+  constants. Keep `Lexer.peeked` a plain value and wrap it where it is used, as `Node.pos()`
+  does: a field in a hot struct costs bytes under fe#1964 (docs/WORKAROUNDS.md). Unsmell
+  run 20261104-190143, findings b1-21, b2-6 and x-3.
 - **`err: Option<Diag>`** on `Lexed` (`lexer.fe:207`), `Ast` (`ast.fe:560`), `Checked`
   (`check.fe:84`) and `Output` (`codegen.fe:156`). Each phase's result is either its data or
   an error, so a phase result type fits. ADR 0011 chose the field because of an internal
@@ -32,6 +35,6 @@ Not in scope: `LabelSlot` (`asm.fe:64`) is already a domain type. Its comment ci
 for the 919 bytes that `Option<Label>` cost, and that is correct.
 
 ## Next
-Start with the -1 sentinel, because T0011 is the oldest. Measure the lexer's gas per byte and
-LexProbe's size before and after (`spike-sizes/`, `fe build -O s`). Then the phase results,
-after the IR0600 check.
+Start with the -1 sentinel. Measure the lexer's gas per byte (about 800 on the EVM, with
+spike-lexer's `lex_gas` pattern, DESIGN.md §8a) and LexProbe's size (`spike-sizes/`,
+`fe build -O s`), before and after. Then the phase results, after the IR0600 check.
