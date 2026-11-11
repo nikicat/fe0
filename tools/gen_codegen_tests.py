@@ -96,20 +96,14 @@ class Arm:
     uses: str = ""
 
     @property
-    def selector(self):
-        """The variant's selector: its position in OPS_ARMS, counted from 1."""
-        return OPS_ARMS.index(self) + 1
-
-    @property
     def arrow(self):
         return f" -> {self.ret}" if self.ret else ""
 
-    @property
-    def variant(self):
-        """The variant as the msg block declares it."""
+    def variant(self, selector):
+        """The variant as the msg block declares it, with `selector`."""
         fields = ", ".join(f.declaration for f in self.fields)
         rest = f" {{ {fields} }}{self.arrow}" if self.fields else self.arrow
-        return Variant(self.selector, self.name, rest)
+        return Variant(selector, self.name, rest)
 
     @property
     def pattern(self):
@@ -158,7 +152,8 @@ OPS_ARMS = [
     Arm("Swap", AB, "u256", "{\n    let t = a\n    x = b\n    return t\n}", uses="mut x"),
     Arm("Bump", (), "u256", "x = bump_x(x)\nx", uses="mut x"),
 ]
-OPS_MSG = Msg("CgOpsMsg", tuple(arm.variant for arm in OPS_ARMS))
+# Each arm's selector is its position in OPS_ARMS, counted from 1.
+OPS_MSG = Msg("CgOpsMsg", tuple(arm.variant(n) for n, arm in enumerate(OPS_ARMS, start=1)))
 
 
 def op(name, *words, **kw):
