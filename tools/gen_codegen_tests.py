@@ -13,7 +13,7 @@ usage: [FE=path/to/fe] gen_codegen_tests.py
 import textwrap
 from dataclasses import dataclass
 
-from fegen import CHAIN_LEN, FE0, MAX, Call, Case, Cases, Deploy, DiffTest, difftest_use, write_formatted
+from fegen import CHAIN_LEN, FE0, MAX, MAX_DEPTH, Call, Case, Cases, Deploy, DiffTest, difftest_use, write_formatted
 
 
 @dataclass(frozen=True)
@@ -370,9 +370,13 @@ NO_RECV = """contract CgNoRecv {
 }
 """
 # The last branch of CgChain holds the deepest nesting that the parser accepts inside an arm.
-# One more level of either kind fails with P_TOO_DEEP.
-DEEPEST_PARENS_IN_ARM = 16
-DEEPEST_BLOCKS_IN_ARM = 7
+# One more level of either kind fails with P_TOO_DEEP. The arm, the `if`, its `else` block and
+# the expression take ARM_LEVELS. The parentheses are the left operand of a `+`, and each takes
+# one level. The blocks are its right operand, which takes one more level, and each block takes
+# two, as parser_tests.fe says.
+ARM_LEVELS = 4
+DEEPEST_PARENS_IN_ARM = MAX_DEPTH - ARM_LEVELS
+DEEPEST_BLOCKS_IN_ARM = (MAX_DEPTH - ARM_LEVELS - 1) // 2
 CHAIN_MSG = Msg("CgChainMsg", (Variant(1, "Pick", " { a: u256 } -> u256"),))
 CHAIN = (CHAIN_MSG.source + "\ncontract CgChain {\n"
          "    recv CgChainMsg {\n        Pick { a } -> u256 {\n            "

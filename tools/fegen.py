@@ -56,9 +56,23 @@ FE: str = find_fe()
 ROOT: Path = Path(__file__).resolve().parent.parent
 FE0: Path = ROOT / "fe0"
 MAX: Word = Word((1 << 256) - 1)
-# Longer than the parser's MAX_DEPTH, so a chain of this many `else if` shows that the parser and
-# the code generator read such a chain in a loop, not by recursion.
+
+
+def fe_const(path: Path, name: str) -> int:
+    """Returns the value of the `usize` constant `name` that the Fe module `path` declares. Errors
+    when the module has no such declaration."""
+    m = re.search(rf"^(?:pub )?const {name}: usize = (\d+)$", path.read_text(), re.MULTILINE)
+    if m is None:
+        raise ValueError(f"{path} declares no const {name}: usize")
+    return int(m[1])
+
+
+# The deepest nesting of blocks and binary expressions that Fe0's parser accepts.
+MAX_DEPTH: int = fe_const(FE0 / "src/parser.fe", "MAX_DEPTH")
+# Longer than MAX_DEPTH, so a chain of this many `else if` shows that the parser and the code
+# generator read such a chain in a loop, not by recursion.
 CHAIN_LEN = 40
+assert CHAIN_LEN > MAX_DEPTH
 
 
 def source(lines: Iterable[FeLine]) -> FeSource:
