@@ -40,7 +40,7 @@ compile did not exist yet.
 
 Measured again on Nov 8 on 8 cores, after Fe0's in-EVM compile existed. The cost follows the
 number of tests, not the number of programs.
-[WORKAROUNDS.md](../WORKAROUNDS.md#open-bugs-2651) says why.
+[WORKAROUNDS.md](../WORKAROUNDS.md#open-bugs) says why.
 
 | Run, at `-O 1` | One test per program | One test per batch ingot |
 |---|---|---|

@@ -1,7 +1,7 @@
 # 4. Literal selectors first; `sol()` through a `Hasher` effect later
 
 - Date: 2026-10-28 (pre-window)
-- Status: accepted
+- Status: accepted; its `Hasher` part is superseded by [0015](0015-move-to-26-6-0.md)
 
 ## Context
 `#[selector = sol("f()")]` needs keccak at Fe0's own run time. On 26.5.x, `core::keccak` and

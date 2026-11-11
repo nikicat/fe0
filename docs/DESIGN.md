@@ -46,7 +46,8 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
 
 - **Input:** the lexer pulls bytes one at a time through `uses (input: mut Source)` and keeps one
   byte of lookahead. It appends each byte to the source buffer, a `Text`, as it reads it.
-  `Source` is fe0's own effect, and WORKAROUNDS.md says why it is not std I/O.
+  `Source` is fe0's own effect, and [ADR 0010](adr/0010-source-effect.md) says why it is
+  not std I/O.
 - **Tokens** are spans of the source buffer, so the lexer never copies the text. `Token` is
   declared in `fe0/src/lexer.fe`.
 - **Integer literals:** the lexer checks only their syntax. The parser computes each value once,
@@ -330,8 +331,7 @@ The checker also reports warnings, in `Checked.warns`. They never stop the compi
 headers. For each `corpus/X.fe` with its call script `X.calls`, it writes a module of a batch
 ingot under `out/difftest/` that holds:
 
-1. a copy of the program, compiled by the official compiler, with each contract and msg renamed
-   to `Name_X`;
+1. a copy of the program, compiled by the official compiler;
 2. a runner function with the program as written in a string literal, and one `#[test]` that
    calls the runner. The runner calls `fe0/src/difftest.fe`, which:
    1. compiles the string with the `fe0` library *inside the test*, so on the EVM;
@@ -357,13 +357,10 @@ The codegen tests (`fe0/src/codegen_tests.fe`) are differential tests of the sam
 live in the `fe0` ingot, so that `fe test` there runs them, and their generator shares
 `tools/fegen.py` with `embed.py`.
 
-**Contract and msg names must be unique across the whole test ingot.** Two modules that each
-define `contract C` crash the official compiler (WORKAROUNDS.md), hence the renaming. Fe0
-compiles the program as written, so its error positions match the file. Path dependencies
-between ingots work (`spike-deps/user`). Embedding sources as string literals is fine too.
-The largest corpus program is under 2 KB. A one-off probe, which is not in the repository,
-passed a 32 KB `DynString` literal to a function. `fe test -O 0` built and ran it in about
-0.1 s.
+Path dependencies between ingots work (`spike-deps/user`). Embedding sources as string
+literals is fine too. The largest corpus program is under 2 KB. A one-off probe, which is not
+in the repository, passed a 32 KB `DynString` literal to a function. `fe test -O 0` built and
+ran it in about 0.1 s.
 
 Each batch ingot holds `BATCH` programs and depends on `fe0` by path. One `fe test --jobs 0`
 run tests all the batches. [ADR 0003](adr/0003-own-corpus-and-generator.md#measurements) gives
@@ -374,8 +371,9 @@ runner of the batch. Its name starts with `embed.BATCH_TEST`. The harness runs o
 tests. It runs the programs' own tests only in a batch whose test fails, to get each program's
 panic code. The WORKAROUNDS.md entry on `fe test` compiling each EVM test alone says why.
 
-**The reject tests run on the native backend**, for the same reason. A native failure gives no
-panic code, so when one fails the harness runs the reject ingot again on the EVM to explain it.
+**The reject tests run on the native backend**, for the same reason. A failed native test
+prints its revert data as an EVM test does, so the harness reads each failing reject
+program's panic code from that run.
 
 **A program that the official compiler rejects would fail its whole batch.** So `embed.py`
 first runs `fe check` on each program alone, about 0.2 s each and in parallel, and leaves out
@@ -407,15 +405,12 @@ Shrinking a failing program is a stretch goal. It would delete lines while the f
 
 ## 12. Hashing (`sol("…")` selectors, a stretch goal)
 
-- Hashing is an effect, `uses (h: mut Hasher)`:
-  - the EVM provider calls the `KECCAK256` opcode;
-  - the native provider is a software keccak-f[1600] in Fe, because 26.5.1 cannot lower
-    `EvmKeccak256` natively (WORKAROUNDS.md).
-- Why, with the feasibility and gas measurements:
-  [ADR 0004](adr/0004-literal-selectors-first.md).
-- `u64` shifts discard overflowing bits, like `u256`, so `rotl` is `(x << n) | (x >> (64 - n))`.
-- Remaining work for the window: padding (`0x01 … 0x80`, rate 136 bytes), absorbing input,
-  and testing against known vectors (`keccak("answer()") = 0x85bb7d69…`).
+- `sol("f()")` needs keccak at Fe0's own run time. Since Fe 26.6.0, `core::keccak` lowers on
+  both targets, so Fe0 can call it on the EVM and natively.
+  `spike-native/probe_keccak.fe` checks it natively: `keccak("answer()") = 0x85bb7d69…`.
+- [ADR 0004](adr/0004-literal-selectors-first.md) says why selectors are literal first.
+  [ADR 0015](adr/0015-move-to-26-6-0.md) says why hashing needs no `Hasher` effect.
+- Remaining work: parse `sol("…")`, hash the signature, and take its first 4 bytes.
 
 ## 13. Testing per phase
 
