@@ -22,10 +22,10 @@ RUN set -e; arch=$(dpkg --print-architecture); \
     tar -C /usr/local/bin --strip-components=1 -xzf /tmp/uv.tgz "uv-$triple/uv" "uv-$triple/uvx"; rm /tmp/uv.tgz; \
     uv python install --default --preview-features python-install-default "$PYTHON"
 
-# Fe's release build, the version CI freezes (.github/workflows/ci.yml)
-ARG FE=v26.5.1
-ARG FE_SHA256_amd64=2d48fd56e45f56a775bea73a3180ffcab73ad440887d0a985be2050fb5993916
-ARG FE_SHA256_arm64=fb2410473aecb961532e855f5bb4688f288123457ab70425be4ae7f533d6fb75
+# Fe's release build, pinned here for CI and the dev container alike
+ARG FE=v26.6.0
+ARG FE_SHA256_amd64=697081cb9265bd1be7a5d33e6bb0c8559ee5ff542abab9a046540fc151b4edaa
+ARG FE_SHA256_arm64=011caa8a297763b3c1540048beb92bea047f0868eabe0ea1b4822e99d945fe26
 RUN set -e; arch=$(dpkg --print-architecture); \
     curl -fsSLo /usr/local/bin/fe "https://github.com/argotorg/fe/releases/download/$FE/fe_linux_$arch"; \
     eval echo \"\$FE_SHA256_$arch  /usr/local/bin/fe\" | sha256sum -c -; \

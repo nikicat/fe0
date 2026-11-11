@@ -4,43 +4,50 @@ on:
   push:
   pull_request:
 
+# packages: write lets pushes to main store the dev container image in GHCR.
 permissions:
   contents: read
-
-env:
-  # Frozen for the contest on Nov 3 (PLAN.md risk 1).
-  FE_VERSION: v26.5.1
-  FE_SHA256: 2d48fd56e45f56a775bea73a3180ffcab73ad440887d0a985be2050fb5993916
+  packages: write
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - name: Install Fe
-        run: |
-          bin="$HOME/.fe/bin"
-          mkdir -p "$bin"
-          curl -fsSL -o "$bin/fe" "https://github.com/argotorg/fe/releases/download/$FE_VERSION/fe_linux_amd64"
-          echo "$FE_SHA256  $bin/fe" | sha256sum -c -
-          chmod +x "$bin/fe"
-          echo "$bin" >> "$GITHUB_PATH"
-      - run: fe --version
-      # CI skips the spike-*/ probes, because several of their tests fail on purpose to
-      # report values. tools/spikes.sh runs them.
-      - name: fe0
-        working-directory: fe0
-        run: |
-          fe fmt --check
-          fe test
-      - name: fe0-cli format
-        working-directory: fe0-cli
-        run: fe fmt --check
-      - name: corpus
-        run: python3 tools/embed.py
-      # Fixed seeds, see DESIGN.md §11.
-      - name: generated programs
-        run: python3 tools/gen.py -n 25
-      # DESIGN.md §10. It runs after the generated programs, so it checks those too.
-      - name: native CLI
-        run: python3 tools/cli_check.py
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The checks run in the dev container, so its Containerfile is the one place that pins
+      # Fe and the other tools. The image is cached in GHCR. Only pushes to main update it.
+      - uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3.1900000450
+        with:
+          imageName: ghcr.io/${{ github.repository }}/devcontainer
+          cacheFrom: ghcr.io/${{ github.repository }}/devcontainer
+          refFilterForPush: refs/heads/main
+          eventFilterForPush: push
+          runCmd: |
+            set -e
+            echo "::group::fe --version"
+            fe --version
+            echo "::endgroup::"
+            # CI skips the spike-*/ probes, because several of their tests fail on purpose to
+            # report values. tools/spikes.sh runs them.
+            echo "::group::fe0"
+            (cd fe0 && fe fmt --check && fe test)
+            echo "::endgroup::"
+            echo "::group::fe0-cli format"
+            (cd fe0-cli && fe fmt --check)
+            echo "::endgroup::"
+            echo "::group::corpus"
+            python3 tools/embed.py
+            echo "::endgroup::"
+            # Fixed seeds, see DESIGN.md §11.
+            echo "::group::generated programs"
+            python3 tools/gen.py -n 25
+            echo "::endgroup::"
+            # DESIGN.md §10. It runs after the generated programs, so it checks those too.
+            echo "::group::native CLI"
+            python3 tools/cli_check.py
+            echo "::endgroup::"
