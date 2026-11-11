@@ -22,6 +22,9 @@ FeSource = NewType("FeSource", str)
 FeLine = NewType("FeLine", str)
 # A Fe expression, such as a string literal or a `difftest::CaseCode`.
 FeExpr = NewType("FeExpr", str)
+# A piece of Fe code that is neither a line nor an expression, such as a type, the statements of
+# a block, or what follows the name of a msg variant.
+FeCode = NewType("FeCode", str)
 # A Fe identifier that names a contract, a function or a local.
 FeName = NewType("FeName", str)
 # The name of a Fe test function, as `fe test` reports it.
@@ -87,6 +90,12 @@ assert CHAIN_LEN > MAX_DEPTH
 def source(lines: Iterable[FeLine]) -> FeSource:
     """Returns the text of `lines`, with a line end after each."""
     return FeSource("".join(s + "\n" for s in lines))
+
+
+def lines(text: FeSource) -> list[FeLine]:
+    """Returns the lines of `text`, split at each `\n`. A `text` that ends with `\n` gives an
+    empty last line, so `source(lines(text))` is `text` with one more `\n`."""
+    return [FeLine(s) for s in text.split("\n")]
 
 
 def lit(s: str) -> FeExpr:
