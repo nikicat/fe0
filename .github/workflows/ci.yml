@@ -36,6 +36,12 @@ jobs:
             # The tools run in their own uv environment (tools/pyproject.toml, tools/uv.lock).
             (cd tools && uv sync --locked && uv run --locked mypy && uv run --locked pyright)
             echo "::endgroup::"
+            # The generated test files must match their generators, so a hand edit fails here.
+            echo "::group::generated tests"
+            uv run --project tools --locked tools/gen_check_tests.py
+            uv run --project tools --locked tools/gen_codegen_tests.py
+            git diff --exit-code -- fe0/src/check_tests.fe fe0/src/codegen_tests.fe
+            echo "::endgroup::"
             # CI skips the spike-*/ probes, because several of their tests fail on purpose to
             # report values. tools/spikes.sh runs them.
             echo "::group::fe0"

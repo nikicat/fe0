@@ -6,7 +6,6 @@ use ingot::diag::{
     Diag,
     DiagCode,
     diag,
-    L_INT_TOO_LARGE,
     P_CHAINED_COMPARISON,
     P_EXPECTED_END,
     P_EXPECTED_EXPR,
@@ -177,15 +176,6 @@ impl Parser {
     // Moves the elements pushed since `mark` into a new list and returns it.
     fn close_list(mut self, _ mark: ListMark) -> ListId {
         self.ast.add_list(mut self.pending, mark)
-    }
-
-    // Adds the value of integer token `t` to the AST's words and returns its index. Errors with
-    // L_INT_TOO_LARGE at the literal when the value does not fit in 256 bits.
-    fn int_word(mut self, _ t: Token) -> Result<Diag, WordId> {
-        match self.ast.lexed.text.int_value(t.span) {
-            Option::Some(v) => Result::Ok(self.ast.add_word(v)),
-            Option::None => Result::Err(diag(L_INT_TOO_LARGE, t.span.start)),
-        }
     }
 
     fn skip_newlines(mut self) {
@@ -414,7 +404,7 @@ impl Parser {
         }
         self.bump()
         self.expect(O_ASSIGN)?
-        let selector = self.int_word(self.expect(T_INT)?)?
+        let selector = self.ast.add_int(self.expect(T_INT)?)?
         self.expect(P_RBRACKET)?
         self.expect(T_NEWLINE)?
         self.skip_docs()
@@ -722,7 +712,7 @@ impl Parser {
         let k = t.kind
         if k == T_INT {
             self.bump()
-            let word = self.int_word(t)?
+            let word = self.ast.add_int(t)?
             return Result::Ok(self.ast.add_node(Node::new_int(t.span.start, word)))
         }
         if k == K_TRUE || k == K_FALSE {

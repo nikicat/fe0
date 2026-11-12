@@ -165,6 +165,9 @@ pub struct Node {
 
 impl Copy for Node {}
 
+// Returns 1 for `true` and 0 for `false`, the value a flag slot holds. The constructors take
+// labeled `bool`s rather than a type per flag, because Fe makes each call spell the label and a
+// flag type costs bytecode (ADR 0013).
 fn flag(_ b: bool) -> usize {
     if b { 1 } else { 0 }
 }
@@ -464,17 +467,21 @@ impl Node {
     pub fn str_len(self) -> usize {
         self.d
     }
-    pub fn is_positional(self) -> bool {
+    // Reads back a flag that `flag` wrote into slot `d`.
+    fn flag_set(self) -> bool {
         self.d == 1
+    }
+    pub fn is_positional(self) -> bool {
+        self.flag_set()
     }
     pub fn is_mut(self) -> bool {
-        self.d == 1
+        self.flag_set()
     }
     pub fn is_var(self) -> bool {
-        self.d == 1
+        self.flag_set()
     }
     pub fn is_true(self) -> bool {
-        self.d == 1
+        self.flag_set()
     }
 }
 
@@ -554,7 +561,7 @@ impl WordId {
 }
 
 // The parsed program. On error, the arrays hold whatever was built before it. This is not a
-// `Result` for the same reason `Lexed` is not.
+// `Result`, because moving an `Ast` through one costs bytecode (ADR 0011).
 pub struct Ast {
     pub lexed: Lexed,
     nodes: MemVec<Node>,
@@ -627,6 +634,13 @@ impl Ast {
     pub fn add_word(mut self, _ v: u256) -> WordId {
         self.words.push(v)
         WordId { id: self.words.len() - 1 }
+    }
+
+    // Adds the value of integer token `t` to `words` and returns its index. Errors as
+    // `Text.int_value` does.
+    pub fn add_int(mut self, _ t: Token) -> Result<Diag, WordId> {
+        let v = self.lexed.text.int_value(t.span)?
+        Result::Ok(self.add_word(v))
     }
 
     // Moves the elements of `pending` from `mark` on into a new list and returns it.

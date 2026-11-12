@@ -17,7 +17,7 @@ use ingot::diag::{
     P_RECORD_LITERAL,
     P_TOO_DEEP,
 }
-use ingot::io::{Source, text}
+use ingot::io::{Byte, END, Source, text}
 use ingot::lexer::{
     A_AMP,
     A_CARET,
@@ -121,11 +121,7 @@ impl Printer {
     }
 
     fn span(mut self, _ s: Span) {
-        var k: usize = 0
-        while k < s.len {
-            self.out.push(self.ast.lexed.text.span_byte(s, k))
-            k += 1
-        }
+        self.out.extend_from_slice(self.ast.lexed.text.span_bytes(s))
     }
 
     // Writes byte `b`, escaped as the lexer reads it inside a string literal.
@@ -457,39 +453,70 @@ impl Printer {
 pub const DEEPEST_PARENS: usize = MAX_DEPTH - 2
 pub const DEEPEST_BLOCKS: usize = (MAX_DEPTH - 2) / 2
 
-// A `Source` of `fn f() -> u256 { (((1))) }` with `depth` pairs of `brackets` around the 1.
-pub struct Nested { pub brackets: String<2>, pub depth: usize, pub pos: usize }
+// A test `Source` of `head`, then the bytes of `body`, then `tail`. Tests build large programs
+// with one, so that no test holds them as a literal.
+pub struct Framed<B: Body> { head: String<31>, body: B, tail: String<31>, pos: usize }
 
-impl Source for Nested {
-    fn next_byte(mut self) -> i32 {
-        let head: String<17> = "fn f() -> u256 { "
-        let one: String<1> = "1"
-        let tail: String<2> = " }"
+// The middle of a `Framed` source, made byte by byte.
+pub trait Body {
+    // The number of bytes.
+    fn len(self) -> usize
+
+    // The byte at index `i`, which is below `len()`.
+    fn at(self, _ i: usize) -> u8
+}
+
+pub fn framed<B: Body>(_ head: String<31>, _ body: own B, _ tail: String<31>) -> Framed<B> {
+    Framed { head, body, tail, pos: 0 }
+}
+
+impl<B: Body> Source for Framed<B> {
+    fn next_byte(mut self) -> Byte {
         let i = self.pos
         self.pos += 1
-        if i < head.len() {
-            return head.as_bytes()[i] as i32
+        if i < self.head.len() {
+            return Byte::of(self.head.byte_at(i))
         }
-        let j = i - head.len()
-        if j < self.depth {
-            return self.brackets.as_bytes()[0] as i32
+        let j = i - self.head.len()
+        if j < self.body.len() {
+            return Byte::of(self.body.at(j))
         }
-        if j == self.depth {
-            return one.as_bytes()[0] as i32
+        let k = j - self.body.len()
+        if k < self.tail.len() {
+            return Byte::of(self.tail.byte_at(k))
         }
-        if j <= 2 * self.depth {
-            return self.brackets.as_bytes()[1] as i32
+        END
+    }
+}
+
+// `depth` opening brackets, a 1, and `depth` closing brackets.
+pub struct Nested { pub brackets: String<2>, pub depth: usize }
+
+impl Nested {
+    // A `Source` of `fn f() -> u256 { (((1))) }` with these brackets around the 1.
+    pub fn source(own self) -> Framed<Nested> {
+        framed("fn f() -> u256 { ", self, " }")
+    }
+}
+
+impl Body for Nested {
+    fn len(self) -> usize {
+        2 * self.depth + 1
+    }
+
+    fn at(self, _ i: usize) -> u8 {
+        if i < self.depth {
+            return self.brackets.byte_at(0)
         }
-        let k = j - 2 * self.depth - 1
-        if k < tail.len() {
-            return tail.as_bytes()[k] as i32
+        if i == self.depth {
+            return b'1'
         }
-        return -1
+        self.brackets.byte_at(1)
     }
 }
 
 fn nested(_ brackets: String<2>, _ depth: usize) -> Option<Diag> {
-    with (Source = Nested { brackets, depth, pos: 0 }) {
+    with (Source = Nested { brackets, depth }.source()) {
         parse().err
     }
 }

@@ -7,6 +7,7 @@ use ingot::diag::{
     diag,
     L_BAD_ESCAPE,
     L_BAD_INT,
+    L_INT_TOO_LARGE,
     L_LINE_BREAK,
     L_NON_ASCII,
     L_RESERVED_WORD,
@@ -14,7 +15,7 @@ use ingot::diag::{
     L_UNSUPPORTED_LITERAL,
     L_UNTERMINATED_STRING,
 }
-use ingot::io::Source
+use ingot::io::{Byte, Source}
 
 // Kind of a token. The constants below are its only values.
 pub struct Tok { code: u8 }
@@ -219,8 +220,8 @@ pub struct Token { pub kind: Tok, pub span: Span }
 
 impl Copy for Token {}
 
-// The lexed source. On error, `toks` holds the tokens before it. This is not a `Result`
-// because extracting it from one hits a compiler bug. WORKAROUNDS.md has the details.
+// The lexed source. On error, `toks` holds the tokens before it. ADR 0011 says why this is
+// not a `Result`.
 pub struct Lexed { pub text: Text, pub toks: MemVec<Token>, pub err: Option<Diag> }
 
 // A 1-based position in the source text.
@@ -252,9 +253,14 @@ impl Text {
         Pos { off: self.bytes.len() }
     }
 
+    // Returns the byte at offset `off`.
+    fn byte(self, _ off: usize) -> Byte {
+        Byte::of(self.bytes[off])
+    }
+
     // Returns byte `k` of span `s`.
-    pub fn span_byte(self, _ s: Span, _ k: usize) -> u8 {
-        self.bytes[s.start.plus(k).off]
+    fn span_byte(self, _ s: Span, _ k: usize) -> Byte {
+        self.byte(s.start.plus(k).off)
     }
 
     // Whether span `s` spells `w`.
@@ -264,10 +270,10 @@ impl Text {
 
     // Whether span `s` is `u` or `i` followed by one or more digits, as in `u8` or `i128`.
     fn is_sized_int_name(self, _ s: Span) -> bool {
-        let c = self.span_byte(s, 0) as i32
+        let c = self.span_byte(s, 0)
         var k: usize = 1
-        if (c == C_LOWER_U || c == C_LOWER_I) && k < s.len {
-            while k < s.len && is_digit(self.span_byte(s, k) as i32) {
+        if (c.is(b'u') || c.is(b'i')) && k < s.len {
+            while k < s.len && self.span_byte(s, k).is_digit() {
                 k += 1
             }
             return k == s.len
@@ -277,7 +283,7 @@ impl Text {
 
     // Whether span `s` starts with an uppercase letter.
     pub fn starts_upper(self, _ s: Span) -> bool {
-        is_upper(self.bytes[s.start.off] as i32)
+        self.span_byte(s, 0).is_upper()
     }
 
     // Whether spans `a` and `b` hold the same text.
@@ -291,7 +297,7 @@ impl Text {
     {
         var k: usize = 0
         while k < s.len {
-            if self.span_byte(s, k) != b[k] {
+            if !self.span_byte(s, k).is(b[k]) {
                 return false
             }
             k += 1
@@ -300,32 +306,32 @@ impl Text {
     }
 
     // The bytes of span `s`.
-    fn span_bytes(self, _ s: Span) -> ref MemSlice<u8> {
+    pub fn span_bytes(self, _ s: Span) -> ref MemSlice<u8> {
         self.bytes.as_slice().slice(offset: s.start.off, len: s.len)
     }
 
-    // Value of the integer literal at span `s`, or none if it exceeds 2^256 - 1. The literal
-    // is one that `Lexer::number` scanned.
-    pub fn int_value(self, _ s: Span) -> Option<u256> {
+    // Value of the integer literal at span `s`, which `Lexer::number` scanned. Errors with
+    // L_INT_TOO_LARGE at the literal when the value exceeds 2^256 - 1.
+    pub fn int_value(self, _ s: Span) -> Result<Diag, u256> {
         var base: u256 = 10
         var i = s.start.off
-        if s.len > 2 && is_hex_marker(self.bytes[i + 1] as i32) {
+        if s.len > 2 && self.byte(i + 1).is_hex_marker() {
             base = 16
             i += 2
         }
         var v: u256 = 0
         while i < s.end().off {
-            let c = self.bytes[i] as i32
-            if c != C_UNDERSCORE {
-                let d = digit_value(c)
+            let c = self.byte(i)
+            if !c.is(b'_') {
+                let d = c.digit_value()
                 if v > (U256_MAX - d) / base {
-                    return Option::None
+                    return Result::Err(diag(L_INT_TOO_LARGE, s.start))
                 }
                 v = v * base + d
             }
             i += 1
         }
-        Option::Some(v)
+        Result::Ok(v)
     }
 
     // Text of string literal `s` with its escapes decoded and its quotes removed.
@@ -333,12 +339,12 @@ impl Text {
         var v = StrValue { word: 0, len: 0 }
         var i = s.start.off + 1
         while i < s.end().off - 1 {
-            var c = self.bytes[i] as i32
-            if c == C_BACKSLASH {
+            var c = self.byte(i)
+            if c.is(b'\\') {
                 i += 1
-                c = unescape(self.bytes[i] as i32)
+                c = self.byte(i).unescape()
             }
-            v.push(c.downcast_truncate())
+            v.push(c.value())
             i += 1
         }
         v
@@ -349,10 +355,10 @@ impl Text {
         var at = LineCol { line: 1, col: 1 }
         var i: usize = 0
         while i < pos.off && i < self.bytes.len() {
-            let c = self.bytes[i] as i32
+            let c = self.byte(i)
             i += 1
-            let crlf = c == C_CR && i < self.bytes.len() && self.bytes[i] as i32 == C_LF
-            if is_newline(c) && !crlf {
+            let crlf = c.is(b'\r') && i < self.bytes.len() && self.byte(i).is(b'\n')
+            if c.is_newline() && !crlf {
                 at.line += 1
                 at.col = 1
             } else {
@@ -392,117 +398,70 @@ impl StrValue {
 
 const U256_MAX: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 
-// ASCII codes of the bytes the lexer tests. They are i32 like `Lexer.peeked`.
-const C_TAB: i32 = 9
-const C_LF: i32 = 10
-const C_CR: i32 = 13
-const C_SPACE: i32 = 32
-const C_BANG: i32 = 33
-const C_QUOTE: i32 = 34
-const C_HASH: i32 = 35
-const C_PERCENT: i32 = 37
-const C_AMP: i32 = 38
-const C_LPAREN: i32 = 40
-const C_RPAREN: i32 = 41
-const C_STAR: i32 = 42
-const C_PLUS: i32 = 43
-const C_COMMA: i32 = 44
-const C_MINUS: i32 = 45
-const C_DOT: i32 = 46
-const C_SLASH: i32 = 47
-const C_ZERO: i32 = 48
-const C_NINE: i32 = 57
-const C_COLON: i32 = 58
-const C_LT: i32 = 60
-const C_EQ: i32 = 61
-const C_GT: i32 = 62
-const C_UPPER_A: i32 = 65
-const C_UPPER_B: i32 = 66
-const C_UPPER_F: i32 = 70
-const C_UPPER_O: i32 = 79
-const C_UPPER_X: i32 = 88
-const C_UPPER_Z: i32 = 90
-const C_LBRACKET: i32 = 91
-const C_BACKSLASH: i32 = 92
-const C_RBRACKET: i32 = 93
-const C_CARET: i32 = 94
-const C_UNDERSCORE: i32 = 95
-const C_LOWER_A: i32 = 97
-const C_LOWER_B: i32 = 98
-const C_LOWER_F: i32 = 102
-const C_LOWER_I: i32 = 105
-const C_LOWER_N: i32 = 110
-const C_LOWER_O: i32 = 111
-const C_LOWER_R: i32 = 114
-const C_LOWER_T: i32 = 116
-const C_LOWER_U: i32 = 117
-const C_LOWER_X: i32 = 120
-const C_LOWER_Z: i32 = 122
-const C_LBRACE: i32 = 123
-const C_PIPE: i32 = 124
-const C_RBRACE: i32 = 125
-const C_TILDE: i32 = 126
-const C_DEL: i32 = 127
-
-fn is_ascii(_ c: i32) -> bool {
-    c >= 0 && c <= C_DEL
-}
-
-fn is_newline(_ c: i32) -> bool {
-    c == C_LF || c == C_CR
-}
-
-fn is_upper(_ c: i32) -> bool {
-    c >= C_UPPER_A && c <= C_UPPER_Z
-}
-
-fn is_ident_start(_ c: i32) -> bool {
-    (c >= C_LOWER_A && c <= C_LOWER_Z) || is_upper(c) || c == C_UNDERSCORE
-}
-
-fn is_digit(_ c: i32) -> bool {
-    c >= C_ZERO && c <= C_NINE
-}
-
-fn is_hex_digit(_ c: i32) -> bool {
-    is_digit(c) || (c >= C_LOWER_A && c <= C_LOWER_F) || (c >= C_UPPER_A && c <= C_UPPER_F)
-}
-
-// The `x` of a `0x` prefix.
-fn is_hex_marker(_ c: i32) -> bool {
-    c == C_LOWER_X || c == C_UPPER_X
-}
-
-// The `b` or `o` of a `0b` or `0o` prefix, which Fe0 leaves out.
-fn is_unsupported_radix(_ c: i32) -> bool {
-    c == C_LOWER_B || c == C_UPPER_B || c == C_LOWER_O || c == C_UPPER_O
-}
-
-// A byte that may follow `\` in a string escape.
-fn is_escape(_ c: i32) -> bool {
-    c == C_QUOTE || c == C_BACKSLASH || c == C_LOWER_N || c == C_LOWER_R || c == C_LOWER_T
-}
-
-// Byte that the escape `\c` stands for, where `is_escape(c)` holds.
-fn unescape(_ c: i32) -> i32 {
-    if c == C_LOWER_N {
-        C_LF
-    } else if c == C_LOWER_R {
-        C_CR
-    } else if c == C_LOWER_T { C_TAB } else { c }
-}
-
-// Returns the value of the hex digit `c`, in either case. Any other byte gives a meaningless
-// value.
-fn digit_value(_ c: i32) -> u256 {
-    let v = if is_digit(c) {
-        c - C_ZERO
-    } else if c >= C_LOWER_A {
-        c - C_LOWER_A + 10
-    } else {
-        c - C_UPPER_A + 10
+// The byte classes of SPEC.md §1.
+impl Byte {
+    fn is_ascii(self) -> bool {
+        self.within(0, 0x7f)
     }
-    v.downcast_truncate()
+
+    fn is_newline(self) -> bool {
+        self.is(b'\n') || self.is(b'\r')
+    }
+
+    fn is_upper(self) -> bool {
+        self.within(b'A', b'Z')
+    }
+
+    fn is_ident_start(self) -> bool {
+        self.within(b'a', b'z') || self.is_upper() || self.is(b'_')
+    }
+
+    fn is_digit(self) -> bool {
+        self.within(b'0', b'9')
+    }
+
+    fn is_hex_digit(self) -> bool {
+        self.is_digit() || self.within(b'a', b'f') || self.within(b'A', b'F')
+    }
+
+    // The `x` of a `0x` prefix.
+    fn is_hex_marker(self) -> bool {
+        self.is(b'x') || self.is(b'X')
+    }
+
+    // The `b` or `o` of a `0b` or `0o` prefix, which Fe0 leaves out.
+    fn is_unsupported_radix(self) -> bool {
+        self.is(b'b') || self.is(b'B') || self.is(b'o') || self.is(b'O')
+    }
+
+    // A byte that may follow `\` in a string escape.
+    fn is_escape(self) -> bool {
+        self.is(b'"') || self.is(b'\\') || self.is(b'n') || self.is(b'r') || self.is(b't')
+    }
+
+    // Returns the byte that a `\` followed by this byte stands for. Any other byte stands for
+    // itself.
+    fn unescape(self) -> Byte {
+        if self.is(b'n') {
+            Byte::of(b'\n')
+        } else if self.is(b'r') {
+            Byte::of(b'\r')
+        } else if self.is(b't') { Byte::of(b'\t') } else { self }
+    }
+
+    // Returns the value of this hex digit, in either case. Any other byte gives a meaningless
+    // value.
+    fn digit_value(self) -> u256 {
+        let c = self.value()
+        let v = if self.is_digit() {
+            c - b'0'
+        } else if c >= b'a' {
+            c - b'a' + 10
+        } else {
+            c - b'A' + 10
+        }
+        v as u256
+    }
 }
 
 // The stack of open `(` and `{` in the source, innermost last. It holds the innermost 256
@@ -531,7 +490,7 @@ impl Brackets {
 
 struct Lexer {
     text: Text,
-    peeked: i32,
+    peeked: Byte,
     // A newline is a token unless the innermost open bracket is `(` (SPEC §3.4).
     open: Brackets,
     // The kind of the token that `next` returned last.
@@ -557,12 +516,12 @@ impl Lexer {
 
     // Consume the peeked byte into `text`.
     fn bump(mut self) uses (input: mut Source) {
-        self.text.push(self.peeked.downcast_truncate())
+        self.text.push(self.peeked.value())
         self.peeked = input.next_byte()
     }
 
-    fn eat(mut self, _ c: i32) -> bool uses (input: mut Source) {
-        if self.peeked == c {
+    fn eat(mut self, _ c: u8) -> bool uses (input: mut Source) {
+        if self.peeked.is(c) {
             self.bump()
             return true
         }
@@ -750,19 +709,19 @@ impl Lexer {
         }
         self.start = self.text.end()
         let c = self.peeked
-        if c < 0 {
+        if c.is_end() {
             return Result::Ok(self.tok(T_EOF))
         }
-        if !is_ascii(c) {
+        if !c.is_ascii() {
             return self.err(L_NON_ASCII)
         }
-        if is_ident_start(c) {
+        if c.is_ident_start() {
             return self.ident()
         }
-        if is_digit(c) {
+        if c.is_digit() {
             return self.number()
         }
-        if c == C_QUOTE {
+        if c.is(b'"') {
             return self.string()
         }
         match self.punct() {
@@ -780,22 +739,22 @@ impl Lexer {
         var newline: Option<Pos> = Option::None
         while true {
             let c = self.peeked
-            if is_newline(c) && newline.is_none() {
+            if c.is_newline() && newline.is_none() {
                 newline = Option::Some(self.text.end())
             }
-            if c == C_SPACE || c == C_TAB || is_newline(c) {
+            if c.is(b' ') || c.is(b'\t') || c.is_newline() {
                 self.bump()
-            } else if c == C_SLASH {
+            } else if c.is(b'/') {
                 self.start = self.text.end()
                 self.bump()
-                if self.peeked != C_SLASH {
+                if !self.peeked.is(b'/') {
                     let kind = self.op_or_assign(O_SLASH)
                     self.queued = Option::Some(self.tok(kind))
                     break
                 }
                 self.bump()
-                let doc = self.peeked == C_SLASH
-                while self.peeked >= 0 && !is_newline(self.peeked) {
+                let doc = self.peeked.is(b'/')
+                while !self.peeked.is_end() && !self.peeked.is_newline() {
                     self.bump()
                 }
                 if doc {
@@ -811,7 +770,7 @@ impl Lexer {
 
     // An identifier, `_` or a keyword.
     fn ident(mut self) -> Result<Diag, Token> uses (input: mut Source) {
-        while is_ident_start(self.peeked) || is_digit(self.peeked) {
+        while self.peeked.is_ident_start() || self.peeked.is_digit() {
             self.bump()
         }
         if self.word("_") {
@@ -831,95 +790,95 @@ impl Lexer {
     fn punct(mut self) -> Option<Tok> uses (input: mut Source) {
         let c = self.peeked
         self.bump()
-        if c == C_LPAREN {
+        if c.is(b'(') {
             return Option::Some(P_LPAREN)
         }
-        if c == C_RPAREN {
+        if c.is(b')') {
             return Option::Some(P_RPAREN)
         }
-        if c == C_LBRACE {
+        if c.is(b'{') {
             return Option::Some(P_LBRACE)
         }
-        if c == C_RBRACE {
+        if c.is(b'}') {
             return Option::Some(P_RBRACE)
         }
-        if c == C_LBRACKET {
+        if c.is(b'[') {
             return Option::Some(P_LBRACKET)
         }
-        if c == C_RBRACKET {
+        if c.is(b']') {
             return Option::Some(P_RBRACKET)
         }
-        if c == C_COLON {
+        if c.is(b':') {
             return Option::Some(P_COLON)
         }
-        if c == C_COMMA {
+        if c.is(b',') {
             return Option::Some(P_COMMA)
         }
-        if c == C_HASH {
+        if c.is(b'#') {
             return Option::Some(P_HASH)
         }
-        if c == C_DOT {
+        if c.is(b'.') {
             return Option::Some(P_DOT)
         }
-        if c == C_TILDE {
+        if c.is(b'~') {
             return Option::Some(O_TILDE)
         }
-        if c == C_PLUS {
+        if c.is(b'+') {
             return Option::Some(self.op_or_assign(O_PLUS))
         }
-        if c == C_STAR {
+        if c.is(b'*') {
             return Option::Some(self.op_or_assign(O_STAR))
         }
-        if c == C_PERCENT {
+        if c.is(b'%') {
             return Option::Some(self.op_or_assign(O_PERCENT))
         }
-        if c == C_CARET {
+        if c.is(b'^') {
             return Option::Some(self.op_or_assign(O_CARET))
         }
-        if c == C_MINUS {
-            if self.eat(C_GT) {
+        if c.is(b'-') {
+            if self.eat(b'>') {
                 return Option::Some(P_ARROW)
             }
             return Option::Some(self.op_or_assign(O_MINUS))
         }
-        if c == C_AMP {
-            if self.eat(C_AMP) {
+        if c.is(b'&') {
+            if self.eat(b'&') {
                 return Option::Some(O_ANDAND)
             }
             return Option::Some(self.op_or_assign(O_AMP))
         }
-        if c == C_PIPE {
-            if self.eat(C_PIPE) {
+        if c.is(b'|') {
+            if self.eat(b'|') {
                 return Option::Some(O_OROR)
             }
             return Option::Some(self.op_or_assign(O_PIPE))
         }
-        if c == C_BANG {
-            if self.eat(C_EQ) {
+        if c.is(b'!') {
+            if self.eat(b'=') {
                 return Option::Some(O_NE)
             }
             return Option::Some(O_BANG)
         }
-        if c == C_EQ {
-            if self.eat(C_EQ) {
+        if c.is(b'=') {
+            if self.eat(b'=') {
                 return Option::Some(O_EQ)
             }
             return Option::Some(O_ASSIGN)
         }
-        if c == C_LT {
-            if self.eat(C_LT) {
+        if c.is(b'<') {
+            if self.eat(b'<') {
                 return Option::Some(self.op_or_assign(O_SHL))
             }
-            if self.eat(C_EQ) {
+            if self.eat(b'=') {
                 return Option::Some(O_LE)
             }
             return Option::Some(O_LT)
         }
-        if c == C_GT {
-            if self.eat(C_GT) {
+        if c.is(b'>') {
+            if self.eat(b'>') {
                 return Option::Some(self.op_or_assign(O_SHR))
             }
-            if self.eat(C_EQ) {
+            if self.eat(b'=') {
                 return Option::Some(O_GE)
             }
             return Option::Some(O_GT)
@@ -929,7 +888,7 @@ impl Lexer {
 
     // Kind `one`, or its assignment form when `=` follows.
     fn op_or_assign(mut self, _ one: Tok) -> Tok uses (input: mut Source) {
-        if self.eat(C_EQ) {
+        if self.eat(b'=') {
             return one.assign_form()
         }
         one
@@ -939,20 +898,20 @@ impl Lexer {
     fn number(mut self) -> Result<Diag, Token> uses (input: mut Source) {
         let first = self.peeked
         self.bump()
-        if first == C_ZERO && is_hex_marker(self.peeked) {
+        if first.is(b'0') && self.peeked.is_hex_marker() {
             self.bump()
-            if !is_hex_digit(self.peeked) {
+            if !self.peeked.is_hex_digit() {
                 return self.err(L_BAD_INT)
             }
-            while is_hex_digit(self.peeked) {
+            while self.peeked.is_hex_digit() {
                 self.bump()
             }
-        } else if first == C_ZERO && is_unsupported_radix(self.peeked) {
+        } else if first.is(b'0') && self.peeked.is_unsupported_radix() {
             return self.err(L_UNSUPPORTED_LITERAL)
         } else {
             var last_underscore = false
-            while is_digit(self.peeked) || self.peeked == C_UNDERSCORE {
-                let underscore = self.peeked == C_UNDERSCORE
+            while self.peeked.is_digit() || self.peeked.is(b'_') {
+                let underscore = self.peeked.is(b'_')
                 if underscore && last_underscore {
                     return self.err(L_BAD_INT)
                 }
@@ -963,7 +922,7 @@ impl Lexer {
                 return self.err(L_BAD_INT)
             }
         }
-        if is_ident_start(self.peeked) {
+        if self.peeked.is_ident_start() {
             return self.err(L_BAD_INT)
         }
         Result::Ok(self.tok(T_INT))
@@ -974,13 +933,13 @@ impl Lexer {
         self.bump()
         while true {
             let c = self.peeked
-            if c < 0 || is_newline(c) {
+            if c.is_end() || c.is_newline() {
                 return self.err(L_UNTERMINATED_STRING)
             }
             self.bump()
-            if c == C_QUOTE { break }
-            if c == C_BACKSLASH {
-                if !is_escape(self.peeked) {
+            if c.is(b'"') { break }
+            if c.is(b'\\') {
+                if !self.peeked.is_escape() {
                     return Result::Err(diag(L_BAD_ESCAPE, self.text.end().minus(1)))
                 }
                 self.bump()

@@ -13,7 +13,7 @@ struct FieldSet { bits: u256 }
 
 impl Copy for FieldSet {}
 
-const MAX_FIELDS: usize = 256
+pub const MAX_FIELDS: usize = 256
 const NO_FIELDS: FieldSet = FieldSet { bits: 0 }
 
 impl FieldSet {

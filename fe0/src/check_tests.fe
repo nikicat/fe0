@@ -3,7 +3,7 @@
 // rejects. A warn or reject case names the diagnostic's code and the byte offset it points at.
 
 use ingot::ast::{TY_BOOL, TY_U256}
-use ingot::check::{Checked, check}
+use ingot::check::{Checked, MAX_FIELDS, check}
 use ingot::diag::{
     C_DIV_ZERO,
     C_NOT_CONST,
@@ -43,7 +43,7 @@ use ingot::diag::{
 use ingot::io::{Source, text}
 use ingot::lexer::Pos
 use ingot::parser::{MAX_DEPTH, parse}
-use ingot::parser_tests::{DEEPEST_BLOCKS, DEEPEST_PARENS, Nested}
+use ingot::parser_tests::{Body, DEEPEST_BLOCKS, DEEPEST_PARENS, Framed, Nested, framed}
 use std::abi::DynString
 
 fn checked(_ s: own DynString) -> Checked {
@@ -522,7 +522,7 @@ fn side_tables() {
 #[test]
 fn storage_places() {
     let c = checked(
-        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n}\ncontract K {\n    mut a: Address\n    mut b: bool\n    mut c: Address\n    mut d: u256\n    mut e: bool\n    recv M {\n        Get {} -> u256 uses (d) { d }\n    }\n}\n",
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: Address\n    mut b: bool\n    mut c: Address\n    mut d: u256\n    mut e: bool\n    recv M {\n        Get {} -> u256 uses (d) { d }\n        Set { v } uses (mut d) { d = v }\n    }\n}\n",
     )
     assert!(c.err.is_none())
     let fields = c.ast.node(c.the_contract).list()
@@ -545,7 +545,7 @@ fn storage_places() {
 }
 
 fn nested(_ brackets: String<2>, _ depth: usize) -> Option<Diag> {
-    with (Source = Nested { brackets, depth, pos: 0 }) {
+    with (Source = Nested { brackets, depth }.source()) {
         check(parse()).err
     }
 }
@@ -561,51 +561,60 @@ fn deep_nesting_and_long_chains() {
     )
 }
 
-// A `Source` of a contract with `count` fields named f000, f001 and so on.
-struct Fields { count: usize, pos: usize }
+// A line that declares a field.
+const FIELD_LINE: String<19> = "    mut f000: u256\n"
 
-impl Source for Fields {
-    fn next_byte(mut self) -> i32 {
-        let head: String<13> = "contract K {\n"
-        let line: String<19> = "    mut f000: u256\n"
-        let tail: String<2> = "}\n"
+// Where the field's name starts in FIELD_LINE. The name is `f` and then the field's number in
+// three digits.
+const FIELD_NAME_AT: usize = 8
+
+// The line that opens the contract, before the field lines.
+const FIELDS_HEAD: String<31> = "contract K {\n"
+
+// The lines that declare `count` fields named f000, f001 and so on.
+struct Fields { count: usize }
+
+impl Fields {
+    // A `Source` of a contract with these fields.
+    fn source(own self) -> Framed<Fields> {
+        framed(FIELDS_HEAD, self, "}\n")
+    }
+}
+
+impl Body for Fields {
+    fn len(self) -> usize {
+        self.count * FIELD_LINE.len()
+    }
+
+    fn at(self, _ i: usize) -> u8 {
         let digits: String<10> = "0123456789"
-        let i = self.pos
-        self.pos += 1
-        if i < head.len() {
-            return head.as_bytes()[i] as i32
+        let field = i / FIELD_LINE.len()
+        let j = i % FIELD_LINE.len()
+        if j > FIELD_NAME_AT && j <= FIELD_NAME_AT + 3 {
+            let place: usize = if j == FIELD_NAME_AT + 1 {
+                100
+            } else if j == FIELD_NAME_AT + 2 { 10 } else { 1 }
+            return digits.byte_at(field / place % 10)
         }
-        let field = (i - head.len()) / line.len()
-        let j = (i - head.len()) % line.len()
-        if field < self.count {
-            // Bytes 9 to 11 of a line are the field's three digits.
-            if j >= 9 && j <= 11 {
-                let place: usize = if j == 9 {
-                    100
-                } else if j == 10 { 10 } else { 1 }
-                return digits.as_bytes()[field / place % 10] as i32
-            }
-            return line.as_bytes()[j] as i32
-        }
-        let k = i - head.len() - self.count * line.len()
-        if k < tail.len() {
-            return tail.as_bytes()[k] as i32
-        }
-        return -1
+        FIELD_LINE.byte_at(j)
     }
 }
 
 fn fields(_ count: usize) -> Option<Diag> {
-    with (Source = Fields { count, pos: 0 }) {
+    with (Source = Fields { count }.source()) {
         check(parse()).err
     }
 }
 
 #[test]
 fn too_many_fields() {
-    assert!(fields(256).is_none())
-    let d = fields(257).unwrap()
+    assert!(fields(MAX_FIELDS).is_none())
+    let d = fields(MAX_FIELDS + 1).unwrap()
     assert!(d.code == E_TOO_MANY_FIELDS)
-    // The name of field 256, after the 13-byte head and 256 lines of 19 bytes.
-    assert!(d.pos() == Pos::at(13 + 256 * 19 + 8))
+    // The error points at the name of the extra field.
+    assert!(
+        d.pos() == Pos::at(
+                FIELDS_HEAD.len() + MAX_FIELDS * FIELD_LINE.len() + FIELD_NAME_AT,
+            ),
+    )
 }

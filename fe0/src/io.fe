@@ -5,8 +5,43 @@
 use std::abi::{Bytes, DynString}
 
 pub trait Source {
-    // The next byte, or -1 at the end of the input.
-    fn next_byte(mut self) -> i32
+    // The next byte, or END after the last one.
+    fn next_byte(mut self) -> Byte
+}
+
+// A byte of the input, or its end (END). END equals no byte and is within no range of
+// bytes.
+pub struct Byte { raw: u16 }
+
+impl Copy for Byte {}
+
+// The end of the input.
+pub const END: Byte = Byte { raw: 0x100 }
+
+impl Byte {
+    pub fn of(_ b: u8) -> Byte {
+        Byte { raw: b as u16 }
+    }
+
+    // Whether this is the end of the input.
+    pub fn is_end(self) -> bool {
+        self.raw > 0xff
+    }
+
+    // Whether this is byte `b`.
+    pub fn is(self, _ b: u8) -> bool {
+        self.raw == b as u16
+    }
+
+    // Whether this is a byte from `lo` to `hi`, both included.
+    pub fn within(self, _ lo: u8, _ hi: u8) -> bool {
+        self.raw >= lo as u16 && self.raw <= hi as u16
+    }
+
+    // Returns the byte. END gives 0.
+    pub fn value(self) -> u8 {
+        self.raw.downcast_truncate()
+    }
 }
 
 // Returns a `Source` over the bytes of `s`, such as a test source.
@@ -22,12 +57,12 @@ pub fn bytes(_ data: own Bytes) -> BytesReader {
 pub struct BytesReader { data: Bytes, pos: usize }
 
 impl Source for BytesReader {
-    fn next_byte(mut self) -> i32 {
+    fn next_byte(mut self) -> Byte {
         if self.pos >= self.data.len() {
-            return -1
+            return END
         }
         let c = self.data.byte_at(self.pos)
         self.pos += 1
-        c as i32
+        Byte::of(c)
     }
 }

@@ -84,6 +84,9 @@ master removes nothing before we move to a release that has it.
     NodeIds in one `MemVec<usize>`.
   - **Remove when:** a release we use fixes #1964. Re-measure each shape first, and undo
     only those that no longer cost bytes.
+  - **Status (Nov 12):** #1964 was closed on Nov 11 by #1978, "Pass one-scalar constants as
+    values". It is on Fe's master, not in 26.6.0. It covers the constant-argument shape. The
+    other three may remain.
 
 - **Native builds and native tests refuse AArch64 Linux.** `fe build --backend native -e
   executable` stops with "native executable and library output currently require an x86-64
@@ -111,16 +114,3 @@ master removes nothing before we move to a release that has it.
     ```
   - **Remove when:** a release we use builds native code on AArch64 Linux (#1975), or the
     dev container runs on an x86-64 host.
-
-## Not checked on 26.6.0
-
-- **`enum.extract requires an initialized payload subtree` (IR0600).** 26.5.1 failed with this
-  internal error at `-O 1` and above. The same code compiled at `-O 0`. We have not checked
-  this bug on 26.6.0. The reproduction was git-ignored and is lost. A case rebuilt from the
-  trigger below passes even on 26.5.1.
-  - **Trigger:** `?` on a `Result<E, T>` inside a `while true` loop, in a function whose own
-    `Result` the caller then matches or unwraps.
-  - **Workaround:** `Lexed` and `Ast` carry an `err: Option<Diag>` field instead of being a
-    `Result` ([ADR 0011](adr/0011-error-field-not-result.md)).
-  - **Remove when:** `Lexed` and `Ast` as `Result`s pass fe0's tests at `-O 1` on a release
-    we use, and cost no bytecode. Then ADR 0011 is superseded.

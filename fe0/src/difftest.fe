@@ -76,6 +76,11 @@ impl DiagWord {
         let number = d.code.number() as u256
         DiagWord { word: letter << 40 | number << 24 | d.pos().offset() as u256 }
     }
+
+    // Fails with Panic(`self`), which tools/fegen.py decodes as Fe0's error.
+    pub fn fail(self) -> ! {
+        core::panic_code(self.word)
+    }
 }
 
 #[test]
@@ -96,7 +101,7 @@ pub fn compiled(_ s: own DynString) -> Output {
 pub fn ours(_ s: own DynString) -> MemVec<u8> {
     let out = compiled(s)
     match out.err {
-        Option::Some(d) => core::panic_code(DiagWord::of(d).word),
+        Option::Some(d) => DiagWord::of(d).fail(),
         Option::None => {},
     }
     out.code
@@ -127,7 +132,7 @@ pub fn rejects(_ s: own DynString, _ expected: DiagWord) {
         Option::Some(d) => {
             let got = DiagWord::of(d)
             if got != expected {
-                core::panic_code(got.word)
+                got.fail()
             }
         },
         Option::None => core::panic_code(ACCEPTED),

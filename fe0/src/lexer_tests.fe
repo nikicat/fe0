@@ -2,6 +2,7 @@ use ingot::diag::{
     Diag,
     L_BAD_ESCAPE,
     L_BAD_INT,
+    L_INT_TOO_LARGE,
     L_LINE_BREAK,
     L_NON_ASCII,
     L_RESERVED_WORD,
@@ -9,6 +10,7 @@ use ingot::diag::{
     L_UNSUPPORTED_LITERAL,
     L_UNTERMINATED_STRING,
 }
+use ingot::difftest::DiagWord
 use ingot::io::{Source, text}
 use ingot::lexer::*
 use std::abi::DynString
@@ -222,29 +224,39 @@ fn doc_comments_are_tokens() {
     )
 }
 
+// Returns the value in `r`. Fails with Panic(`DiagWord::of(d)`) when `r` holds the error `d`.
+// Core's `unwrap` cannot do this, because `Diag` is not revert data.
+fn made(_ r: own Result<Diag, u256>) -> u256 {
+    match r {
+        Result::Ok(v) => v,
+        Result::Err(d) => DiagWord::of(d).fail(),
+    }
+}
+
 #[test]
 fn integers() {
     let l = lex_text("0 42 1_000_000 0xff")
-    assert!(l.text.int_value(l.toks[0].span).unwrap() == 0)
-    assert!(l.text.int_value(l.toks[1].span).unwrap() == 42)
-    assert!(l.text.int_value(l.toks[2].span).unwrap() == 1000000)
-    assert!(l.text.int_value(l.toks[3].span).unwrap() == 255)
+    assert!(made(int_at(l, 0)) == 0)
+    assert!(made(int_at(l, 1)) == 42)
+    assert!(made(int_at(l, 2)) == 1000000)
+    assert!(made(int_at(l, 3)) == 255)
     assert!(lex_err("0XDEAD_").code == L_BAD_INT)
-    let m = lex_text(
-        "115792089237316195423570985008687907853269984665640564039457584007913129639935 0x00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    let max_dec = int_value_of(
+        "115792089237316195423570985008687907853269984665640564039457584007913129639935",
     )
     assert!(
-        m.text.int_value(m.toks[0].span).unwrap()
-            == 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+        made(max_dec) == 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+    )
+    let max_hex = int_value_of(
+        "0x00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     )
     assert!(
-        m.text.int_value(m.toks[1].span).unwrap()
-            == 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+        made(max_hex) == 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
     )
-    let big = lex_text(
+    let too_large = int_value_of(
         "115792089237316195423570985008687907853269984665640564039457584007913129639936",
     )
-    assert!(big.text.int_value(big.toks[0].span).is_none())
+    assert!(too_large.unwrap_err().code == L_INT_TOO_LARGE)
     assert!(lex_err("1__0").code == L_BAD_INT)
     assert!(lex_err("12ab").code == L_BAD_INT)
     assert!(lex_err("0x").code == L_BAD_INT)
@@ -315,4 +327,14 @@ fn line_col() {
 fn line_col_of(_ s: own DynString, _ tok: usize) -> LineCol {
     let l = lex_text(s)
     l.text.line_col(l.toks[tok].span.start)
+}
+
+// Value of the first token of `s`. Errors as `Text.int_value` does.
+fn int_value_of(_ s: own DynString) -> Result<Diag, u256> {
+    int_at(lex_text(s), 0)
+}
+
+// Value of integer token `tok` of `l`.
+fn int_at(_ l: Lexed, _ tok: usize) -> Result<Diag, u256> {
+    l.text.int_value(l.toks[tok].span)
 }
