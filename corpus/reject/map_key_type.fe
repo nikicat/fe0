@@ -1,0 +1,15 @@
+// expect: T001 12:15
+// A key must have the map's key type (SPEC §6, "Maps"). Fe rejects it too (8-0000).
+msg M {
+    #[selector = 1]
+    Get { k: u256, a: Address } -> u256,
+}
+contract C {
+    mut x: u256,
+    mut m: StorageMap<u256, u256>,
+    recv M {
+        Get { k, a } -> u256 uses (m) {
+            m[a]
+        }
+    }
+}

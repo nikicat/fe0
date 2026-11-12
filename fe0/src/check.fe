@@ -120,9 +120,9 @@ pub struct Checked {
     // The type of every expression node, and of every node that declares a name: CONST, PARAM,
     // FIELD, LET and BIND.
     types: MemVec<Ty>,
-    // What a name refers to. For NAME and ASSIGN: the declaring node (CONST, PARAM, FIELD, LET or
-    // BIND). For CALL: the FN. For RECV: the MSG. For ARM: the VARIANT. For BIND: the variant's
-    // FIELD. For USE: the FIELD.
+    // What a name refers to. For NAME: the declaring node (CONST, PARAM, FIELD, LET or BIND).
+    // For INDEX: the map's FIELD. For CALLER: the effect's FIELD. For CALL: the FN. For RECV: the
+    // MSG. For ARM: the VARIANT. For BIND: the variant's FIELD. For USE: the FIELD.
     res: MemVec<NodeId>,
     // One number per node, written and read through the methods below. Its meaning depends
     // on the node's kind, so that the checker keeps one table instead of four.
@@ -376,7 +376,7 @@ impl Checker {
         self.item(sym)
     }
 
-    // The node that declares the name of NAME, CALL, CALLER or ASSIGN `i`. Errors with
+    // The node that declares the name of NAME, CALL, CALLER or INDEX `i`. Errors with
     // N_UNKNOWN_NAME when nothing declares it.
     fn resolve(self, _ i: NodeId) -> Result<Diag, NodeId> {
         let d = self.lookup(self.node(i).name())
@@ -865,34 +865,34 @@ impl Checker {
             t = self.caller(i)?
         } else if k == NODE_ZERO_ADDRESS {
             t = TY_ADDRESS
+        } else if k == NODE_INDEX {
+            let m = self.read(i)?
+            t = self.entry(i, m)?
         }
         self.set_ty(i, t)
         Result::Ok(t)
     }
 
-    // Returns the node that declares the name of NAME or CALLER `i`, and records a read of the
-    // contract field when that node is a FIELD. Errors as `resolve` does, and with E_NOT_IN_USES
-    // when the body's `uses` does not grant the field.
+    // Returns the node that declares the name of NAME, CALLER or INDEX `i`, and records it as what
+    // `i` refers to. When that node is a FIELD, also records a read of the contract field.
+    // Errors as `resolve` does, and with E_NOT_IN_USES when the body's `uses` does not grant
+    // the field.
     fn read(mut self, _ i: NodeId) -> Result<Diag, NodeId> {
         let d = self.resolve(i)?
         if self.node(d).kind == NODE_FIELD {
             self.access(d, self.body.grant.read, self.at(E_NOT_IN_USES, i))?
         }
+        self.set_res(i, d)
         Result::Ok(d)
-    }
-
-    // Checks whether `d` declares an effect of the contract (a FIELD of type TY_CTX).
-    fn is_effect(self, _ d: NodeId) -> bool {
-        self.c.ty(d) == TY_CTX
     }
 
     fn name(mut self, _ i: NodeId) -> Result<Diag, Ty> {
         let d = self.read(i)?
         let kind = self.node(d).kind
-        if kind == NODE_FN || kind == NODE_MSG || kind == NODE_CONTRACT || self.is_effect(d) {
+        let value = self.c.ty(d).is_value()
+        if kind == NODE_FN || kind == NODE_MSG || kind == NODE_CONTRACT || !value {
             return Result::Err(self.at(N_NOT_A_VALUE, i))
         }
-        self.set_res(i, d)
         Result::Ok(self.c.ty(d))
     }
 
@@ -900,10 +900,22 @@ impl Checker {
     // with T_MISMATCH when `.caller()` follows a name that is not an effect.
     fn caller(mut self, _ i: NodeId) -> Result<Diag, Ty> {
         let d = self.read(i)?
-        if !self.is_effect(d) {
+        if self.c.ty(d) != TY_CTX {
             return Result::Err(self.at(T_MISMATCH, i))
         }
         Result::Ok(TY_ADDRESS)
+    }
+
+    // Checks the key of INDEX `i`, whose name `m` declares, and returns the type of the map's
+    // values. Errors with T_MISMATCH when `m` is not a map or the key does not fit the map's key
+    // type.
+    fn entry(mut self, _ i: NodeId, _ m: NodeId) -> Result<Diag, Ty> {
+        let t = self.c.ty(m)
+        if !t.is_map() {
+            return Result::Err(self.at(T_MISMATCH, i))
+        }
+        self.want(self.node(i).key(), t.map_key())?
+        Result::Ok(t.map_value())
     }
 
     fn binary(mut self, _ i: NodeId) -> Result<Diag, Ty> {
@@ -1100,16 +1112,18 @@ impl Checker {
 
     fn assign(mut self, _ i: NodeId) -> Result<Diag, ()> {
         let n = self.node(i)
-        let d = self.resolve(i)?
+        let p = n.place()
+        let d = self.resolve(p)?
         let target = self.node(d)
-        // An effect is no more assignable than a `let`, even when `uses` names it `mut`.
-        if target.kind == NODE_FIELD && !self.is_effect(d) {
+        let t = if self.node(p).kind == NODE_INDEX { self.entry(p, d)? } else { self.c.ty(d) }
+        if target.kind == NODE_FIELD && t.is_value() {
             self.access(d, self.body.grant.write, self.at(E_NOT_MUT, i))?
         } else if target.kind != NODE_LET || !target.is_var() {
+            // An effect or a whole map is no more assignable than a `let`, even when `uses`
+            // names it `mut`.
             return Result::Err(self.at(N_ASSIGN_IMMUTABLE, i))
         }
-        self.set_res(i, d)
-        let t = self.c.ty(d)
+        self.set_res(p, d)
         // Every compound operator is arithmetic or bitwise on u256.
         if n.op() != O_ASSIGN && t != TY_U256 {
             return Result::Err(self.at(T_MISMATCH, i))

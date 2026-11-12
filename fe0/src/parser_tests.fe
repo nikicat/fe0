@@ -217,6 +217,12 @@ impl Printer {
             self.put("Address")
         } else if t == TY_CTX {
             self.put("Ctx")
+        } else if t.is_map() {
+            self.put("StorageMap<")
+            self.ty(t.map_key())
+            self.put(",")
+            self.ty(t.map_value())
+            self.put(">")
         } else {
             self.put("?")
         }
@@ -367,7 +373,7 @@ impl Printer {
             self.put("(")
             self.op(n.op())
             self.put(" ")
-            self.sym(n.name())
+            self.node(n.place())
             self.opt(n.value())
             self.put(")")
         } else if k == NODE_INT {
@@ -435,6 +441,11 @@ impl Printer {
             self.put(")")
         } else if k == NODE_ZERO_ADDRESS {
             self.put("(zero)")
+        } else if k == NODE_INDEX {
+            self.sym(n.name())
+            self.put("[")
+            self.node(n.key())
+            self.put("]")
         } else if k == NODE_STR {
             self.put("\"")
             let v = StrValue { word: self.ast.word(n.word()), len: n.str_len() }
@@ -614,6 +625,35 @@ fn fixed_forms() {
     rejects("fn f() { ctx.caller(1) }", P_EXPECTED_TOKEN, 20)
     rejects("fn f() { Address::new() }", P_EXPECTED_TOKEN, 18)
     rejects("fn f() { ctx.caller }", P_EXPECTED_TOKEN, 20)
+}
+
+#[test]
+fn maps() {
+    // A contract field may have a map type, and `m[k]` reads or assigns an entry (ADR 0018).
+    item_is(
+        "contract C {\n    mut m: StorageMap<Address, u256>\n    mut f: StorageMap < bool , Address >\n}",
+        "(contract C (m:StorageMap<Address,u256> f:StorageMap<bool,Address>) ? ())",
+    )
+    tail_is("fn f() { m[k + 1] * m[m[2]] }", "(* m[(+ k 1)] m[m[2]])")
+    item_is(
+        "fn f() {\n    m[k] = 1\n    m[g(k)] -= x\n}",
+        "(fn f () ? {(= m[k] 1); (-= m[(call g (k))] x); })",
+    )
+    // A place may be in parentheses, as Fe allows.
+    item_is("fn f() { (m[k]) += 1 }", "(fn f () ? {(+= m[k] 1); })")
+    item_is("fn f() { ((x)) = 1 }", "(fn f () ? {(= x 1); })")
+    // Anything else before `=` is not a place.
+    rejects("fn f() { x + 1 = 2 }", P_EXPECTED_END, 15)
+    rejects("fn f() { g() = 2 }", P_EXPECTED_END, 13)
+    rejects("fn f() { (m)[k] = 2 }", P_EXPECTED_END, 12)
+    // A map type is only a contract field's, with two of the three types as its arguments.
+    rejects("fn f(m: StorageMap<u256, u256>) {}", P_EXPECTED_TYPE, 8)
+    rejects("msg M {\n    #[selector = 1]\n    A { m: StorageMap<u256, u256> }\n}", P_EXPECTED_TYPE, 39)
+    rejects("contract C {\n    mut m: StorageMap<u256, StorageMap<u256, u256>>\n}", P_EXPECTED_TYPE, 41)
+    rejects("contract C {\n    mut m: StorageMap<u256>\n}", P_EXPECTED_TOKEN, 39)
+    rejects("contract C {\n    mut m: Map<u256, u256>\n}", P_EXPECTED_TYPE, 24)
+    // A newline may not come inside `[ ]`, and Fe rejects it too.
+    rejects("fn f() { m[\nk] }", P_EXPECTED_EXPR, 11)
 }
 
 #[test]

@@ -1,0 +1,20 @@
+# The comments describe the run on a node (DESIGN.md §10, "On a node"). On a node, account 0
+# deploys, so it holds the initial supply and is the minter.
+init 1000
+BalanceOf account0
+Transfer account1 300
+Transfer account2 100 from=1
+Transfer account2 201 from=1    # balance too low
+Transfer account0 100 from=2
+Transfer account1 0 from=3
+Transfer account3 1 from=3      # balance too low
+Transfer account1 50 from=1     # to itself
+BalanceOf account0
+BalanceOf account1
+BalanceOf account2
+Mint account2 50
+Mint account2 50 from=1         # not the minter
+Mint account0 MAX               # overflow
+Transfer account0 5 from=1
+TotalSupply
+BalanceOf account2

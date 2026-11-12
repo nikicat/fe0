@@ -4,7 +4,7 @@
 - Status: accepted; step 2 of [0016](0016-steps-toward-real-contracts.md)
 
 ## Context
-Fe0's storage is a fixed list of fields, one slot each (SPEC.md §6). A token with three
+Fe0's storage is a fixed list of fields at fixed slots (SPEC.md §6). A token with three
 holders has to name them `b0`, `b1` and `b2` (`corpus/tokens.fe`). Fe keeps per-key state in
 `StorageMap<K, V>` fields, whose entries live at hashed slots:
 
@@ -54,3 +54,23 @@ that a program reads one way.
   compares the slots.
 - Maps cost gas for the hashing in both builds alike, so the ratio to Fe's gas should stay close
   to 1 for map-heavy code.
+
+## Update (Nov 12)
+- **`bool` keys** are accepted too. Fe writes a `bool` key as the word 0 or 1 **[✓]**, so it
+  hashes as a `u256` key does, and it costs nothing extra.
+- **Layout.** Fe lays maps out as SPEC §6 says **[✓]**. The probe is `corpus/maps.fe`. On a
+  node, Fe0 matches Fe on it at `-O 1` and `-O s`.
+- **Evaluation order.** In `m[k] = v` and `m[k] op= v`, Fe evaluates `v` before `k` **[✓]**.
+  SPEC §4 now says so, and code generation follows it.
+- **Places.** The parser reads the target of an assignment as an expression, then requires a
+  name or an entry. So a place in parentheses, as in `(m[k]) = 1`, is accepted. Fe accepts it
+  too **[✓]**.
+- `corpus/token.fe` keeps a balance per account, with the deployer as the only minter.
+- **Size, at `-O s`:** LexProbe stays at 7,141 bytes. ParseProbe goes from 25,448 to 26,328
+  bytes (+880), CheckProbe from 41,074 to 42,325 (+1,251) and CompileProbe from 54,641 to
+  56,475 (+1,834). In the first version of the parser, the map type cost 515 bytes and `m[k]`
+  315.
+- `Parser.field` matches the word `StorageMap` with `at_word(W_STORAGE_MAP)`. Two other ways
+  were measured at `-O s`, and both made ParseProbe larger. Comparing the packed spelling
+  inline in `field`, with no `at_word` helper, added 41 bytes. Checking only for an identifier
+  and then reading the word with `expect_word(W_STORAGE_MAP)` in `map_ty` added 114 bytes.

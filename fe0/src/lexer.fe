@@ -180,6 +180,7 @@ pub const W_SELECTOR: Spelling = Spelling { packed: 0x73656c6563746f72 }
 pub const W_CTX: Spelling = Spelling { packed: 0x437478 }
 pub const W_CALLER: Spelling = Spelling { packed: 0x63616c6c6572 }
 pub const W_ZERO: Spelling = Spelling { packed: 0x7a65726f }
+pub const W_STORAGE_MAP: Spelling = Spelling { packed: 0x53746f726167654d6170 }
 
 // A byte offset in the source text. A length is a plain count. An offset plus a length is an
 // offset. The distance between two offsets is a length.

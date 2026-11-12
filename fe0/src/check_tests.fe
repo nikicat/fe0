@@ -407,6 +407,63 @@ fn effects() {
 }
 
 #[test]
+fn maps() {
+    accepts(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut m, mut f) {\n            m[Address::zero()] += v\n            f[v] = !f[m[Address::zero()] + 1]\n        }\n    }\n}\n",
+    )
+    rejects(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } { assert!(m[Address::zero()] == v) }\n    }\n}\n",
+        E_NOT_IN_USES,
+        273,
+    )
+    rejects(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (m) { m[Address::zero()] = v }\n    }\n}\n",
+        E_NOT_MUT,
+        274,
+    )
+    rejects(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (m) { let x = m }\n    }\n}\n",
+        N_NOT_A_VALUE,
+        282,
+    )
+    rejects(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut m) { m = v }\n    }\n}\n",
+        N_ASSIGN_IMMUTABLE,
+        278,
+    )
+    rejects(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n    recv M {\n        Get {} -> u256 uses (a) { a[1] }\n        Set { v } { }\n    }\n}\n",
+        T_MISMATCH,
+        241,
+    )
+    rejects(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut a) { a[v] = v }\n    }\n}\n",
+        T_MISMATCH,
+        278,
+    )
+    rejects(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut m) { m[v] = v }\n    }\n}\n",
+        T_MISMATCH,
+        280,
+    )
+    rejects(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut f) { f[v] = v }\n    }\n}\n",
+        T_MISMATCH,
+        285,
+    )
+    rejects(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut f) { f[v] += true }\n    }\n}\n",
+        T_MISMATCH,
+        278,
+    )
+    rejects(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } { g[v] = v }\n    }\n}\n",
+        N_UNKNOWN_NAME,
+        265,
+    )
+}
+
+#[test]
 fn selectors() {
     accepts(
         "msg N {\n    #[selector = 0xffffffff]\n    A {},\n    #[selector = 0]\n    B {},\n}",

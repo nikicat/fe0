@@ -79,11 +79,17 @@ MSG = "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]
 FIELD_A = "    mut a: u256\n"
 GET_OK = "        Get {} -> u256 uses (a) { a }\n"
 ARMS_OK = GET_OK + "        Set { v } uses (mut a) { a = v }\n"
+# The fields of the maps cases. FIELD_A stays because GET_OK reads it.
+MAPS = FIELD_A + "    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n"
 # `msgs` go after MSG and `recvs` after `recv M`.
 def contract(arms: str, body_fields: str = FIELD_A, init: str = "", msgs: str = "",
              recvs: str = "") -> str:
     return (MSG + msgs + "contract K {\n" + body_fields + init + "    recv M {\n" + arms + "    }\n"
             + recvs + "}\n")
+def set_arm(body: str, fields: str = FIELD_A) -> str:
+    """The contract with the fields `fields`, GET_OK, and a Set arm whose text after `Set { v } `
+    is `body`."""
+    return contract(GET_OK + "        Set { v } " + body + "\n", fields)
 RECV_N = "    recv N {\n        O {} { }\n    }\n"
 groups: dict[TestName, list[Case]] = {
 TestName("types_of_operators"): [
@@ -207,8 +213,8 @@ TestName("constants"): [
 TestName("effects"): [
     ok(contract(ARMS_OK, init="    init(x: u256) uses (mut a) { a = x }\n")),
     err(contract("        Get {} -> u256 { |a }\n        Set { v } uses (mut a) { a = v }\n"), "E_NOT_IN_USES"),
-    err(contract(GET_OK + "        Set { v } uses (a) { |a = v }\n"), "E_NOT_MUT"),
-    err(contract(GET_OK + "        Set { v } uses (a) { |a += v }\n"), "E_NOT_MUT"),
+    err(set_arm("uses (a) { |a = v }"), "E_NOT_MUT"),
+    err(set_arm("uses (a) { |a += v }"), "E_NOT_MUT"),
     err(contract("        Get {} -> u256 uses (|b) { 1 }\n        Set { v } { }\n"), "E_UNKNOWN_FIELD"),
     err(contract("        Get {} -> u256 uses (a, |mut a) { a }\n        Set { v } { }\n"), "E_DUPLICATE_USE"),
     err(contract(ARMS_OK) + "fn f() -> u256 { |a }", "E_NOT_IN_USES"),
@@ -219,6 +225,19 @@ TestName("effects"): [
     err(contract("        Get {} -> u256 {\n            |let a: u256 = 1\n            a\n        }\n        Set { v } { }\n"), "N_SHADOWS_FIELD"),
     err(contract(ARMS_OK, FIELD_A + "    mut |a: bool\n"), "N_DUPLICATE"),
     err("const a: u256 = 1\n" + contract(ARMS_OK, "    mut |a: u256\n"), "N_DUPLICATE"),
+],
+TestName("maps"): [
+    ok(set_arm("uses (mut m, mut f) {\n            m[Address::zero()] += v\n            f[v] = !f[m[Address::zero()] + 1]\n        }", MAPS)),
+    err(set_arm("{ assert!(|m[Address::zero()] == v) }", MAPS), "E_NOT_IN_USES"),
+    err(set_arm("uses (m) { |m[Address::zero()] = v }", MAPS), "E_NOT_MUT"),
+    err(set_arm("uses (m) { let x = |m }", MAPS), "N_NOT_A_VALUE"),
+    err(set_arm("uses (mut m) { |m = v }", MAPS), "N_ASSIGN_IMMUTABLE"),
+    err(contract("        Get {} -> u256 uses (a) { |a[1] }\n        Set { v } { }\n", MAPS), "T_MISMATCH"),
+    err(set_arm("uses (mut a) { |a[v] = v }", MAPS), "T_MISMATCH"),
+    err(set_arm("uses (mut m) { m[|v] = v }", MAPS), "T_MISMATCH"),
+    err(set_arm("uses (mut f) { f[v] = |v }", MAPS), "T_MISMATCH"),
+    err(set_arm("uses (mut f) { |f[v] += true }", MAPS), "T_MISMATCH"),
+    err(set_arm("{ |g[v] = v }", MAPS), "N_UNKNOWN_NAME"),
 ],
 TestName("selectors"): [
     ok("msg N {\n    #[selector = 0xffffffff]\n    A {},\n    #[selector = 0]\n    B {},\n}"),
@@ -238,7 +257,7 @@ TestName("messages"): [
     err(contract(GET_OK + "        Set { |v: a } { }\n"), "N_SHADOWS_FIELD"),
     err("fn N() {}\n" + contract("", "").replace("recv M", "|recv N"), "N_NOT_A_MSG"),
     err(contract(ARMS_OK, recvs="    |recv M {\n" + ARMS_OK + "    }\n"), "N_DUPLICATE"),
-    err(contract(GET_OK + "        Set { v } |{ true }\n"), "T_MISMATCH"),
+    err(set_arm("|{ true }"), "T_MISMATCH"),
 ],
 }
 codes = sorted({c.code for g in groups.values() for c in g if isinstance(c, Diagnosed)}
@@ -292,8 +311,7 @@ for name, cases in groups.items():
     out += [FeLine(""), FeLine("#[test]"), FeLine(f"fn {name}() {{")] + [c.line() for c in cases]
     out.append(FeLine("}"))
 SIDE = ("const A: u256 = 6 * 7\nfn f(_ p: u256) -> u256 {\n    let x = p + A\n    var y = x\n    y\n}\n"
-        + contract(GET_OK + "        Set { v } uses (mut b) { b = v == A }\n",
-                   FIELD_A + "    mut b: bool\n"))
+        + set_arm("uses (mut b) { b = v == A }", FIELD_A + "    mut b: bool\n"))
 PLACES = contract("        Get {} -> u256 uses (d) { d }\n        Set { v } uses (mut d) { d = v }\n",
                   "    mut a: Address\n    mut b: bool\n    mut c: Address\n    mut d: u256\n"
                   "    mut e: bool\n")

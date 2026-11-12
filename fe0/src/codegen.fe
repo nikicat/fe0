@@ -108,8 +108,7 @@ impl PanicCode {
     }
 }
 
-// The memory layout (DESIGN.md §6.1): where revert and return data are built, the frame
-// pointer's address, and where frames start.
+// The memory layout (DESIGN.md §6.1). The table there says what each region holds.
 const SCRATCH: MemAddr = MemAddr { a: 0 }
 const FP: MemAddr = MemAddr { a: 0x40 }
 const FRAMES: MemAddr = MemAddr { a: 0x80 }
@@ -291,6 +290,12 @@ impl Gen {
         self.asm.push(v)
     }
 
+    // Pops the top word into memory at `a`.
+    fn store_at(mut self, _ a: MemAddr) {
+        self.push(a.word())
+        self.op(OP_MSTORE)
+    }
+
     // Starts a new piece of code and returns the finished one before it.
     fn section(mut self) -> Asm {
         self.fn_labels = no_labels(self.fn_labels.len())
@@ -322,8 +327,7 @@ impl Gen {
         if !s.panic.is_none() {
             self.selector_at_scratch(PANIC_SELECTOR)
             self.push(s.panic.word())
-            self.push(revert_word(0).word())
-            self.op(OP_MSTORE)
+            self.store_at(revert_word(0))
             self.revert(selector_and_words(1))
         } else {
             self.revert(bytes(0))
@@ -335,22 +339,24 @@ impl Gen {
         self.push(selector.word())
         self.push(SELECTOR_SHIFT_BITS)
         self.op(OP_SHL)
-        self.push(SCRATCH.word())
-        self.op(OP_MSTORE)
+        self.store_at(SCRATCH)
     }
 
     // Reverts with the first `size` bytes at SCRATCH.
     fn revert(mut self, _ size: Size) {
-        self.push(size.word())
-        self.push(SCRATCH.word())
-        self.op(OP_REVERT)
+        self.on_scratch(OP_REVERT, size)
     }
 
     // Returns the first `size` bytes at SCRATCH.
     fn return_memory(mut self, _ size: Size) {
+        self.on_scratch(OP_RETURN, size)
+    }
+
+    // Emits `o` over the first `size` bytes at SCRATCH.
+    fn on_scratch(mut self, _ o: Op, _ size: Size) {
         self.push(size.word())
         self.push(SCRATCH.word())
-        self.op(OP_RETURN)
+        self.op(o)
     }
 
     // The label of FN `f` in the current piece of code. `functions` emits the FN.
@@ -382,8 +388,7 @@ impl Gen {
         self.body = Body { kind, ret: n.ty().or_unit(), frame, depth: 0, exit: EMPTY_SLOT }
         if kind != NODE_FN {
             self.push(FRAMES.word())
-            self.push(FP.word())
-            self.op(OP_MSTORE)
+            self.store_at(FP)
         }
     }
 
@@ -406,8 +411,7 @@ impl Gen {
         self.op(OP_MLOAD)
         self.op(OP_SWAP1)
         self.op(OP_MLOAD)
-        self.push(FP.word())
-        self.op(OP_MSTORE)
+        self.store_at(FP)
     }
 
     // Leaves the body. Its value, if it has one, is on top of the stack.
@@ -426,8 +430,7 @@ impl Gen {
             self.op(OP_JUMP)
         } else if kind == NODE_ARM {
             if value {
-                self.push(SCRATCH.word())
-                self.op(OP_MSTORE)
+                self.store_at(SCRATCH)
                 self.return_memory(WORD)
             } else {
                 self.op(OP_STOP)
@@ -715,6 +718,10 @@ impl Gen {
             self.op(OP_CALLER)
         } else if k == NODE_ZERO_ADDRESS {
             self.push(0)
+        } else if k == NODE_INDEX {
+            self.entry_slot(i)
+            self.op(OP_SLOAD)
+            return LEAVES_WORD
         } else {
             // NODE_ASSERT, the only other kind of expression.
             self.assert(i)
@@ -879,8 +886,7 @@ impl Gen {
         self.op(OP_SWAP2)
         self.op(OP_SWAP1)
         self.op(OP_MSTORE)
-        self.push(FP.word())
-        self.op(OP_MSTORE)
+        self.store_at(FP)
     }
 
     // IF `i` and its `else if` chain, in a loop as the checker reads it.
@@ -958,7 +964,11 @@ impl Gen {
             self.drop_to(l.depth)
             self.asm.jump(if k == NODE_BREAK { l.end } else { l.top })
         } else if k == NODE_ASSIGN {
-            self.assign(i)
+            if self.node(n.place()).kind == NODE_INDEX {
+                self.assign_entry(i)
+            } else {
+                self.assign(i)
+            }
         } else {
             self.discard(i)
         }
@@ -1005,7 +1015,7 @@ impl Gen {
     // `x = e` or `x op= e`.
     fn assign(mut self, _ i: NodeId) {
         let n = self.node(i)
-        let d = self.c.resolved(i)
+        let d = self.c.resolved(n.place())
         if n.op() == O_ASSIGN {
             self.value(n.value())
         } else {
@@ -1014,6 +1024,34 @@ impl Gen {
             self.apply(n.op().plain_form())
         }
         self.store(d)
+    }
+
+    // `m[k] = e` or `m[k] op= e`. Fe evaluates `e` before `k` (SPEC §4).
+    fn assign_entry(mut self, _ i: NodeId) {
+        let n = self.node(i)
+        self.value(n.value())
+        self.entry_slot(n.place())
+        if n.op() != O_ASSIGN {
+            // e slot -> slot old e
+            self.op(OP_SWAP1)
+            self.op(OP_DUP2)
+            self.op(OP_SLOAD)
+            self.op(OP_SWAP1)
+            self.body.depth += 1
+            self.apply(n.op().plain_form())
+            self.op(OP_SWAP1)
+        }
+        self.op(OP_SSTORE)
+        self.body.depth -= 2
+    }
+
+    // Pushes the storage slot of the map entry that INDEX `i` names (SPEC §6, "Maps").
+    fn entry_slot(mut self, _ i: NodeId) {
+        self.value(self.node(i).key())
+        self.store_at(SCRATCH)
+        self.push(self.c.storage_place(self.c.resolved(i)).slot())
+        self.store_at(SCRATCH.after(WORD))
+        self.on_scratch(OP_KECCAK256, words(2))
     }
 
     // `assert!(c)` reverts with Panic(0x01), and `assert!(c, "m")` with Error("m") (SPEC §4).
@@ -1032,17 +1070,14 @@ impl Gen {
         // A message has at most 31 bytes, so they fit in one word (SPEC §1).
         self.selector_at_scratch(ERROR_SELECTOR)
         self.push(WORD.word())
-        self.push(revert_word(0).word())
-        self.op(OP_MSTORE)
+        self.store_at(revert_word(0))
         let len = bytes(m.str_len())
         self.push(len.word())
-        self.push(revert_word(1).word())
-        self.op(OP_MSTORE)
+        self.store_at(revert_word(1))
         var count: usize = 2
         if !len.is_zero() {
             self.push(self.c.ast.word_value(n.message()))
-            self.push(revert_word(2).word())
-            self.op(OP_MSTORE)
+            self.store_at(revert_word(2))
             count = 3
         }
         self.revert(selector_and_words(count))

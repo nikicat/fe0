@@ -1,0 +1,20 @@
+// expect: P004 5:11
+// fe: accepts
+// Only a contract field may have a map type in Fe0 (SPEC §3.3), although Fe also allows a
+// parameter.
+fn g(_ n: StorageMap<u256, u256>) -> u256 {
+    0
+}
+msg M {
+    #[selector = 1]
+    Get { k: u256, a: Address } -> u256,
+}
+contract C {
+    mut x: u256,
+    mut m: StorageMap<u256, u256>,
+    recv M {
+        Get { k, a } -> u256 uses (m) {
+            g(m)
+        }
+    }
+}

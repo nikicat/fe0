@@ -1,0 +1,16 @@
+// expect: C001 3:17
+// An entry is not a constant expression (SPEC §5.3). Fe rejects it too (8-0012).
+const N: u256 = m[1]
+msg M {
+    #[selector = 1]
+    Get { k: u256, a: Address } -> u256,
+}
+contract C {
+    mut x: u256,
+    mut m: StorageMap<u256, u256>,
+    recv M {
+        Get { k, a } -> u256 uses (m) {
+            m[k] + N
+        }
+    }
+}

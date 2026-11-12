@@ -115,10 +115,16 @@ Constants are evaluated before any body, in source order (`Checker.program`).
   - A contract's `Ctx` effects are fields of type `TY_CTX`, as `NODE_FIELD` in
     `fe0/src/ast.fe` says. So the unused-entry warning and the name rules treat them as
     fields with no extra code.
+- **Maps:** a map field has one of the map types, which `Ty::map` builds from the key and value
+  types. `Ty.is_value` is false for a map and for `TY_CTX`, so a name of either is not a value
+  (`N003`) and is not assignable (`N014`). `m[k]` is an INDEX node, and `m[k] = v` is an ASSIGN
+  whose place is that INDEX. `Checker.entry` checks the INDEX in both. Reading or writing an
+  entry checks the map's grant, as for a field (below).
 - **Storage:** `Checker.fields` gives each field a `StoragePlace`, its slot and its bytes in the
-  slot (SPEC §6). `Ty.storage_bytes` gives `TY_CTX` zero bytes. Code generation writes a field
-  that shares its slot by reading the slot, clearing the field's bytes and `OR`ing the new
-  value in. A field alone in its slot is read and written whole.
+  slot (SPEC §6). `Ty.storage_bytes` gives `TY_CTX` zero bytes and a map 32, so a map has a
+  slot to itself (SPEC §6, "Maps"). Code generation writes a field that shares its slot by
+  reading the slot, clearing the field's bytes and `OR`ing the new value in. A field alone in
+  its slot is read and written whole, and so is a map entry.
   - A field read checks `Grant.read` (`E116`), and an assignment checks `Grant.write` (`E018`).
   - Free functions are pure (SPEC §5), so `fn_item` gives them an empty grant.
   - Duplicate entries are an error. An entry the body never reads or assigns is a warning,
@@ -142,7 +148,7 @@ Opcodes are emitted straight from the AST, with no IR
 
 | Range | Use |
 |---|---|
-| `0x00–0x3f` | Scratch: return value, panic payload head |
+| `0x00–0x3f` | Scratch: return value, panic payload head, the key and slot that a map entry's slot is hashed from |
 | `0x40` | **FP**, the current frame pointer |
 | `0x60–0x7f` | Reserved (EVM convention, unused) |
 | `0x80…` | Frames, growing upward |
@@ -194,6 +200,9 @@ Each expression leaves exactly one word on the stack (unit-typed ones leave noth
 | `assert!(c)` | `c ISZERO JUMPI panic_01` |
 | `assert!(c, "m")` | `JUMPI` past an inline block that `MSTORE`s `Error(string)` and `REVERT`s |
 | `ctx.caller()`, `Address::zero()` | `CALLER`, `PUSH0` |
+| `m[k]` | eval k, `PUSH0 MSTORE`, `PUSHn slot PUSH1 0x20 MSTORE`, `PUSH1 0x40 PUSH0 KECCAK256 SLOAD` |
+| `m[k] = v` | eval v, then k's slot as for `m[k]`, then `SSTORE`. Fe evaluates `v` first (SPEC §4) |
+| `m[k] op= v` | eval v, k's slot, then `SWAP1 DUP2 SLOAD SWAP1`, the operator, `SWAP1 SSTORE` |
 
 The table sketches each sequence. `Gen.apply` and its neighbours in `fe0/src/codegen.fe` emit the
 exact ones. The differential tests of §13 check their results against Fe, not the instructions.

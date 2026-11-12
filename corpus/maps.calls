@@ -1,0 +1,27 @@
+SetCount account1 5
+Count account1
+Count account0
+AddCount account1 7
+AddCount account1 MAX     # overflow
+AddCount account0 1
+SetFlag 3 true
+Flag 3
+Flag 4
+SetFlag 3 false           # clears the slot
+Flag 3
+SetOwner true account1
+SetOwner false account0
+Owner true
+Owner false
+Chain 5
+Chain MAX                 # k + 1 overflows
+Order 0 false             # Panic(0x11), from the value
+Order 0 true              # Panic(0x11), from the value
+Order 1 false             # key 1, value 0
+Order 1 true
+Ops 9 100
+Ops 9 MAX                 # += 3 overflows
+Ops MAX 7
+Lock
+SetCount account0 1       # locked
+Count account1

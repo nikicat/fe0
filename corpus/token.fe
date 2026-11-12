@@ -1,0 +1,47 @@
+// A token with a balance per account, the shape of Fe's ERC20 example without allowances
+// (ADR 0018). The deployer gets the initial supply and is the only minter. Compare
+// `tokens.fe`, which has three fixed holders.
+msg TokenMsg {
+    #[selector = 0xa9059cbb]
+    Transfer { to: Address, amount: u256 } -> bool,
+    #[selector = 0x70a08231]
+    BalanceOf { who: Address } -> u256,
+    #[selector = 0x18160ddd]
+    TotalSupply -> u256,
+    #[selector = 0x40c10f19]
+    Mint { to: Address, amount: u256 } -> bool,
+}
+
+contract Token uses (ctx: Ctx) {
+    mut balances: StorageMap<Address, u256>,
+    mut supply: u256,
+    mut minter: Address,
+
+    init(initial: u256) uses (ctx, mut balances, mut supply, mut minter) {
+        minter = ctx.caller()
+        balances[minter] = initial
+        supply = initial
+    }
+
+    recv TokenMsg {
+        Transfer { to, amount } -> bool uses (ctx, mut balances) {
+            let from = ctx.caller()
+            assert!(balances[from] >= amount, "balance too low")
+            balances[from] -= amount
+            balances[to] += amount
+            true
+        }
+        BalanceOf { who } -> u256 uses (balances) {
+            balances[who]
+        }
+        TotalSupply {} -> u256 uses (supply) {
+            supply
+        }
+        Mint { to, amount } -> bool uses (ctx, mut balances, mut supply, minter) {
+            assert!(ctx.caller() == minter, "not the minter")
+            supply += amount
+            balances[to] += amount
+            true
+        }
+    }
+}

@@ -24,6 +24,11 @@ impl Kind {
     pub fn is_expr(self) -> bool {
         self.code >= NODE_INT.code
     }
+
+    // Checks whether nodes of this kind can be assigned to (SPEC.md §3.1, rule `place`).
+    pub fn is_place(self) -> bool {
+        self == NODE_NAME || self == NODE_INDEX
+    }
 }
 
 // The sentinel at index 0.
@@ -68,7 +73,8 @@ pub const NODE_WHILE: Kind = Kind { code: 21 }
 pub const NODE_RETURN: Kind = Kind { code: 22 }
 pub const NODE_BREAK: Kind = Kind { code: 23 }
 pub const NODE_CONTINUE: Kind = Kind { code: 24 }
-// `x = e` or `x op= e`: name (the target), op (O_ASSIGN or an A_ kind), value.
+// `x = e`, `x op= e`, `m[k] = e` or `m[k] op= e`: place (the target, a NAME or an INDEX), op
+// (O_ASSIGN or an A_ kind), value.
 pub const NODE_ASSIGN: Kind = Kind { code: 25 }
 
 // Expressions. Any expression node may also appear in a statement list.
@@ -98,6 +104,8 @@ pub const NODE_ASSERT: Kind = Kind { code: 49 }
 pub const NODE_CALLER: Kind = Kind { code: 50 }
 // `Address::zero()`, with no slots.
 pub const NODE_ZERO_ADDRESS: Kind = Kind { code: 51 }
+// an entry of a map, `m[k]`: name (the map), key.
+pub const NODE_INDEX: Kind = Kind { code: 52 }
 
 // A type. A node's ty() holds one written in the source, or TY_NONE when none is written.
 // The checker also uses TY_UNIT, TY_NEVER and TY_INT.
@@ -122,8 +130,17 @@ pub const TY_NEVER: Ty = Ty { code: 5 }
 // The type of an integer expression made only of literals, operators, if-expressions and
 // blocks, such as `1 + 2` or `{ 1 }`.
 pub const TY_INT: Ty = Ty { code: 6 }
+
+// TY_CTX is the last code below the maps, and is_value relies on it.
+// Give a new type a code below TY_CTX.
 // The type of an effect of the contract, `Ctx`. Only an effect has it, and it is not a value.
 pub const TY_CTX: Ty = Ty { code: 7 }
+// The code of the first map type. Its low four bits are zero, to hold the key and value codes.
+const MAP_BASE: u8 = 16
+// The shift of the key code within a map code.
+const MAP_KEY_SHIFT: u8 = 2
+// The mask of the key or value code, after the shift.
+const MAP_PART: u8 = 3
 
 impl Ty {
     // Whether an expression of this type may stand where `want` is expected.
@@ -142,8 +159,34 @@ impl Ty {
         if self == TY_INT { TY_U256 } else { self }
     }
 
+    // Returns the type `StorageMap<key, value>`. Each of `key` and `value` is TY_U256, TY_BOOL
+    // or TY_ADDRESS, so its code fits in two bits.
+    pub fn map(_ key: Ty, _ value: Ty) -> Ty {
+        Ty { code: MAP_BASE | (key.code << MAP_KEY_SHIFT) | value.code }
+    }
+
+    // Checks whether this is a map type.
+    pub fn is_map(self) -> bool {
+        self.code >= MAP_BASE
+    }
+
+    // Returns the key type of map type `self`.
+    pub fn map_key(self) -> Ty {
+        Ty { code: (self.code >> MAP_KEY_SHIFT) & MAP_PART }
+    }
+
+    // Returns the value type of map type `self`.
+    pub fn map_value(self) -> Ty {
+        Ty { code: self.code & MAP_PART }
+    }
+
+    // Checks whether a name of this type is a value. A `Ctx` effect and a map are not.
+    pub fn is_value(self) -> bool {
+        self.code < TY_CTX.code
+    }
+
     // Returns the number of bytes that a contract field of this type takes in storage (SPEC §6).
-    // An effect takes none.
+    // An effect takes none. A map takes a whole slot.
     pub fn storage_bytes(self) -> usize {
         if self == TY_CTX { return 0 }
         if self == TY_BOOL {
@@ -165,13 +208,13 @@ pub struct Node {
     pos_off: usize,
     op: Tok,
     ty: Ty,
-    // name, cond, lhs or operand
+    // name, cond, lhs, operand or place
     a: usize,
     // value, rhs, word, local, use_list, recvs, otherwise or message
     b: usize,
     // list
     c: usize,
-    // body, init, str_len or a flag
+    // body, init, key, str_len or a flag
     d: usize,
 }
 
@@ -344,13 +387,13 @@ impl Node {
         Node::make(NODE_RETURN, pos, a: 0, b: value.id, c: 0, d: 0)
     }
 
-    pub fn new_assign(_ pos: Pos, name: Sym, op: Tok, value: NodeId) -> Node {
+    pub fn new_assign(_ pos: Pos, place: NodeId, op: Tok, value: NodeId) -> Node {
         Node::new(
             NODE_ASSIGN,
             pos,
             op,
             ty: TY_NONE,
-            a: name.id,
+            a: place.id,
             b: value.id,
             c: 0,
             d: 0,
@@ -424,6 +467,10 @@ impl Node {
         Node::make(NODE_ZERO_ADDRESS, pos, a: 0, b: 0, c: 0, d: 0)
     }
 
+    pub fn new_index(_ pos: Pos, map: Sym, key: NodeId) -> Node {
+        Node::make(NODE_INDEX, pos, a: map.id, b: 0, c: 0, d: key.id)
+    }
+
     // Returns the position of the token that diagnostics about the node point at.
     pub fn pos(self) -> Pos {
         Pos::at(self.pos_off)
@@ -446,6 +493,9 @@ impl Node {
         NodeId { id: self.a }
     }
     pub fn operand(self) -> NodeId {
+        NodeId { id: self.a }
+    }
+    pub fn place(self) -> NodeId {
         NodeId { id: self.a }
     }
 
@@ -482,6 +532,9 @@ impl Node {
         NodeId { id: self.d }
     }
     pub fn init(self) -> NodeId {
+        NodeId { id: self.d }
+    }
+    pub fn key(self) -> NodeId {
         NodeId { id: self.d }
     }
     pub fn str_len(self) -> usize {

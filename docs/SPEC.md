@@ -96,6 +96,7 @@ rule for every name, which the subset rule allows.
 | `bool` | `true`, `false` | `! && \|\| == !=` |
 | `Address` | 160-bit account address | `== !=` only. `ctx.caller()` and `Address::zero()` make one (§6). Other values come from parameters, storage and return values |
 
+- A contract field may also be a map, `StorageMap<K, V>` (§6, "Maps").
 - There are no other types: no signed integers or other widths, no tuples, arrays, structs,
   enums or references.
 - Integer literals have type `u256`, but only where their context makes them one. Fe has no
@@ -141,7 +142,8 @@ field       = IDENT ":" type ;
 contract    = "contract" IDENT [ effects ] "{" { cfield } [ init ] { recv } "}" ;
 effects     = "uses" "(" [ effect { "," effect } [ "," ] ] ")" ;
 effect      = IDENT ":" "Ctx" ;                   (* §6, "The caller" *)
-cfield      = "mut" IDENT ":" type [ "," ] ;         (* v1: mut only, see §6 *)
+cfield      = "mut" IDENT ":" ( type | map ) [ "," ] ;   (* v1: mut only, see §6 *)
+map         = "StorageMap" "<" type "," type ">" ;  (* §6, "Maps" *)
 init        = "init" "(" [ params ] ")" [ uses ] block ;
 recv        = "recv" IDENT "{" { arm } "}" ;
 arm         = IDENT "{" [ binds ] "}" [ "->" type ] [ uses ] block ;
@@ -160,7 +162,7 @@ stmt        = ( "let" | "var" ) IDENT [ ":" type ] "=" expr TERM
             | place "=" expr TERM
             | place AUGOP expr TERM
             | expr TERM ;
-place       = IDENT ;
+place       = IDENT | index | "(" place ")" ;
 TERM        = NL | (* before "}" or at end of input *) ;   (* see §3.4 *)
 
 expr        = or ;
@@ -177,11 +179,12 @@ unary       = ( "!" | "~" ) unary | primary ;
 args        = arg { "," arg } [ "," ] ;
 arg         = [ IDENT ":" ] expr ;
 primary     = INT | "true" | "false" | IDENT "(" [ args ] ")" | IDENT | "(" expr ")" | block | if
-            | assert | caller | zero ;
+            | assert | caller | zero | index ;
 if          = "if" expr block [ "else" ( if | block ) ] ;
 assert      = "assert" "!" "(" expr [ "," STRING ] ")" ;
 caller      = IDENT "." "caller" "(" ")" ;
 zero        = "Address" "::" "zero" "(" ")" ;
+index       = IDENT "[" expr "]" ;
 
 CMPOP       = "==" | "!=" | "<" | ">" | "<=" | ">=" ;
 AUGOP       = "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
@@ -189,12 +192,17 @@ AUGOP       = "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">
 
 An expression right before the `}` of its block is the block's tail expression, not a statement.
 
+A place may stand in parentheses, as in `(m[k]) = 1`. Fe accepts that too **[✓]**. The probe
+is the arm `Order` of `corpus/maps.fe`. Fe also accepts `(m)[k] = 1`, and Fe0 rejects it
+**[✓]**. The probe is `corpus/reject/map_paren_map.fe`.
+
 ### 3.2 Precedence
 
 Precedence matches Fe's binding powers (`crates/tree-sitter-fe/grammar.js`). From loosest to
 tightest:
 
 `||` < `&&` < comparisons < `|` < `^` < `&` < `<<` `>>` < `+` `-` < `*` `/` `%` < unary < call
+and index
 
 - All binary operators associate to the left.
 - Comparisons do not chain: `a < b < c` is rejected. Fe rejects it too **[✓]**, with `8-0016`,
@@ -210,7 +218,9 @@ tightest:
   When a `<` after a name may start generic arguments, Fe0 rejects it with `P011`. Fe0's rule
   is wider than Fe's. It ignores what follows the `>`, so it rejects `g(x < y, z > x)`. It also
   takes `>=` as a closer. Fe does not close the list with `>=`, so it accepts
-  `g(x < y, z >= x)` **[✓]**.
+  `g(x < y, z >= x)` **[✓]**. Fe0 also reads a name followed by `[ ]` as an argument, as it
+  reads a call. Fe does not, so it accepts `k < m[k] >> 1` **[✓]**. The probe is
+  `corpus/reject/generics_index.fe`.
 - Assignment is a statement in Fe0, not an expression.
 
 ### 3.3 Left out of Fe0 (all valid Fe)
@@ -220,7 +230,10 @@ tightest:
   access, generics and traits;
 - `struct`, `enum`, `use`, `mod`, `impl`, `extern`, `unsafe`, `with` and closures;
 - contract effects other than `Ctx`, `uses` on a free function, `#[payable]`, events,
-  `StorageMap`, fallback arms (`_`);
+  fallback arms (`_`);
+- maps anywhere but as a contract field's type, maps of maps, tuple keys, key and value types
+  other than `u256`, `bool` and `Address`, and the methods of `StorageMap` (`get`, `set`,
+  `remove`);
 - `sol("…")` selectors, which are a stretch goal
   ([ADR 0004](adr/0004-literal-selectors-first.md), `Hasher` effect).
 
@@ -255,6 +268,8 @@ Probed **[✓]**:
 - Fe accepts a parenthesised expression spread over several lines.
 - Fe also reads `let x = a` followed by `(a)` on the next line as two statements, not as the
   call `a(a)`, just as Fe0 does.
+- Fe rejects a newline inside the `[ ]` of `m[k]` (`1-0001`), as Fe0 does. The probe is
+  `corpus/reject/map_index_newline.fe`.
 - Fe reads a newline inside a `{ … }` block in parentheses as Fe0 does. The probe
   `corpus/reject/newline_block_in_parens_call.fe` puts `g` and `(1)` on two lines of such a
   block. Fe accepts it and reads them as the two statements `g` and `(1)`, not as the call
@@ -277,6 +292,9 @@ Probed **[✓]**:
 - Operands and call arguments are evaluated left to right, each exactly once **[✓]**. With
   `z = 0`, both `1 / z + (z - 1)` and `pair(1 / z, z - 1)` revert with `Panic(0x12)` (the left
   operand), not `0x11`.
+- In `m[k] = e` and `m[k] op= e`, `e` is evaluated before `k` **[✓]**. So with `z = 0`,
+  `m[1 / z] = z - 1` reverts with `Panic(0x11)`, from `z - 1`. The probe is the arm `Order` of
+  `corpus/maps.fe`.
 - `&&` and `||` short-circuit.
 
 **Arithmetic on `u256`** is checked. Probed failure behaviour:
@@ -289,8 +307,7 @@ Probed **[✓]**:
 | `<<`, `>>` | Never fail. Bits shifted out are discarded (`3 << 255` = 2²⁵⁵), and a shift by 256 or more gives 0, as with the EVM's `SHL`/`SHR` **[✓]** |
 
 - `Panic(c)` means the revert data `0x4e487b71 ‖ uint256(c)`, Solidity's encoding.
-- Compound assignment `x op= e` means `x = x op e`, with the same checks. The target is always
-  an identifier, so the question of evaluating it once does not arise in Fe0.
+- Compound assignment `p op= e` stores `p op e` in the place `p`, with the same checks.
 
 **Comparisons** are unsigned on `u256`. On `Address`, only equality is allowed.
 
@@ -443,6 +460,32 @@ grant a storage field.
 - Fe0 rejects a `Ctx` effect written `mut Ctx` (`P002`) and the same `Ctx` effect declared
   twice (`N001`). Fe accepts both **[✓]**. Other methods of `Ctx`, such as `ctx.origin()`, are
   left out of Fe0 (§3.3). So is `uses` on a free function (§5.5).
+
+**Maps** ([ADR 0018](adr/0018-storage-maps.md)). A contract field may be a map, as in
+`mut balances: StorageMap<Address, u256>`. Its key type and its value type are each `u256`,
+`bool` or `Address`.
+- `m[k]` is the entry of map `m` at key `k`, and it has the map's value type. An entry that was
+  never written reads as zero: `0`, `false` or the address 0.
+- `m[k] = v` writes the entry.
+- `m` must be a map, `k` must have the key type, and `v` must have the value type (`T001`).
+- `m[k] op= v` needs a `u256` entry (`T001`), as any compound assignment does (§4).
+- Reading an entry needs `m` in the body's `uses`, and writing one needs `mut m`, as for a
+  storage field (`E116`, `E018`). Fe rejects both **[✓]**.
+- A map is not a value (`N003`), and a whole map is not assignable (`N014`). Fe rejects the
+  assignment (`16-0010`) **[✓]**, and accepts `let y = m` **[✓]**.
+- Only a contract field may have a map type (`P004`). Fe also accepts a map as a parameter, and
+  maps of maps **[✓]**.
+- A map field must be `mut`, as every field must (`P010`). Fe rejects a map field without
+  `mut` too, because a map lives only in storage (`3-0061`) **[✓]**.
+
+Storage. Fe lays maps out as Solidity does **[✓]**:
+- A map takes a slot of its own, so the field before it ends its slot and the field after it
+  starts the next one. Nothing is ever written to that slot.
+- The entry at key `k` lives in slot `keccak256(k ‖ s)`, where `s` is the map's slot and both
+  are 32-byte words. A `bool` key is the word 0 or 1, and an `Address` key is its 20 bytes,
+  zero-extended. Each entry has its slot to itself, and its value is stored as the whole word.
+
+The probe is `corpus/maps.fe`, which also runs on a node (DESIGN.md §10, "On a node").
 
 **Messages and dispatch.**
 - A `recv M` block must have exactly one arm per variant of `M` **[✓]** (the "missing variants"

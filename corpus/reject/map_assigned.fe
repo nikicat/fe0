@@ -1,0 +1,17 @@
+// expect: N014 13:13
+// A whole map is not assignable (SPEC §6, "Maps"). Fe rejects it too (16-0010).
+msg M {
+    #[selector = 1]
+    Get { k: u256, a: Address } -> u256,
+}
+contract C {
+    mut x: u256,
+    mut m: StorageMap<u256, u256>,
+    mut n: StorageMap<u256, u256>,
+    recv M {
+        Get { k, a } -> u256 uses (mut m, n) {
+            m = n
+            0
+        }
+    }
+}

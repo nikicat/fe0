@@ -1,0 +1,97 @@
+// Map fields (SPEC §6, "Maps"). The node check compares the storage slots that each call
+// writes, so it pins the slot of an entry. The maps lie between packed fields, so a build that
+// packed a map's slot with them would move every slot after it. Each key type and each value
+// type appears.
+msg MapsMsg {
+    #[selector = 1]
+    SetCount { who: Address, n: u256 },
+    #[selector = 2]
+    Count { who: Address } -> u256,
+    #[selector = 3]
+    AddCount { who: Address, n: u256 } -> u256,
+    #[selector = 4]
+    SetFlag { k: u256, on: bool },
+    #[selector = 5]
+    Flag { k: u256 } -> bool,
+    #[selector = 6]
+    SetOwner { on: bool, who: Address },
+    #[selector = 7]
+    Owner { on: bool } -> Address,
+    #[selector = 8]
+    Chain { k: u256 } -> u256,
+    #[selector = 9]
+    Order { z: u256, add: bool },
+    #[selector = 10]
+    Ops { k: u256, n: u256 } -> u256,
+    #[selector = 11]
+    Lock {},
+}
+
+contract Maps {
+    mut locked: bool,
+    mut counts: StorageMap<Address, u256>,
+    mut tag: Address,
+    mut flags: StorageMap<u256, bool>,
+    mut owners: StorageMap<bool, Address>,
+    mut words: StorageMap<u256, u256>,
+    mut total: u256,
+
+    recv MapsMsg {
+        SetCount { who, n } uses (mut counts, locked) {
+            assert!(!locked, "locked")
+            counts[who] = n
+        }
+        Count { who } -> u256 uses (counts) {
+            counts[who]
+        }
+        AddCount { who, n } -> u256 uses (mut counts, mut total) {
+            counts[who] += n
+            total += n
+            counts[who]
+        }
+        SetFlag { k, on } uses (mut flags) {
+            flags[k] = on
+        }
+        Flag { k } -> bool uses (flags) {
+            flags[k]
+        }
+        SetOwner { on, who } uses (mut owners, mut tag) {
+            owners[on] = who
+            tag = who
+        }
+        Owner { on } -> Address uses (owners) {
+            owners[on]
+        }
+        Chain { k } -> u256 uses (mut words) {
+            words[k] = k + 1
+            words[words[k]] = 7
+            words[k + 1]
+        }
+        // Fe evaluates the value before the key (SPEC §4), so `z = 0` gives Panic(0x11), not
+        // Panic(0x12).
+        Order { z, add } uses (mut words) {
+            if add {
+                words[1 / z] += z - 1
+            } else {
+                (words[1 / z]) = z - 1
+            }
+        }
+        Ops { k, n } -> u256 uses (mut words) {
+            words[k] = n
+            words[k] += 3
+            words[k] -= 1
+            words[k] *= 2
+            words[k] /= 3
+            words[k] %= 1000
+            words[k] |= 0x100
+            words[k] &= 0xfff
+            words[k] ^= 5
+            words[k] <<= 2
+            words[k] >>= 1
+            words[k]
+        }
+        Lock {} uses (mut locked) {
+            locked = true
+        }
+    }
+}

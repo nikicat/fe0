@@ -286,7 +286,7 @@ impl Parser {
             return self.variant()
         }
         if elem == FIELDS {
-            return self.field()
+            return self.field(maps: false)
         }
         if elem == BINDS {
             return self.bind()
@@ -448,20 +448,41 @@ impl Parser {
         Result::Ok(self.ast.add_node(n))
     }
 
-    // SPEC.md §3.1, rule `field`.
-    fn field(mut self) -> Result<Diag, NodeId> {
+    // Parses rule `field` (SPEC.md §3.1). When `maps` is true, the type may also be a map, as
+    // rule `cfield` allows.
+    fn field(mut self, maps: bool) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let name = self.ident()?
         self.expect(P_COLON)?
-        let ty = self.ty()?
+        let ty = if maps && self.at_word(W_STORAGE_MAP) {
+            self.map_ty()?
+        } else {
+            self.ty()?
+        }
         Result::Ok(self.ast.add_node(Node::new_field(pos, name, ty)))
+    }
+
+    // SPEC.md §3.1, rule `map`.
+    fn map_ty(mut self) -> Result<Diag, Ty> {
+        self.bump()
+        self.expect(O_LT)?
+        let key = self.ty()?
+        self.expect(P_COMMA)?
+        let value = self.ty()?
+        self.expect(O_GT)?
+        Result::Ok(Ty::map(key, value))
+    }
+
+    // Checks whether the current token is the identifier `w`, one of the W_ words.
+    fn at_word(self, _ w: Spelling) -> bool {
+        let t = self.tok()
+        t.kind == T_IDENT && self.ast.lexed.text.packed(t.span) == w
     }
 
     // Reads the identifier `w`, one of the W_ words. Errors with P_EXPECTED_TOKEN when the
     // current token is any other token.
     fn expect_word(mut self, _ w: Spelling) -> Result<Diag, ()> {
-        let t = self.tok()
-        if t.kind != T_IDENT || self.ast.lexed.text.packed(t.span) != w {
+        if !self.at_word(w) {
             return Result::Err(self.err(P_EXPECTED_TOKEN))
         }
         self.bump()
@@ -480,7 +501,7 @@ impl Parser {
             if !self.eat(K_MUT) {
                 return Result::Err(self.err(P_FIELD_NOT_MUT))
             }
-            let f = self.field()?
+            let f = self.field(maps: true)?
             self.pending.push(f)
             self.eat(P_COMMA)
             self.skip_docs()
@@ -650,16 +671,24 @@ impl Parser {
         if k == K_CONTINUE {
             return self.finish_stmt(Node::leaf(NODE_CONTINUE, self.bump().span.start))
         }
-        if k == T_IDENT && self.peek2().is_assign() {
-            let pos = self.tok().span.start
-            let name = self.ident()?
-            let op = self.bump().kind
-            let value = self.expr()?
-            return self.finish_stmt(Node::new_assign(pos, name, op, value))
-        }
         let e = self.expr()?
+        if self.peek().is_assign() {
+            return self.assign(e)
+        }
         self.end_stmt()?
         Result::Ok(e)
+    }
+
+    // The rest of an assignment whose target is expression `target`, from its operator on.
+    // Errors with P_EXPECTED_END when the target is not a place (SPEC.md §3.1, rule `place`).
+    fn assign(mut self, _ target: NodeId) -> Result<Diag, NodeId> {
+        let t = self.ast.node(target)
+        if !t.kind.is_place() {
+            return Result::Err(self.err(P_EXPECTED_END))
+        }
+        let op = self.bump().kind
+        let value = self.expr()?
+        self.finish_stmt(Node::new_assign(t.pos(), place: target, op, value))
     }
 
     fn finish_stmt(mut self, _ n: Node) -> Result<Diag, NodeId> {
@@ -790,6 +819,9 @@ impl Parser {
             if next == P_DOT {
                 return self.caller()
             }
+            if next == P_LBRACKET {
+                return self.index()
+            }
             let name = self.ident()?
             return Result::Ok(self.ast.add_node(Node::new_name(t.span.start, name)))
         }
@@ -834,6 +866,16 @@ impl Parser {
         self.expect(P_COLON)?
         self.empty_call(W_ZERO)?
         Result::Ok(self.ast.add_node(Node::new_zero_address(pos)))
+    }
+
+    // SPEC.md §3.1, rule `index`.
+    fn index(mut self) -> Result<Diag, NodeId> {
+        let pos = self.tok().span.start
+        let map = self.ident()?
+        self.bump()
+        let key = self.expr()?
+        self.expect(P_RBRACKET)?
+        Result::Ok(self.ast.add_node(Node::new_index(pos, map, key)))
     }
 
     // `w ( )`, the shared end of rules `caller` and `zero`.
