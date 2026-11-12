@@ -26,20 +26,14 @@ When a release includes it, our fork and the WORKAROUNDS.md entry can go.
 - The PR text does not name or quote this project (PLAN.md risk 5).
 
 ## State
-Branch `native-aarch64-linux` in `/workspaces/fe-master` (a clone of argotorg/fe, remote
-`fork` = nikicat/fe), on master `1f247d1b1`, two commits, not pushed:
-1. `17734f510`, the gate, cherry-picked from `native-aarch64-linux-v26.6.0`.
-2. `839f3a2e3`: `Platform { os, arch }`, the `target_arch` cfg (a private `CfgPredicate` in
-   `crates/hir/src/core/lower/attr.rs`), `stat_mode` at offset 16 on AArch64, and the
-   cleanups from the unsmell run of Nov 11 (`Platform::require_host`,
-   `BuildBackend::database`, a 60-second deadline in one native test).
-On AArch64 Linux: cli_output 1207/1207, corelib, ty_check, project_target and the fe unit
-tests pass, and clippy is clean. native_runtime passed 77 of 78 before the last cleanups,
-and the deadline test passed alone after its fix. frontend's
+argotorg/fe#1989 is open, from `nikicat:native-aarch64-linux` (three commits: the gate
+`17734f510`, `Platform` and `target_arch` `839f3a2e3`, and the newsfragment `90d27f083`).
+On AArch64 Linux, on the final code: native_runtime 78/78, cli_output 1207/1207, corelib,
+ty_check, project_target and the fe unit tests pass, and clippy is clean. frontend's
 `deeply_nested_malformed_type_paths_are_resolved_once` overflows its stack in a debug build
-here, on master too, so it is not ours. Follow-ups that stay out of this PR are in Tw56pax.
+here, on master too. `make check-notes` cannot download its tool on AArch64. Follow-ups that
+stay out of this PR are in Tw56pax.
 
 ## Next
-1. Optional: run `native_runtime` once more on the final commit (about 30 minutes).
-2. With the user's go-ahead, push to the fork and open the PR with "Fixes #1975". Add the
-   newsfragment `<PR>.feature.md` once the PR has a number.
+Answer review comments on #1989. When a release includes it, drop our fork and the
+WORKAROUNDS.md entry.
