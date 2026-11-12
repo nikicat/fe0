@@ -215,6 +215,8 @@ impl Printer {
             self.put("bool")
         } else if t == TY_ADDRESS {
             self.put("Address")
+        } else if t == TY_CTX {
+            self.put("Ctx")
         } else {
             self.put("?")
         }
@@ -427,6 +429,12 @@ impl Printer {
                 self.node(n.message())
             }
             self.put(")")
+        } else if k == NODE_CALLER {
+            self.put("(caller ")
+            self.sym(n.name())
+            self.put(")")
+        } else if k == NODE_ZERO_ADDRESS {
+            self.put("(zero)")
         } else if k == NODE_STR {
             self.put("\"")
             let v = StrValue { word: self.ast.word(n.word()), len: n.str_len() }
@@ -592,6 +600,23 @@ fn unary_and_primaries() {
 }
 
 #[test]
+fn fixed_forms() {
+    // `ctx.caller()` and `Address::zero()` are whole expressions (ADR 0017). Spaces may come
+    // between their tokens, except between the colons.
+    tail_is(
+        "fn f() { ctx.caller() == Address::zero() }",
+        "(== (caller ctx) (zero))",
+    )
+    tail_is("fn f() { ctx . caller ( ) }", "(caller ctx)")
+    tail_is("fn f() { Address :: zero() }", "(zero)")
+    rejects("fn f() { Address: :zero() }", P_EXPECTED_TOKEN, 18)
+    rejects("fn f() { ctx.origin() }", P_EXPECTED_TOKEN, 13)
+    rejects("fn f() { ctx.caller(1) }", P_EXPECTED_TOKEN, 20)
+    rejects("fn f() { Address::new() }", P_EXPECTED_TOKEN, 18)
+    rejects("fn f() { ctx.caller }", P_EXPECTED_TOKEN, 20)
+}
+
+#[test]
 fn statements() {
     item_is(
         "fn f(_ a: u256, b: bool) -> u256 {\n    let x = 1\n    var y: u256 = 2\n    y += x\n    while y < 9 { y = y + 1 }\n    if b { return y }\n    break\n    continue\n    return\n}",
@@ -633,6 +658,11 @@ fn items() {
         "(contract C (a:u256 b:bool) (init (x:u256) (mut a) {(= a x); }) ((recv M ((Inc () ? (mut a) {(+= a 1); }) (Set (a:v b) bool (a mut b) {b})))))",
     )
     item_is("contract E {}", "(contract E () ? ())")
+    item_is(
+        "contract C uses (ctx: Ctx, b: Ctx,) {\n    mut a: u256\n}",
+        "(contract C (ctx:Ctx b:Ctx a:u256) ? ())",
+    )
+    item_is("contract C uses () {}", "(contract C () ? ())")
 }
 
 #[test]
@@ -703,6 +733,10 @@ fn errors() {
     assert!(
         parse_err("msg M { #[slector = 1] A {} }").code == P_EXPECTED_TOKEN,
     )
+    // A contract's effect must have type `Ctx`, written without `mut`.
+    rejects("contract C uses (ctx: u256) {}", P_EXPECTED_TOKEN, 22)
+    rejects("contract C uses (ctx: mut Ctx) {}", P_EXPECTED_TOKEN, 22)
+    rejects("contract C uses (ctx) {}", P_EXPECTED_TOKEN, 20)
     // A lexer error stops the parse.
     assert!(
         parse_err("fn f() { let for = 1 }").code == L_RESERVED_WORD,

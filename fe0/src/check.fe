@@ -376,8 +376,8 @@ impl Checker {
         self.item(sym)
     }
 
-    // The node that declares the name of NAME, CALL or ASSIGN `i`. Errors with N_UNKNOWN_NAME
-    // when nothing declares it.
+    // The node that declares the name of NAME, CALL, CALLER or ASSIGN `i`. Errors with
+    // N_UNKNOWN_NAME when nothing declares it.
     fn resolve(self, _ i: NodeId) -> Result<Diag, NodeId> {
         let d = self.lookup(self.node(i).name())
         if d.is_none() {
@@ -861,22 +861,49 @@ impl Checker {
             t = self.block(i)?
         } else if k == NODE_ASSERT {
             let _ = self.want(n.cond(), TY_BOOL)?
+        } else if k == NODE_CALLER {
+            t = self.caller(i)?
+        } else if k == NODE_ZERO_ADDRESS {
+            t = TY_ADDRESS
         }
         self.set_ty(i, t)
         Result::Ok(t)
     }
 
-    fn name(mut self, _ i: NodeId) -> Result<Diag, Ty> {
+    // Returns the node that declares the name of NAME or CALLER `i`, and records a read of the
+    // contract field when that node is a FIELD. Errors as `resolve` does, and with E_NOT_IN_USES
+    // when the body's `uses` does not grant the field.
+    fn read(mut self, _ i: NodeId) -> Result<Diag, NodeId> {
         let d = self.resolve(i)?
-        let kind = self.node(d).kind
-        if kind == NODE_FIELD {
+        if self.node(d).kind == NODE_FIELD {
             self.access(d, self.body.grant.read, self.at(E_NOT_IN_USES, i))?
         }
-        if kind == NODE_FN || kind == NODE_MSG || kind == NODE_CONTRACT {
+        Result::Ok(d)
+    }
+
+    // Checks whether `d` declares an effect of the contract (a FIELD of type TY_CTX).
+    fn is_effect(self, _ d: NodeId) -> bool {
+        self.c.ty(d) == TY_CTX
+    }
+
+    fn name(mut self, _ i: NodeId) -> Result<Diag, Ty> {
+        let d = self.read(i)?
+        let kind = self.node(d).kind
+        if kind == NODE_FN || kind == NODE_MSG || kind == NODE_CONTRACT || self.is_effect(d) {
             return Result::Err(self.at(N_NOT_A_VALUE, i))
         }
         self.set_res(i, d)
         Result::Ok(self.c.ty(d))
+    }
+
+    // Returns the type of CALLER `i`, which is always TY_ADDRESS. Errors as `read` does, and
+    // with T_MISMATCH when `.caller()` follows a name that is not an effect.
+    fn caller(mut self, _ i: NodeId) -> Result<Diag, Ty> {
+        let d = self.read(i)?
+        if !self.is_effect(d) {
+            return Result::Err(self.at(T_MISMATCH, i))
+        }
+        Result::Ok(TY_ADDRESS)
     }
 
     fn binary(mut self, _ i: NodeId) -> Result<Diag, Ty> {
@@ -1075,7 +1102,8 @@ impl Checker {
         let n = self.node(i)
         let d = self.resolve(i)?
         let target = self.node(d)
-        if target.kind == NODE_FIELD {
+        // An effect is no more assignable than a `let`, even when `uses` names it `mut`.
+        if target.kind == NODE_FIELD && !self.is_effect(d) {
             self.access(d, self.body.grant.write, self.at(E_NOT_MUT, i))?
         } else if target.kind != NODE_LET || !target.is_var() {
             return Result::Err(self.at(N_ASSIGN_IMMUTABLE, i))

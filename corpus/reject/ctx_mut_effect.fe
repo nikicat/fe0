@@ -1,0 +1,14 @@
+// expect: P002 8:23
+// fe: accepts
+// Fe0 rejects a `Ctx` effect written `mut Ctx` (SPEC §6, "The caller"). Fe accepts it.
+msg M {
+    #[selector = 1]
+    Get -> Address,
+}
+contract C uses (ctx: mut Ctx) {
+    recv M {
+        Get {} -> Address uses (ctx) {
+            ctx.caller()
+        }
+    }
+}

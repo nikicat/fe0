@@ -1,0 +1,55 @@
+// The deployer becomes the owner, and each guarded arm compares the caller with it (SPEC §6,
+// "The caller"). The owner and the lock flag share slot 0. A build that gave the effect storage
+// would move them, and the node check compares the slots written.
+msg OwnedMsg {
+    #[selector = 1]
+    Owner -> Address,
+    #[selector = 2]
+    SetOwner { new_owner: Address },
+    #[selector = 3]
+    Renounce {},
+    #[selector = 4]
+    IsOwner -> bool,
+    #[selector = 5]
+    Bump -> u256,
+    #[selector = 6]
+    Lock {},
+}
+
+contract Owned uses (ctx: Ctx) {
+    mut owner: Address,
+    mut locked: bool,
+    mut count: u256,
+
+    init() uses (ctx, mut owner) {
+        owner = ctx.caller()
+    }
+
+    recv OwnedMsg {
+        Owner {} -> Address uses (owner) {
+            owner
+        }
+        SetOwner { new_owner } uses (ctx, mut owner, locked) {
+            assert!(ctx.caller() == owner, "not the owner")
+            assert!(!locked, "locked")
+            assert!(new_owner != Address::zero(), "zero owner")
+            owner = new_owner
+        }
+        Renounce {} uses (ctx, mut owner) {
+            assert!(ctx.caller() == owner, "not the owner")
+            owner = Address::zero()
+        }
+        IsOwner {} -> bool uses (ctx, owner) {
+            ctx.caller() == owner
+        }
+        Bump {} -> u256 uses (ctx, owner, mut count) {
+            assert!(ctx.caller() == owner)
+            count += 1
+            count
+        }
+        Lock {} uses (ctx, owner, mut locked) {
+            assert!(ctx.caller() == owner, "not the owner")
+            locked = true
+        }
+    }
+}

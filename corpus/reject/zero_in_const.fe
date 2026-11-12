@@ -1,0 +1,15 @@
+// expect: C001 7:20
+// `Address::zero()` is not a constant expression (SPEC §6, "The caller"). Fe rejects it too.
+msg M {
+    #[selector = 1]
+    Get -> Address,
+}
+const Z: Address = Address::zero()
+
+contract C {
+    recv M {
+        Get {} -> Address {
+            Z
+        }
+    }
+}

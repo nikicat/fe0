@@ -1,0 +1,20 @@
+# The comments describe the run on a node (DESIGN.md §10, "On a node"). On a node, account 0
+# deploys, so it is the owner.
+Owner
+IsOwner
+IsOwner from=1
+Bump from=1               # not the owner: Panic(1)
+Bump
+SetOwner account1 from=1  # not the owner
+SetOwner 0                # zero owner
+SetOwner account1
+Owner
+IsOwner
+IsOwner from=1
+Bump from=1
+Renounce                  # not the owner
+Lock from=1
+SetOwner account0 from=1  # locked
+Renounce from=1
+Owner
+Bump from=1               # nobody owns it

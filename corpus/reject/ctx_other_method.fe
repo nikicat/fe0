@@ -1,0 +1,14 @@
+// expect: P002 11:17
+// fe: accepts
+// `caller` is the only method of `Ctx` in Fe0 (SPEC §3.3), although Fe has others.
+msg M {
+    #[selector = 1]
+    Get -> Address,
+}
+contract C uses (ctx: Ctx) {
+    recv M {
+        Get {} -> Address uses (ctx) {
+            ctx.origin()
+        }
+    }
+}

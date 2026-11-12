@@ -104,18 +104,21 @@ Constants are evaluated before any body, in source order (`Checker.program`).
   `TY_NEVER` fits any type, `if c { return 1 } else { x }` has the type of `x`.
 - **Scopes:** a stack of locals, innermost last (`Body.locals`). Lookup scans it from the
   top, then the contract fields, then the items. A block truncates the stack back to where it
-  started. `Checker.declare` rejects a local or parameter named like a storage field or an
-  item (SPEC §5.2).
+  started. `Checker.declare` rejects a local or parameter named like a contract field (a
+  storage field or a `Ctx` effect) or an item (SPEC §5.2).
 - **Constants:** evaluated during checking with the same checked arithmetic as run time.
   Overflow gives `C034` and division by zero `C025`.
   - Only earlier constants may be referenced.
   - Both operands of `&&` and `||` are evaluated. `eval_binary` in `fe0/src/check.fe` says why.
 - **Effects:** `init` and each arm get a `Grant` built from their `uses` (`Checker.grant`).
   `FieldSet` in `fe0/src/check.fe` bounds the number of contract fields.
+  - A contract's `Ctx` effects are fields of type `TY_CTX`, as `NODE_FIELD` in
+    `fe0/src/ast.fe` says. So the unused-entry warning and the name rules treat them as
+    fields with no extra code.
 - **Storage:** `Checker.fields` gives each field a `StoragePlace`, its slot and its bytes in the
-  slot (SPEC §6). Code generation writes a field that shares its slot by reading the slot,
-  clearing the field's bytes and `OR`ing the new value in. A field alone in its slot is read
-  and written whole.
+  slot (SPEC §6). `Ty.storage_bytes` gives `TY_CTX` zero bytes. Code generation writes a field
+  that shares its slot by reading the slot, clearing the field's bytes and `OR`ing the new
+  value in. A field alone in its slot is read and written whole.
   - A field read checks `Grant.read` (`E116`), and an assignment checks `Grant.write` (`E018`).
   - Free functions are pure (SPEC §5), so `fn_item` gives them an empty grant.
   - Duplicate entries are an error. An entry the body never reads or assigns is a warning,
@@ -190,6 +193,7 @@ Each expression leaves exactly one word on the stack (unit-typed ones leave noth
 | `!b` | `ISZERO`. `~a` is `NOT` |
 | `assert!(c)` | `c ISZERO JUMPI panic_01` |
 | `assert!(c, "m")` | `JUMPI` past an inline block that `MSTORE`s `Error(string)` and `REVERT`s |
+| `ctx.caller()`, `Address::zero()` | `CALLER`, `PUSH0` |
 
 The table sketches each sequence. `Gen.apply` and its neighbours in `fe0/src/codegen.fe` emit the
 exact ones. The differential tests of §13 check their results against Fe, not the instructions.

@@ -162,6 +162,25 @@ pub const A_PIPE: Tok = O_PIPE.assign_form()
 pub const A_SHL: Tok = O_SHL.assign_form()
 pub const A_SHR: Tok = O_SHR.assign_form()
 
+// The bytes of an identifier as one big-endian number, which `Text.packed` returns. An
+// identifier longer than 32 bytes keeps only its last 32 bytes. Its number still differs from
+// that of every identifier shorter than 32 bytes, because no byte of an identifier is 0.
+pub struct Spelling { packed: u256 }
+
+impl Copy for Spelling {}
+
+impl core::ops::Eq for Spelling {
+    fn eq(self, _ other: Spelling) -> bool {
+        self.packed == other.packed
+    }
+}
+
+// Identifiers that Fe gives a fixed meaning but does not reserve, unlike the K_ keywords.
+pub const W_SELECTOR: Spelling = Spelling { packed: 0x73656c6563746f72 }
+pub const W_CTX: Spelling = Spelling { packed: 0x437478 }
+pub const W_CALLER: Spelling = Spelling { packed: 0x63616c6c6572 }
+pub const W_ZERO: Spelling = Spelling { packed: 0x7a65726f }
+
 // A byte offset in the source text. A length is a plain count. An offset plus a length is an
 // offset. The distance between two offsets is a length.
 pub struct Pos { off: usize }
@@ -266,6 +285,17 @@ impl Text {
     // Whether span `s` spells `w`.
     pub fn spells<const N: usize>(self, _ s: Span, _ w: String<N>) -> bool {
         s.len == N && self.holds(s, w.as_bytes())
+    }
+
+    // Returns the bytes of span `s` packed into one Spelling, such as W_CTX for `Ctx`.
+    pub fn packed(self, _ s: Span) -> Spelling {
+        var v: u256 = 0
+        var k: usize = 0
+        while k < s.len {
+            v = (v << 8) | self.span_byte(s, k).value() as u256
+            k += 1
+        }
+        Spelling { packed: v }
     }
 
     // Whether span `s` is `u` or `i` followed by one or more digits, as in `u8` or `i128`.

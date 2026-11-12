@@ -1,0 +1,13 @@
+// expect: E051 9:33
+// An arm names `ctx`, but the contract declares no `Ctx` effect (SPEC §6). Fe rejects it too.
+msg M {
+    #[selector = 1]
+    Get -> Address,
+}
+contract C {
+    recv M {
+        Get {} -> Address uses (ctx) {
+            ctx.caller()
+        }
+    }
+}

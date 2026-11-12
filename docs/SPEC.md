@@ -33,7 +33,7 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 | Decimal integer | `[0-9]+(_[0-9]+)*` | The value must fit in 256 bits |
 | Hex integer | `0[xX][0-9a-fA-F]+` | No `_` separators. Must fit in 256 bits |
 | String | `"` … `"` with escapes `\" \\ \n \r \t` | Only allowed as the message of `assert!`, and at most 31 bytes after decoding. Fe accepts longer messages **[✓]**; Fe0 v1 restricts them so `Error(string)` stays one data word |
-| Punctuation | `( ) { } [ ] : , -> # .` | `;` is not a token: Fe 26.6.0 rejects it after a statement, even at the end of a line **[✓]** |
+| Punctuation | `( ) { } [ ] : , -> # .` | `;` is not a token: Fe 26.6.0 rejects it after a statement, even at the end of a line **[✓]**. `::` appears only in `Address::zero()`, as two `:` with no space between them. Fe reads `::` as one token and rejects `: :` **[✓]** |
 | Operators | `+ - * / % ~ ! ^ & \| && \|\| < > = == !=` | |
 | Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside, and rejects spaced forms. Fe 26.6.0 rejects `x + = 1` too **[✓]** |
 
@@ -94,7 +94,7 @@ rule for every name, which the subset rule allows.
 |---|---|---|
 | `u256` | 0 … 2²⁵⁶−1 | All arithmetic, bitwise and comparison operators (§4) |
 | `bool` | `true`, `false` | `! && \|\| == !=` |
-| `Address` | 160-bit account address | `== !=` only. Fe0 has no way to construct one; values only come from parameters, storage and return values |
+| `Address` | 160-bit account address | `== !=` only. `ctx.caller()` and `Address::zero()` make one (§6). Other values come from parameters, storage and return values |
 
 - There are no other types: no signed integers or other widths, no tuples, arrays, structs,
   enums or references.
@@ -138,7 +138,9 @@ selector    = "#" "[" "selector" "=" INT "]" ;
 fields      = field { "," field } [ "," ] ;
 field       = IDENT ":" type ;
 
-contract    = "contract" IDENT "{" { cfield } [ init ] { recv } "}" ;
+contract    = "contract" IDENT [ effects ] "{" { cfield } [ init ] { recv } "}" ;
+effects     = "uses" "(" [ effect { "," effect } [ "," ] ] ")" ;
+effect      = IDENT ":" "Ctx" ;                   (* §6, "The caller" *)
 cfield      = "mut" IDENT ":" type [ "," ] ;         (* v1: mut only, see §6 *)
 init        = "init" "(" [ params ] ")" [ uses ] block ;
 recv        = "recv" IDENT "{" { arm } "}" ;
@@ -175,9 +177,11 @@ unary       = ( "!" | "~" ) unary | primary ;
 args        = arg { "," arg } [ "," ] ;
 arg         = [ IDENT ":" ] expr ;
 primary     = INT | "true" | "false" | IDENT "(" [ args ] ")" | IDENT | "(" expr ")" | block | if
-            | assert ;
+            | assert | caller | zero ;
 if          = "if" expr block [ "else" ( if | block ) ] ;
 assert      = "assert" "!" "(" expr [ "," STRING ] ")" ;
+caller      = IDENT "." "caller" "(" ")" ;
+zero        = "Address" "::" "zero" "(" ")" ;
 
 CMPOP       = "==" | "!=" | "<" | ">" | "<=" | ">=" ;
 AUGOP       = "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
@@ -212,9 +216,11 @@ tightest:
 ### 3.3 Left out of Fe0 (all valid Fe)
 
 - `**`, unary `-` and `+`, `as` casts, ranges, `for` and `match`;
-- method calls and field access, generics and traits;
+- method calls other than `ctx.caller()`, path calls other than `Address::zero()`, field
+  access, generics and traits;
 - `struct`, `enum`, `use`, `mod`, `impl`, `extern`, `unsafe`, `with` and closures;
-- contract-level `uses`, `#[payable]`, events, `StorageMap`, fallback arms (`_`);
+- contract effects other than `Ctx`, `uses` on a free function, `#[payable]`, events,
+  `StorageMap`, fallback arms (`_`);
 - `sol("…")` selectors, which are a stretch goal
   ([ADR 0004](adr/0004-literal-selectors-first.md), `Hasher` effect).
 
@@ -310,9 +316,9 @@ ABI-encoded string.
      error, as in Fe (`8-0018`) **[✓]**.
    - Shadowing with a new `let`/`var` is allowed **[✓]**.
    - A local's scope runs from after its declaration to the end of its block.
-   - The name of a local or a parameter may not be a storage field's name (`N005`), so a name
-     never silently stops referring to storage. Fe accepts a local named like a storage field
-     **[✓]**.
+   - The name of a local or a parameter may not be the name of a contract field (`N005`). A
+     contract field is a storage field or a `Ctx` effect. So a name never silently stops
+     referring to the field. Fe accepts a local named like a storage field **[✓]**.
    - The name of a local or a parameter may not be the name of any item (`N018`), so a name in a
      body always means one declaration.
    - Fe's rule is narrower, and it differs by the kind of name. Fe reads a `let`, `var` or
@@ -339,7 +345,8 @@ ABI-encoded string.
      is the identifier `x` itself **[✓]**. Leaving out a required label is `8-0024` **[✓]**.
    - Arguments must follow the parameter order. Swapped labels are `8-0024` **[✓]**.
    - Recursion is allowed. Fe0 adds no limit beyond EVM gas and stack depth.
-5. **Free functions are pure.** They have no `uses` clause and cannot touch storage.
+5. **Free functions are pure.** They have no `uses` clause, so they cannot touch storage or
+   read the caller (§6).
 6. **Return paths.** A function with `-> T` must produce a `T` on every path, either through its
    final expression or through `return`. Otherwise it is an error (`8-0000`, type mismatch)
    **[✓]**.
@@ -415,6 +422,27 @@ contract Counter {
 - Fe also accepts *duplicate* entries (`uses (v, v)`) **[✓]**; Fe0 rejects them.
 
 This check is the point of Fe0.
+
+**The caller** ([ADR 0017](adr/0017-caller.md)). A contract may declare `Ctx` effects, as in
+`contract Owned uses (ctx: Ctx) {`. `init` and arms grant a `Ctx` effect in their `uses` as they
+grant a storage field.
+- `ctx.caller()` is the address that called the contract. In `init`, it is the address that
+  deploys the contract. A body that reads it must list `ctx` in its `uses`, as for a storage
+  field (`E116`). Fe rejects such a body too, because `ctx` is an undefined name there
+  (`8-0012`) **[✓]**.
+- `Address::zero()` is the address 0. It needs no effect, so a free function may use it. It is
+  not a constant expression (`C001`). Fe rejects it in a constant too, because `zero` is not a
+  `const fn` (`3-0024`) **[✓]**.
+- A `Ctx` effect is not a value. A name that refers to one is an error (`N003`), except before
+  `.caller()`. Assigning to one is an error (`N014`), even when `uses` names it `mut`. Fe
+  rejects both **[✓]**.
+- A `Ctx` effect takes no storage. The storage fields' slots are the same as without it.
+- A storage field may not take the name of a `Ctx` effect (`N001`). Neither may a local, a
+  parameter or a bind (§5.2). Fe rejects such a storage field, bind or parameter **[✓]**. It
+  accepts such a local **[✓]**.
+- Fe0 rejects a `Ctx` effect written `mut Ctx` (`P002`) and the same `Ctx` effect declared
+  twice (`N001`). Fe accepts both **[✓]**. Other methods of `Ctx`, such as `ctx.origin()`, are
+  left out of Fe0 (§3.3). So is `uses` on a free function (§5.5).
 
 **Messages and dispatch.**
 - A `recv M` block must have exactly one arm per variant of `M` **[✓]** (the "missing variants"

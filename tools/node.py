@@ -20,7 +20,7 @@ from web3.types import (CallTrace, DiffModeTrace, TraceConfig, TraceData, TxPara
 import cli_check
 import embed
 import gen
-from fegen import DISPATCH, FE, ROOT, Case
+from fegen import DISPATCH, FE, ROOT, AccountIndex, Case, Payload, Word
 
 # The node's hardfork. Cancun has no calldata floor price (EIP-7623), so the gas of a call less
 # the gas of the same transaction to an account with no code is what the code spent.
@@ -187,7 +187,7 @@ class Node:
     def create(self, initcode: bytes, case: Case) -> Deployment:
         """Deploys `initcode` with the constructor arguments, value and sender of `case`. Errors
         as _send does."""
-        receipt = self._send(case, {"data": initcode + case.payload.encode()})
+        receipt = self._send(case, {"data": initcode + self._encode(case.payload)})
         address = receipt["contractAddress"] if receipt["status"] else None
         # A deployment that succeeds outputs its runtime code, which differs between builds.
         output = b"" if address else self._output(receipt)
@@ -195,20 +195,29 @@ class Node:
 
     def call(self, to: ChecksumAddress, case: Case) -> Run:
         """Sends the payload of `case` to `to`. Errors as _send does."""
-        receipt = self._send(case, {"to": to, "data": case.payload.encode()})
+        receipt = self._send(case, {"to": to, "data": self._encode(case.payload)})
         return Run(self._effects(receipt, self._output(receipt), to), Gas(receipt["gasUsed"]))
 
     def code_gas(self, case: Case, run: Run) -> Gas:
         """Returns the gas that the code spent on `run`, a call that sent `case`."""
-        base = self._send(case, {"to": NO_CODE, "data": case.payload.encode()})
+        base = self._send(case, {"to": NO_CODE, "data": self._encode(case.payload)})
         return Gas(run.gas_used - base["gasUsed"])
+
+    def _account(self, index: AccountIndex) -> ChecksumAddress:
+        """Returns the account at `index`. Errors with RuntimeError when the node has none."""
+        if not 0 <= index < len(self.accounts):
+            raise RuntimeError(f"the node has no account {index}")
+        return self.accounts[index]
+
+    def _encode(self, payload: Payload) -> bytes:
+        """Returns the bytes of `payload`, with the address of each account it names. Errors as
+        _account does."""
+        return payload.encode(lambda index: Word(int(self._account(index), 16)))
 
     def _send(self, case: Case, tx: TxParams) -> TxReceipt:
         """Sends `tx` with the value of `case` from its sender, and returns the receipt. Errors
-        with RuntimeError when the node has no account for the sender."""
-        if not 0 <= case.sender < len(self.accounts):
-            raise RuntimeError(f"the node has no account {case.sender}")
-        tx_hash = self.w3.eth.send_transaction({**tx, "from": self.accounts[case.sender],
+        as _account does."""
+        tx_hash = self.w3.eth.send_transaction({**tx, "from": self._account(case.sender),
                                                 "value": Wei(case.payload.value),
                                                 "gas": TX_GAS})
         return self.w3.eth.wait_for_transaction_receipt(tx_hash)

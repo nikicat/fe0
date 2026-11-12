@@ -1,0 +1,14 @@
+// expect: N005 10:15
+// A bind may not take the name of a `Ctx` effect (SPEC §6, "The caller"). Fe rejects it too
+// (8-0134).
+msg M {
+    #[selector = 1]
+    Get { ctx: u256 } -> Address,
+}
+contract C uses (ctx: Ctx) {
+    recv M {
+        Get { ctx } -> Address uses (ctx) {
+            Address::zero()
+        }
+    }
+}

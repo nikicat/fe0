@@ -1,0 +1,18 @@
+// expect: E116 9:5
+// A free function reads the caller. It has no `uses`, so it may not (SPEC §5.5). Fe rejects it
+// too, as an undefined name.
+msg M {
+    #[selector = 1]
+    Get -> Address,
+}
+fn who() -> Address {
+    ctx.caller()
+}
+
+contract C uses (ctx: Ctx) {
+    recv M {
+        Get {} -> Address uses (ctx) {
+            who()
+        }
+    }
+}

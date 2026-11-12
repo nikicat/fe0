@@ -173,6 +173,12 @@ impl Payload {
         self.push_be(w, bytes: 32)
     }
 
+    // Appends the address of the test contract as one ABI word, in place of the address of a
+    // node account (`fegen.Account`).
+    pub fn push_sender(mut self) uses (evm: Evm) {
+        self.push_word(evm.address().word())
+    }
+
     // Appends the low `bytes` bytes of `x`, most significant first.
     fn push_be(mut self, _ x: u256, bytes: u256) {
         var i: u256 = 0

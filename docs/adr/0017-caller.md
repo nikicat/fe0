@@ -54,3 +54,21 @@ calls another method of `ctx`, gets an error.
   tested against Fe.
 - SPEC §2's note that Fe0 cannot construct an `Address` changes: `ctx.caller()` and
   `Address::zero()` construct one.
+
+## Update (Nov 12)
+- **Any name, any number of effects.** Fe accepts `uses (c: Ctx)` and two effects of type `Ctx`
+  **[✓]**. An effect became a contract field of type `Ctx` with no storage (DESIGN.md §5). So
+  any name and several effects cost nothing extra, and Fe0 accepts them too.
+- **`uses (mut ctx)`** is accepted, as Fe accepts it **[✓]**.
+- SPEC §6, "The caller", gives the rules for `Ctx` effects.
+- **Size, at `-O s`:** The whole caller feature leaves LexProbe at 7,141 bytes. It takes
+  ParseProbe from 24,213 to 25,448 bytes (+1,235), CheckProbe from 39,684 to 41,074 (+1,390)
+  and CompileProbe from 53,151 to 54,641 (+1,490).
+- Fe0 matches the fixed words through `Text.packed` instead of `spells<N>`. The words are
+  `Spelling` constants passed as arguments, which costs about 470 bytes per phase. This is the
+  constant-argument shape of argotorg/fe#1964 in [WORKAROUNDS.md](../WORKAROUNDS.md). The cost
+  is accepted for now. Measure it again on a release that has #1978.
+- The parser reads the effects with the comma-list loop it shares with other lists, which
+  saved 310 bytes.
+- Lexing `::` as one token cost 244 bytes in the lexer. So the lexer keeps two `:` tokens, and
+  the parser checks that they touch.

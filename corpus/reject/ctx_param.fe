@@ -1,0 +1,16 @@
+// expect: N005 9:10
+// A parameter may not take the name of a `Ctx` effect (SPEC §5.2). Fe rejects it too
+// (8-0134).
+msg M {
+    #[selector = 1]
+    Get -> u256,
+}
+contract C uses (ctx: Ctx) {
+    init(ctx: u256) uses (ctx) {}
+
+    recv M {
+        Get {} -> u256 {
+            0
+        }
+    }
+}

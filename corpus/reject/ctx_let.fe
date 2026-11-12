@@ -1,0 +1,15 @@
+// expect: N005 11:13
+// fe: accepts
+// A local may not take the name of a `Ctx` effect (SPEC §5.2), although Fe allows it.
+msg M {
+    #[selector = 1]
+    Get -> Address,
+}
+contract C uses (ctx: Ctx) {
+    recv M {
+        Get {} -> Address uses (ctx) {
+            let ctx: u256 = 1
+            Address::zero()
+        }
+    }
+}

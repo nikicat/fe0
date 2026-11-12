@@ -84,7 +84,7 @@ pub const P_RECORD_LITERAL: DiagCode = DiagCode { raw: 2012 }
 // variants, fields, binds, arms or `recv` blocks.
 pub const N_DUPLICATE: DiagCode = DiagCode { raw: 3001 }
 pub const N_UNKNOWN_NAME: DiagCode = DiagCode { raw: 3002 }
-// A function, msg or contract used as a value.
+// A function, msg, contract or `Ctx` effect used as a value.
 pub const N_NOT_A_VALUE: DiagCode = DiagCode { raw: 3003 }
 pub const N_NOT_A_FUNCTION: DiagCode = DiagCode { raw: 3004 }
 // A local or parameter named like a contract field (SPEC §5.2).
@@ -100,7 +100,7 @@ pub const N_MISSING_BIND: DiagCode = DiagCode { raw: 3011 }
 // A missing, extra or wrong argument label (SPEC §5.4).
 pub const N_BAD_LABEL: DiagCode = DiagCode { raw: 3012 }
 pub const N_OUTSIDE_LOOP: DiagCode = DiagCode { raw: 3013 }
-// Assigning to a name that is neither a `var` local nor a contract field.
+// Assigning to a name that is neither a `var` local nor a storage field.
 pub const N_ASSIGN_IMMUTABLE: DiagCode = DiagCode { raw: 3014 }
 pub const N_TWO_CONTRACTS: DiagCode = DiagCode { raw: 3015 }
 // Two variants with one selector, in one msg or in two msgs the contract receives (SPEC §6).
@@ -124,7 +124,7 @@ pub const T_NEEDS_TYPE: DiagCode = DiagCode { raw: 4005 }
 
 // Reading a field that `uses` does not list (SPEC §6).
 pub const E_NOT_IN_USES: DiagCode = DiagCode { raw: 5116 }
-// Assigning to a field that `uses` does not list as `mut` (SPEC §6).
+// Assigning to a storage field that `uses` does not list as `mut` (SPEC §6).
 pub const E_NOT_MUT: DiagCode = DiagCode { raw: 5018 }
 // A `uses` entry that names no field of the contract (SPEC §6).
 pub const E_UNKNOWN_FIELD: DiagCode = DiagCode { raw: 5051 }

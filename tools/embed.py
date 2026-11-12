@@ -14,7 +14,8 @@ of the program deploys and sends. A call script has one entry per line, and `#` 
 
 An argument is an integer, `MAX` (2**256 - 1), `true` or `false`, or such values combined with
 parentheses and the operators + - * // ** << >> & | ^. It is written without spaces, as in
-`2**255` or `MAX-1`, and its value must fit in 256 bits. Any entry but `raw` may end with
+`2**255` or `MAX-1`, and its value must fit in 256 bits. An argument may also be `accountN`, which
+names the address of node account N (fegen.Account). Any entry but `raw` may end with
 `value=N`, the wei sent with it, `extra=N`, a number of bytes appended after the words, and
 `from=N`, the node account that sends it. `from` applies only on a node (tools/node.py), as
 DESIGN.md §10, "On a node", says.
@@ -49,9 +50,10 @@ from pathlib import Path
 from typing import ClassVar, Never, NamedTuple, NewType, Protocol, Self
 
 import fegen
-from fegen import (MAX, ROOT, ByteOffset, Call, Case, Cases, Deploy, DiagCode, DiagWord, DiffTest,
-                   ExtraBytes, Failure, FeLine, FeName, FeSource, Kind, LineCol, PanicCode, Payload,
-                   PhaseLetter, RawCall, Selector, Sender, TestName, Wei, Word)
+from fegen import (MAX, ROOT, Account, AccountIndex, Arg, ByteOffset, Call, Case, Cases, Deploy,
+                   DiagCode, DiagWord, DiffTest, ExtraBytes, Failure, FeLine, FeName, FeSource,
+                   Kind, LineCol, PanicCode, Payload, PhaseLetter, RawCall, Selector, TestName, Wei,
+                   Word)
 
 CORPUS: Path = ROOT / "corpus"
 REJECTS: Path = CORPUS / "reject"
@@ -80,6 +82,8 @@ OPS: dict[type[ast.operator], Callable[[int, int], int]] = {
     ast.BitOr: operator.or_, ast.BitAnd: operator.and_, ast.BitXor: operator.xor}
 _MAX_WORD = "MAX"
 NAMES: dict[str, Word] = {_MAX_WORD: MAX, "true": Word(1), "false": Word(0)}
+# The start of an argument that names a node account by index, as in `account1`.
+_ACCOUNT = "account"
 
 
 def word(text: str) -> Word:
@@ -104,6 +108,16 @@ def word(text: str) -> Word:
         raise ScriptError(f"Errors when reading the argument {text!r}: "
                           "it is not an integer expression whose value fits in 256 bits") from None
     return Word(v)
+
+
+def arg(text: str) -> Arg:
+    """Returns the argument that `text` gives: an account by index, or a word.
+
+    Errors as `word` does when `text` names no account.
+    """
+    if m := re.fullmatch(rf"{_ACCOUNT}(\d+)", text):
+        return Account(AccountIndex(int(m[1])))
+    return word(text)
 
 
 # A Fe0 line comment, as Lexer.skip_trivia reads it (SPEC §1).
@@ -132,23 +146,23 @@ class ScriptOption(StrEnum):
     VALUE = "value"
     # The number of bytes appended after the words.
     EXTRA = "extra"
-    # The account that sends the entry (fegen.Sender).
+    # The node account that sends the entry (fegen.AccountIndex).
     FROM = "from"
 
 
 class Args(NamedTuple):
     """The argument words and options of an entry other than `raw`."""
 
-    words: tuple[Word, ...] = ()
+    words: tuple[Arg, ...] = ()
     value: Wei = Wei(0)
     extra: ExtraBytes = ExtraBytes(0)
-    sender: Sender = Sender(0)
+    sender: AccountIndex = AccountIndex(0)
 
     def render(self) -> list[str]:
         """The tokens of the words and of each option that is not 0."""
         opts = {ScriptOption.VALUE: self.value, ScriptOption.EXTRA: self.extra,
                 ScriptOption.FROM: self.sender}
-        return [*map(_render_word, self.words),
+        return [*map(_render_arg, self.words),
                 *(f"{o}={_render_word(v)}" for o, v in opts.items() if v)]
 
     @classmethod
@@ -162,9 +176,9 @@ class Args(NamedTuple):
         while args and (m := re.fullmatch(rf"({'|'.join(ScriptOption)})=(.*)", args[-1])):
             args.pop()
             opts[ScriptOption(m[1])] = word(m[2])
-        return cls(tuple(word(a) for a in args), Wei(opts.get(ScriptOption.VALUE, 0)),
+        return cls(tuple(map(arg, args)), Wei(opts.get(ScriptOption.VALUE, 0)),
                    ExtraBytes(opts.get(ScriptOption.EXTRA, 0)),
-                   Sender(opts.get(ScriptOption.FROM, 0)))
+                   AccountIndex(opts.get(ScriptOption.FROM, 0)))
 
     def deploy(self) -> Deploy:
         """Returns a deployment with these constructor arguments."""
@@ -189,9 +203,9 @@ class ScriptLine(ABC):
         Errors when the entry names a variant that `sels` lacks.
         """
 
-    def sender(self) -> Sender:
+    def sender(self) -> AccountIndex:
         """Returns the account that sends the entry."""
-        return Sender(0)
+        return AccountIndex(0)
 
     def case(self, number: int, sels: Mapping[FeName, Selector]) -> Case:
         """Returns the entry as the case `number`, with `sels` as the selectors by variant name.
@@ -228,7 +242,7 @@ class ArgsLine(ScriptLine):
 
     args: Args
 
-    def sender(self) -> Sender:
+    def sender(self) -> AccountIndex:
         return self.args.sender
 
 
@@ -309,12 +323,18 @@ def _render_word(w: int) -> str:
     return f"{w:#x}" if w >= 2**64 else str(w)
 
 
+def _render_arg(a: Arg) -> str:
+    """The argument text of `a`: an account by index, a word as _render_word gives it."""
+    return f"{_ACCOUNT}{a.index}" if isinstance(a, Account) else _render_word(a)
+
+
 def check_script_line() -> None:
     """Checks that rendered call-script entries parse back to the same entries."""
     for line in [InitLine(Args((Word(5), Word(1)))),
                  DeployLine(Args((Word(2),), value=Wei(7), extra=ExtraBytes(3))),
                  NamedCallLine(FeName("Set"), Args((MAX, Word(2**200)), extra=ExtraBytes(1),
-                                                   sender=Sender(2))),
+                                                   sender=AccountIndex(2))),
+                 NamedCallLine(FeName("Give"), Args((Account(AccountIndex(1)), Word(3)))),
                  SelectorCallLine(Selector(0x2a)), RawLine(bytes([0, 0x2a])), RawLine(b"")]:
         assert ScriptLine.parse(line.render()) == line, line
 

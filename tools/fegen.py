@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -36,13 +36,30 @@ Push = NewType("Push", str)
 Wei = NewType("Wei", int)
 # A 256-bit ABI word.
 Word = NewType("Word", int)
-# The index of the account that sends a deployment or call, among the node's funded accounts.
-# It applies only on a node (tools/node.py). DESIGN.md §10, "On a node", says why.
-Sender = NewType("Sender", int)
+# The index of a node account among the node's funded accounts.
+AccountIndex = NewType("AccountIndex", int)
 # A number of EXTRA_BYTE bytes that a deployment or call appends after its ABI words.
 ExtraBytes = NewType("ExtraBytes", int)
 # The code of a Panic that a test fails with (`Kind` says what it names).
 PanicCode = NewType("PanicCode", int)
+
+
+@dataclass(frozen=True)
+class Account:
+    """The address of a node account, as an argument of a deployment or call.
+
+    On a node, it is the address of the account at `index`, which a `from` of the same index
+    sends from. Under `fe test`, it is the address of the test contract for every index.
+    DESIGN.md §10, "On a node", says why.
+    """
+
+    index: AccountIndex
+
+
+# An argument of a deployment or call, which takes one ABI word.
+Arg = Word | Account
+# The address of the node account of an index, as an ABI word.
+AccountWord = Callable[[AccountIndex], Word]
 
 
 class Selector(int):
@@ -130,8 +147,8 @@ class Payload(ABC):
         """Returns the method calls that append the bytes."""
 
     @abstractmethod
-    def encode(self) -> bytes:
-        """Returns the bytes, as the pushes append them."""
+    def encode(self, address: AccountWord) -> bytes:
+        """Returns the bytes, as the pushes append them, with `address` giving each Account."""
 
     def build(self, var: FeName) -> list[FeLine]:
         """Returns the Fe statements that declare `var` as a `difftest::Payload` and fill it with
@@ -145,21 +162,28 @@ class Payload(ABC):
 EXTRA_BYTE: int = 0x99
 
 
-def push_words(words: Sequence[Word], extra: ExtraBytes) -> list[Push]:
+def push_arg(a: Arg) -> Push:
+    """Returns the Payload method call that appends the argument `a` as one ABI word."""
+    return Push("push_sender()") if isinstance(a, Account) else Push(f"push_word({a:#x})")
+
+
+def push_words(words: Sequence[Arg], extra: ExtraBytes) -> list[Push]:
     """Returns the Payload method calls that append the ABI `words`, then `extra` bytes of
     EXTRA_BYTE."""
-    return [Push(f"push_word({w:#x})") for w in words] + [Push(f"push({EXTRA_BYTE:#x})")] * extra
+    return [*map(push_arg, words)] + [Push(f"push({EXTRA_BYTE:#x})")] * extra
 
 
-def encode_words(words: Sequence[Word], extra: ExtraBytes) -> bytes:
-    """Returns the ABI `words`, then `extra` bytes of EXTRA_BYTE, as push_words appends them."""
-    return b"".join(w.to_bytes(32, "big") for w in words) + bytes([EXTRA_BYTE]) * extra
+def encode_words(words: Sequence[Arg], extra: ExtraBytes, address: AccountWord) -> bytes:
+    """Returns the ABI `words`, then `extra` bytes of EXTRA_BYTE, as push_words appends them.
+    `address` gives the word of each Account."""
+    resolved = (address(a.index) if isinstance(a, Account) else a for a in words)
+    return b"".join(w.to_bytes(32, "big") for w in resolved) + bytes([EXTRA_BYTE]) * extra
 
 
 class Deploy(Payload):
     """Constructor arguments: words, then `extra` bytes."""
 
-    def __init__(self, *words: Word, extra: ExtraBytes = ExtraBytes(0),
+    def __init__(self, *words: Arg, extra: ExtraBytes = ExtraBytes(0),
                  value: Wei = Wei(0)) -> None:
         super().__init__(value)
         self.words, self.extra = words, extra
@@ -167,14 +191,14 @@ class Deploy(Payload):
     def pushes(self) -> list[Push]:
         return push_words(self.words, self.extra)
 
-    def encode(self) -> bytes:
-        return encode_words(self.words, self.extra)
+    def encode(self, address: AccountWord) -> bytes:
+        return encode_words(self.words, self.extra, address)
 
 
 class Call(Payload):
     """Calldata: a 4-byte selector, words, then `extra` bytes."""
 
-    def __init__(self, sel: Selector, *words: Word, extra: ExtraBytes = ExtraBytes(0),
+    def __init__(self, sel: Selector, *words: Arg, extra: ExtraBytes = ExtraBytes(0),
                  value: Wei = Wei(0)) -> None:
         super().__init__(value)
         self.sel, self.words, self.extra = sel, words, extra
@@ -182,8 +206,8 @@ class Call(Payload):
     def pushes(self) -> list[Push]:
         return [Push(f"push_selector({self.sel:#x})")] + push_words(self.words, self.extra)
 
-    def encode(self) -> bytes:
-        return self.sel.to_bytes(4, "big") + encode_words(self.words, self.extra)
+    def encode(self, address: AccountWord) -> bytes:
+        return self.sel.to_bytes(4, "big") + encode_words(self.words, self.extra, address)
 
 
 class RawCall(Payload):
@@ -196,7 +220,7 @@ class RawCall(Payload):
     def pushes(self) -> list[Push]:
         return [Push(f"push({b})") for b in self.data]
 
-    def encode(self) -> bytes:
+    def encode(self, address: AccountWord) -> bytes:
         return bytes(self.data)
 
 
@@ -264,7 +288,9 @@ class Case(NamedTuple):
 
     number: int
     payload: Payload
-    sender: Sender = Sender(0)
+    # The account that sends the case. It applies only on a node (tools/node.py), as DESIGN.md
+    # §10, "On a node", says.
+    sender: AccountIndex = AccountIndex(0)
 
     @property
     def code(self) -> FeExpr:

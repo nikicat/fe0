@@ -22,7 +22,7 @@ impl core::ops::Eq for Kind {
 impl Kind {
     // Whether nodes of this kind are expressions, which have a value.
     pub fn is_expr(self) -> bool {
-        self.code >= NODE_INT.code && self.code <= NODE_ASSERT.code
+        self.code >= NODE_INT.code
     }
 }
 
@@ -40,9 +40,11 @@ pub const NODE_PARAM: Kind = Kind { code: 3 }
 pub const NODE_MSG: Kind = Kind { code: 4 }
 // variant: name, ty (the return type), word (the selector), list of FIELDs.
 pub const NODE_VARIANT: Kind = Kind { code: 5 }
-// field of a variant or a contract: name, ty.
+// field of a variant or a contract: name, ty. An effect of a contract, such as `ctx: Ctx`, is
+// a contract field of type TY_CTX, so that `uses` grants it as it grants a storage field.
 pub const NODE_FIELD: Kind = Kind { code: 6 }
-// contract: name, list of FIELDs, init (INIT or NO_NODE), recvs (a list of RECVs).
+// contract: name, list of FIELDs (its effects first), init (INIT or NO_NODE), recvs (a list
+// of RECVs).
 pub const NODE_CONTRACT: Kind = Kind { code: 7 }
 // init: list of PARAMs, use_list (a list of USEs), body BLOCK.
 pub const NODE_INIT: Kind = Kind { code: 8 }
@@ -70,6 +72,8 @@ pub const NODE_CONTINUE: Kind = Kind { code: 24 }
 pub const NODE_ASSIGN: Kind = Kind { code: 25 }
 
 // Expressions. Any expression node may also appear in a statement list.
+// Expressions are the last group of kinds, and is_expr relies on it.
+// Give a new kind of any other group a code below NODE_INT.
 // integer literal: word.
 pub const NODE_INT: Kind = Kind { code: 40 }
 // `true` or `false`: is_true.
@@ -90,6 +94,10 @@ pub const NODE_IF: Kind = Kind { code: 47 }
 pub const NODE_BLOCK: Kind = Kind { code: 48 }
 // `assert!`: cond, message (a STR or NO_NODE).
 pub const NODE_ASSERT: Kind = Kind { code: 49 }
+// `ctx.caller()`: name (the effect).
+pub const NODE_CALLER: Kind = Kind { code: 50 }
+// `Address::zero()`, with no slots.
+pub const NODE_ZERO_ADDRESS: Kind = Kind { code: 51 }
 
 // A type. A node's ty() holds one written in the source, or TY_NONE when none is written.
 // The checker also uses TY_UNIT, TY_NEVER and TY_INT.
@@ -114,6 +122,8 @@ pub const TY_NEVER: Ty = Ty { code: 5 }
 // The type of an integer expression made only of literals, operators, if-expressions and
 // blocks, such as `1 + 2` or `{ 1 }`.
 pub const TY_INT: Ty = Ty { code: 6 }
+// The type of an effect of the contract, `Ctx`. Only an effect has it, and it is not a value.
+pub const TY_CTX: Ty = Ty { code: 7 }
 
 impl Ty {
     // Whether an expression of this type may stand where `want` is expected.
@@ -133,7 +143,9 @@ impl Ty {
     }
 
     // Returns the number of bytes that a contract field of this type takes in storage (SPEC §6).
+    // An effect takes none.
     pub fn storage_bytes(self) -> usize {
+        if self == TY_CTX { return 0 }
         if self == TY_BOOL {
             return 1
         }
@@ -402,6 +414,14 @@ impl Node {
 
     pub fn new_assert(_ pos: Pos, cond: NodeId, message: NodeId) -> Node {
         Node::make(NODE_ASSERT, pos, a: cond.id, b: message.id, c: 0, d: 0)
+    }
+
+    pub fn new_caller(_ pos: Pos, effect: Sym) -> Node {
+        Node::make(NODE_CALLER, pos, a: effect.id, b: 0, c: 0, d: 0)
+    }
+
+    pub fn new_zero_address(_ pos: Pos) -> Node {
+        Node::make(NODE_ZERO_ADDRESS, pos, a: 0, b: 0, c: 0, d: 0)
     }
 
     // Returns the position of the token that diagnostics about the node point at.

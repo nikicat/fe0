@@ -1,0 +1,19 @@
+// expect: P002 9:21
+// fe: accepts
+// A free function may not declare `uses` in Fe0 (SPEC §5.5), although Fe allows an effect
+// there.
+msg M {
+    #[selector = 1]
+    Get -> Address,
+}
+fn who() -> Address uses (ctx: Ctx) {
+    ctx.caller()
+}
+
+contract C uses (ctx: Ctx) {
+    recv M {
+        Get {} -> Address uses (ctx) {
+            who()
+        }
+    }
+}

@@ -1,0 +1,15 @@
+// expect: N001 9:28
+// fe: accepts
+// Fe0 rejects the same `Ctx` effect twice in a contract's `uses` (SPEC §6, "The caller").
+// Fe accepts it.
+msg M {
+    #[selector = 1]
+    Get -> Address,
+}
+contract C uses (ctx: Ctx, ctx: Ctx) {
+    recv M {
+        Get {} -> Address uses (ctx) {
+            ctx.caller()
+        }
+    }
+}

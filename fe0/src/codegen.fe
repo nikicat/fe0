@@ -711,6 +711,10 @@ impl Gen {
             return self.if_expr(i)
         } else if k == NODE_BLOCK {
             return self.block(i)
+        } else if k == NODE_CALLER {
+            self.op(OP_CALLER)
+        } else if k == NODE_ZERO_ADDRESS {
+            self.push(0)
         } else {
             // NODE_ASSERT, the only other kind of expression.
             self.assert(i)

@@ -1,0 +1,13 @@
+// expect: P002 10:22
+// The colons of `Address::zero()` must touch (SPEC §1). Fe rejects this too.
+msg M {
+    #[selector = 1]
+    Get -> Address,
+}
+contract C {
+    recv M {
+        Get {} -> Address {
+            Address: :zero()
+        }
+    }
+}

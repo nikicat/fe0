@@ -1,0 +1,16 @@
+// expect: T001 13:13
+// Only a `Ctx` effect has `caller()` (SPEC §6, "The caller"). Fe rejects this too, because
+// `Address` has no such method.
+msg M {
+    #[selector = 1]
+    Get -> Address,
+}
+contract C uses (ctx: Ctx) {
+    mut owner: Address,
+
+    recv M {
+        Get {} -> Address uses (ctx, owner) {
+            owner.caller()
+        }
+    }
+}

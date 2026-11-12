@@ -1,0 +1,6 @@
+# On a node, the second Touch comes from another sender, so the last `Last` returns a new address.
+Last
+Touch
+Last
+Touch from=1
+Last
