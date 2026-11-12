@@ -18,3 +18,6 @@ Done means one of:
 ## Decisions
 - Rejecting cycles keeps the rule exact, and it is allowed by the subset rule. Check first
   whether any corpus program or planned demo needs recursion.
+- ADR 0021 (accepted Nov 12) chooses the second option: SPEC.md qualifies the subset rule
+  below Fe's stack limit, and recursive cycles stay allowed. The work
+  is the SPEC sentence and a note in DESIGN.md §8a.

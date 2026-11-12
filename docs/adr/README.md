@@ -27,3 +27,9 @@ To add one, copy the shape of an existing record and take the next number. When 
 | [0013](0013-no-var-node-kind.md) | No separate node kind for `var` | Nov 4 | accepted |
 | [0014](0014-contract-per-phase.md) | One contract per compiler phase | Nov 4 | accepted |
 | [0015](0015-move-to-26-6-0.md) | Move to Fe 26.6.0 | Nov 11 | accepted |
+| [0016](0016-steps-toward-real-contracts.md) | Grow Fe0 toward real contracts in steps | Nov 12 | accepted |
+| [0017](0017-caller.md) | Step 1: the caller, through a `Ctx` effect | Nov 12 | accepted |
+| [0018](0018-storage-maps.md) | Step 2: `StorageMap` fields | Nov 12 | accepted |
+| [0019](0019-events.md) | Step 3: events | Nov 12 | accepted |
+| [0020](0020-external-calls.md) | Step 4: typed calls to other contracts | Nov 12 | accepted |
+| [0021](0021-frames-gas-and-depth.md) | Keep frames in memory for now; reduce their cost in steps | Nov 12 | accepted |

@@ -12,6 +12,12 @@ spam). The prefilled submission link with the private submission code is in
 `docs/registration-confirmation.txt`, which is git-ignored and must never be committed, since
 the repo goes public. Resubmitting before the deadline is allowed; the latest valid one counts.
 
+
+## Decisions
+- The submission includes the steps of ADR 0016 (Tf435j, Tbrbh1, Trvpxf, T3jcng, Tddgpr) that
+  are done by Nov 24, and describes the rest as the plan. It also states the gas ratios of
+  ADR 0021 by kind of program.
+
 ## Next
 - README from the starter's SUBMISSION.md: pitch, problem, approach, Fe highlight (the effect
   check), architecture, build and test, demo, limitations, Fe0 spec link.
