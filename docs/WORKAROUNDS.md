@@ -96,15 +96,15 @@ master removes nothing before we move to a release that has it.
   runner. Cranelift and the linking already support AArch64 Linux.
   - **Where it bites:** the dev container on an arm64 host. There, the native reject tests
     of `tools/embed.py`, the native spikes and the native CLI (`fe0-cli`) do not build.
-  - **Upstream:** the issue argotorg/fe#1975 asks to open the checks. It is open. Opening
-    them is not quite enough: `ingots/std/src/sys/linux.fe` reads `st_mode` at x86-64's offset
-    (24), and AArch64's is 16. So `std::fs` would read the wrong field there. Fe0 does not
-    use `std::fs`.
+  - **Upstream:** argotorg/fe#1989, merged on Nov 12, opens both checks and reads `st_mode` at
+    AArch64's offset. It resolves argotorg/fe#1975. No release includes it yet (task T56pax).
   - **Workaround:** on an arm64 host, build 26.6.0 from source with both checks opened, and
     pass it as `FE=…` (or as the argument of `tools/spikes.sh`). The branch
     `native-aarch64-linux-v26.6.0` of our fork holds `v26.6.0` and one commit that opens
-    both checks. With it, our corpus, reject programs, CLI check and spikes pass (Nov 11). CI
-    runs on x86-64 with the official release, so it needs no patch.
+    both checks. The branch does not fix `st_mode`, so its `std::fs` reads x86-64's offset
+    (24, not 16). Fe0 does not use `std::fs`. With this build, our corpus, reject programs,
+    CLI check and spikes pass (Nov 11). CI runs on x86-64 with the official release, so it
+    needs no patch.
 
     ```sh
     git clone --depth 1 -b native-aarch64-linux-v26.6.0 https://github.com/nikicat/fe.git fe-26.6.0
@@ -112,5 +112,5 @@ master removes nothing before we move to a release that has it.
     (cd crates/tree-sitter-fe && npm ci)
     cargo build --locked --profile dist -p fe --features fe/cranelift   # target/dist/fe
     ```
-  - **Remove when:** a release we use builds native code on AArch64 Linux (#1975), or the
+  - **Remove when:** a release we use builds native code on AArch64 Linux (#1989), or the
     dev container runs on an x86-64 host.

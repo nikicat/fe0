@@ -1,6 +1,5 @@
 ---
 status: todo
-deps: [T3mm27]
 tags: [upstream]
 ---
 # Upstream Fe follow-ups after the AArch64 PR
@@ -9,8 +8,8 @@ tags: [upstream]
 The unsmell run of Nov 11 on the AArch64 PR branch (`/workspaces/fe-master`,
 branch `native-aarch64-linux`) found smells that the PR does not fix. Each one
 below says where it is, what is wrong and a fix. Each would be its own upstream
-PR, after T3mm27 is merged. Done means each is sent upstream or dropped with a
-reason. Findings and patches: `.git/unsmell/20261111-224656/` in fe-master.
+PR. The AArch64 PR, argotorg/fe#1989, was merged on Nov 12. Done means each is
+sent upstream or dropped with a reason, and the fork is dropped (below). Findings and patches: `.git/unsmell/20261111-224656/` in fe-master.
 
 ## The platform (from code the PR changed)
 - **p1. `Option<Platform>` means two things** (findings x-2, b1-3, b2-3, b3-4).
@@ -53,3 +52,8 @@ reason. Findings and patches: `.git/unsmell/20261111-224656/` in fe-master.
 - **p9.** `prepare_tests` (crates/fe/src/test/native.rs) builds the C launcher
   source inline between its named steps, and takes 10 parameters. Fix: extract
   `launcher_source(tests)`, and pass the suite settings as one value.
+
+## Drop the fork
+- #1989 is merged but in no release yet (the latest is v26.6.0, Nov 10). When a release we
+  use includes it, build with that release on AArch64, drop our fork's branch
+  `native-aarch64-linux-v26.6.0`, and remove the AArch64 entry from docs/WORKAROUNDS.md.
