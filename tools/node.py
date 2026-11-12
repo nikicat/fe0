@@ -19,6 +19,7 @@ from web3.types import (CallTrace, DiffModeTrace, TraceConfig, TraceData, TxPara
 
 import cli_check
 import embed
+import gen
 from fegen import DISPATCH, FE, ROOT, Case
 
 # The node's hardfork. Cancun has no calldata floor price (EIP-7623), so the gas of a call less
@@ -83,9 +84,19 @@ class Build(Enum):
         return bytes.fromhex((out / f"{program.diff.contract}.bin").read_text().strip())
 
 
-def programs(paths: list[Path]) -> list[Path]:
-    """Returns `paths` as absolute paths, or every program of the corpus when there are none."""
-    return [p.resolve() for p in paths] or sorted(embed.CORPUS.glob("*.fe"))
+def programs(paths: list[Path], default: Iterable[Path]) -> list[Path]:
+    """Returns `paths` as absolute paths, or `default`, sorted, when there are none."""
+    return [p.resolve() for p in paths] or sorted(default)
+
+
+def corpus() -> list[Path]:
+    """Returns the hand-written programs of the corpus."""
+    return list(embed.CORPUS.glob("*.fe"))
+
+
+def generated() -> list[Path]:
+    """Returns the programs that tools/gen.py wrote."""
+    return list(gen.GEN.glob("*.fe"))
 
 
 class Log(NamedTuple):

@@ -15,9 +15,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 
-from fegen import (CHAIN_LEN, FE0, MAX, MAX_DEPTH, Call, Case, Cases, Deploy, DiffTest, FeCode,
-                   FeLine, FeName, FeSource, Selector, TestName, Wei, Word, difftest_use, lines,
-                   source, write_formatted)
+from fegen import (CHAIN_LEN, FE0, MAX, MAX_DEPTH, Call, Case, Cases, Deploy, DiffTest, ExtraBytes,
+                   FeCode, FeLine, FeName, FeSource, Selector, TestName, Wei, Word, difftest_use,
+                   lines, source, write_formatted)
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,8 @@ class Msg:
                                   f"    {v.declaration},\n" for v in self.variants)
                         + "}\n")
 
-    def call(self, variant: str, *words: Word, extra: int = 0, value: Wei = Wei(0)) -> Call:
+    def call(self, variant: str, *words: Word, extra: ExtraBytes = ExtraBytes(0),
+             value: Wei = Wei(0)) -> Call:
         """A call to the variant named `variant`. Errors when the msg has no such variant."""
         for v in self.variants:
             if v.name == variant:
@@ -181,7 +182,7 @@ OPS_MSG = Msg(FeName("CgOpsMsg"),
               tuple(arm.variant(Selector(n)) for n, arm in enumerate(OPS_ARMS, start=1)))
 
 
-def op(name: str, *words: Word, extra: int = 0, value: Wei = Wei(0)) -> Call:
+def op(name: str, *words: Word, extra: ExtraBytes = ExtraBytes(0), value: Wei = Wei(0)) -> Call:
     """A call to the CgOps arm `name`."""
     return OPS_MSG.call(name, *words, extra=extra, value=value)
 
@@ -283,8 +284,8 @@ def ops_calls() -> list[Call]:
           op("LoadX"), op("Swap", one, two), op("LoadX"), op("Bump"), op("Bump"), op("LoadX")]
     c += [op("Same", CC, CC), op("Same", CC, Word(0xdd)), op("Same", Word(1 << 160), Word(0))]
     # Short calldata, extra bytes and value.
-    c += [op("Add", one), op("Add", one, two, extra=3), op("LoadX", value=Wei(5)),
-          op("LoadX", extra=1)]
+    c += [op("Add", one), op("Add", one, two, extra=ExtraBytes(3)), op("LoadX", value=Wei(5)),
+          op("LoadX", extra=ExtraBytes(1))]
     return c
 
 
@@ -442,12 +443,13 @@ PROGRAMS = [
             [COUNTER_MSG.call("Get"), COUNTER_MSG.call("Increment"), COUNTER_MSG.call("Increment"),
              COUNTER_MSG.call("Get"), COUNTER_MSG.call("Increment", value=Wei(1)),
              COUNTER_MSG.call("Get", Word(5))],
-            deploys=[Deploy(value=Wei(5)), Deploy(extra=1)]),
+            deploys=[Deploy(value=Wei(5)), Deploy(extra=ExtraBytes(1))]),
     program(TestName("ops"), FeName("CgOps"), ops_program(), ops_calls()),
     program(TestName("init"), FeName("CgInit"), INIT,
             [INIT_MSG.call("Get"), INIT_MSG.call("Flag"), INIT_MSG.call("Who")],
             deploys=[Deploy(), Deploy(AA, Word(1)), Deploy(AA, Word(2), CC),
-                     Deploy(AA, Word(1), Word((1 << 200) | 0xcc)), Deploy(AA, Word(1), CC, extra=7),
+                     Deploy(AA, Word(1), Word((1 << 200) | 0xcc)),
+                     Deploy(AA, Word(1), CC, extra=ExtraBytes(7)),
                      Deploy(AA, Word(1), CC, value=Wei(5))],
             main=Deploy(AA, Word(1), CC)),
     program(TestName("misc"), FeName("CgMisc"), MISC,

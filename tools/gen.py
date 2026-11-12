@@ -39,7 +39,8 @@ from typing import NamedTuple
 
 import embed
 from embed import Args, DeployLine, InitLine, NamedCallLine, ScriptLine
-from fegen import MAX, PROBE_SELECTOR, ROOT, FeLine, FeName, FeSource, Selector, Wei, Word, indent
+from fegen import (MAX, PROBE_SELECTOR, ROOT, ExtraBytes, FeLine, FeName, FeSource, Selector, Wei,
+                   Word, indent)
 
 GEN: Path = ROOT / "corpus/gen"
 OUT: Path = ROOT / "out/gen"
@@ -775,7 +776,7 @@ class Gen:
         """Argument words for `types`, sometimes malformed, and options."""
         words = [self.word(t) for t in types]
         value = Wei(0)
-        extra = 0
+        extra = ExtraBytes(0)
         r = self.rng.random()
         if r < 0.08 and words:
             words.pop()
@@ -787,7 +788,7 @@ class Gen:
         elif r < 0.3:
             value = Wei(self.rng.choice([1, 7]))
         if self.chance(0.1):
-            extra = self.rng.randint(1, 40)
+            extra = ExtraBytes(self.rng.randint(1, 40))
         return Args(tuple(words), value, extra)
 
     def calls(self, init_params: list[Param], variants: list[Variant]) -> str:

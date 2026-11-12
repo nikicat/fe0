@@ -2,8 +2,8 @@
 """Check Fe0 against Fe on a node: the second differential harness of ADR 0016, step 0.
 
 DESIGN.md §10, "On a node", says why it exists. It deploys Fe0's build and Fe's build of each
-program on a local anvil node (node.py) and sends the program's call script. For each
-deployment and call, the two builds must agree on:
+program of the corpus and of corpus/gen/ (tools/gen.py) on a local anvil node (node.py), and
+sends the program's call script. For each deployment and call, the two builds must agree on:
 
 - whether it succeeded;
 - the return data of a call, and the revert data of a failure;
@@ -73,10 +73,11 @@ def main() -> None:
     ap.add_argument("-O", dest="reference", type=Build, choices=Build.fe(), default=Build.FE_O1,
                     metavar="LEVEL",
                     help=f"Fe's optimization level: {levels} (default {Build.FE_O1.level})")
-    ap.add_argument("programs", nargs="*", type=Path, help="the programs (default: the corpus)")
+    ap.add_argument("programs", nargs="*", type=Path,
+                    help="the programs (default: the corpus and corpus/gen/)")
     args = ap.parse_args()
     reference: Build = args.reference
-    programs = node.programs(args.programs)
+    programs = node.programs(args.programs, [*node.corpus(), *node.generated()])
     cli_check.build()
     failed = 0
     with Node() as n:

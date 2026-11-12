@@ -50,8 +50,8 @@ from typing import ClassVar, Never, NamedTuple, NewType, Protocol, Self
 
 import fegen
 from fegen import (MAX, ROOT, ByteOffset, Call, Case, Cases, Deploy, DiagCode, DiagWord, DiffTest,
-                   Failure, FeLine, FeName, FeSource, Kind, LineCol, PanicCode, Payload, PhaseLetter,
-                   RawCall, Selector, Sender, TestName, Wei, Word)
+                   ExtraBytes, Failure, FeLine, FeName, FeSource, Kind, LineCol, PanicCode, Payload,
+                   PhaseLetter, RawCall, Selector, Sender, TestName, Wei, Word)
 
 CORPUS: Path = ROOT / "corpus"
 REJECTS: Path = CORPUS / "reject"
@@ -141,7 +141,7 @@ class Args(NamedTuple):
 
     words: tuple[Word, ...] = ()
     value: Wei = Wei(0)
-    extra: int = 0
+    extra: ExtraBytes = ExtraBytes(0)
     sender: Sender = Sender(0)
 
     def render(self) -> list[str]:
@@ -163,7 +163,8 @@ class Args(NamedTuple):
             args.pop()
             opts[ScriptOption(m[1])] = word(m[2])
         return cls(tuple(word(a) for a in args), Wei(opts.get(ScriptOption.VALUE, 0)),
-                   opts.get(ScriptOption.EXTRA, 0), Sender(opts.get(ScriptOption.FROM, 0)))
+                   ExtraBytes(opts.get(ScriptOption.EXTRA, 0)),
+                   Sender(opts.get(ScriptOption.FROM, 0)))
 
     def deploy(self) -> Deploy:
         """Returns a deployment with these constructor arguments."""
@@ -311,8 +312,9 @@ def _render_word(w: int) -> str:
 def check_script_line() -> None:
     """Checks that rendered call-script entries parse back to the same entries."""
     for line in [InitLine(Args((Word(5), Word(1)))),
-                 DeployLine(Args((Word(2),), value=Wei(7), extra=3)),
-                 NamedCallLine(FeName("Set"), Args((MAX, Word(2**200)), extra=1, sender=Sender(2))),
+                 DeployLine(Args((Word(2),), value=Wei(7), extra=ExtraBytes(3))),
+                 NamedCallLine(FeName("Set"), Args((MAX, Word(2**200)), extra=ExtraBytes(1),
+                                                   sender=Sender(2))),
                  SelectorCallLine(Selector(0x2a)), RawLine(bytes([0, 0x2a])), RawLine(b"")]:
         assert ScriptLine.parse(line.render()) == line, line
 

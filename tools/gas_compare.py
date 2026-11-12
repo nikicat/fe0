@@ -88,7 +88,7 @@ def main() -> None:
     ap.add_argument("--calls", action="store_true", help="list each call")
     ap.add_argument("programs", nargs="*", type=Path, help="the programs (default: the corpus)")
     args = ap.parse_args()
-    programs = node.programs(args.programs)
+    programs = node.programs(args.programs, node.corpus())
     cli_check.build()
     with Node() as n:
         results = []

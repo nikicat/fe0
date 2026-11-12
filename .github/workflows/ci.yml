@@ -55,3 +55,8 @@ jobs:
             echo "::group::native CLI"
             uv run --project tools --locked tools/cli_check.py
             echo "::endgroup::"
+            # ADR 0016, step 0: senders, logs and storage writes, on anvil. Like the native CLI
+            # check, it covers the generated programs too.
+            echo "::group::programs on a node"
+            uv run --project tools --locked tools/node_check.py
+            echo "::endgroup::"

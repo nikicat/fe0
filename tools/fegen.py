@@ -39,6 +39,8 @@ Word = NewType("Word", int)
 # The index of the account that sends a deployment or call, among the node's funded accounts.
 # It applies only on a node (tools/node.py). DESIGN.md §10, "On a node", says why.
 Sender = NewType("Sender", int)
+# A number of EXTRA_BYTE bytes that a deployment or call appends after its ABI words.
+ExtraBytes = NewType("ExtraBytes", int)
 # The code of a Panic that a test fails with (`Kind` says what it names).
 PanicCode = NewType("PanicCode", int)
 
@@ -143,13 +145,13 @@ class Payload(ABC):
 EXTRA_BYTE: int = 0x99
 
 
-def push_words(words: Sequence[Word], extra: int) -> list[Push]:
+def push_words(words: Sequence[Word], extra: ExtraBytes) -> list[Push]:
     """Returns the Payload method calls that append the ABI `words`, then `extra` bytes of
     EXTRA_BYTE."""
     return [Push(f"push_word({w:#x})") for w in words] + [Push(f"push({EXTRA_BYTE:#x})")] * extra
 
 
-def encode_words(words: Sequence[Word], extra: int) -> bytes:
+def encode_words(words: Sequence[Word], extra: ExtraBytes) -> bytes:
     """Returns the ABI `words`, then `extra` bytes of EXTRA_BYTE, as push_words appends them."""
     return b"".join(w.to_bytes(32, "big") for w in words) + bytes([EXTRA_BYTE]) * extra
 
@@ -157,7 +159,8 @@ def encode_words(words: Sequence[Word], extra: int) -> bytes:
 class Deploy(Payload):
     """Constructor arguments: words, then `extra` bytes."""
 
-    def __init__(self, *words: Word, extra: int = 0, value: Wei = Wei(0)) -> None:
+    def __init__(self, *words: Word, extra: ExtraBytes = ExtraBytes(0),
+                 value: Wei = Wei(0)) -> None:
         super().__init__(value)
         self.words, self.extra = words, extra
 
@@ -171,7 +174,8 @@ class Deploy(Payload):
 class Call(Payload):
     """Calldata: a 4-byte selector, words, then `extra` bytes."""
 
-    def __init__(self, sel: Selector, *words: Word, extra: int = 0, value: Wei = Wei(0)) -> None:
+    def __init__(self, sel: Selector, *words: Word, extra: ExtraBytes = ExtraBytes(0),
+                 value: Wei = Wei(0)) -> None:
         super().__init__(value)
         self.sel, self.words, self.extra = sel, words, extra
 
