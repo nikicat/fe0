@@ -4,7 +4,7 @@
 
 use ingot::asm::*
 use ingot::ast::*
-use ingot::check::{Checked, FrameSlot, check}
+use ingot::check::{Checked, FrameSlot, StoragePlace, check}
 use ingot::diag::*
 use ingot::io::Source
 use ingot::lexer::*
@@ -458,13 +458,45 @@ impl Gen {
     // Pops the top word into the variable that node `d` declares: a local or a contract field.
     fn store(mut self, _ d: NodeId) {
         if self.node(d).kind == NODE_FIELD {
-            self.push(self.c.storage_slot(d).word())
-            self.op(OP_SSTORE)
+            self.store_field(self.c.storage_place(d))
         } else {
             self.fp_plus(self.local_offset(d))
             self.op(OP_MSTORE)
         }
         self.body.depth -= 1
+    }
+
+    // Pops the top word into the field at `p`. A field that shares its slot replaces only its
+    // own bytes of the slot.
+    fn store_field(mut self, _ p: StoragePlace) {
+        if !p.whole() {
+            if p.shift() > 0 {
+                self.push(p.shift())
+                self.op(OP_SHL)
+            }
+            self.push(p.slot())
+            self.op(OP_SLOAD)
+            self.push(p.mask() << p.shift())
+            self.op(OP_NOT)
+            self.op(OP_AND)
+            self.op(OP_OR)
+        }
+        self.push(p.slot())
+        self.op(OP_SSTORE)
+    }
+
+    // Pushes the value of the field at `p`.
+    fn load_field(mut self, _ p: StoragePlace) {
+        self.push(p.slot())
+        self.op(OP_SLOAD)
+        if p.shift() > 0 {
+            self.push(p.shift())
+            self.op(OP_SHR)
+        }
+        if p.shared_above() {
+            self.push(p.mask())
+            self.op(OP_AND)
+        }
     }
 
     // Pushes the value of the name that node `d` declares: a constant, a field or a local.
@@ -473,8 +505,7 @@ impl Gen {
         if k == NODE_CONST {
             self.push(self.c.const_value(d))
         } else if k == NODE_FIELD {
-            self.push(self.c.storage_slot(d).word())
-            self.op(OP_SLOAD)
+            self.load_field(self.c.storage_place(d))
         } else {
             self.fp_plus(self.local_offset(d))
             self.op(OP_MLOAD)

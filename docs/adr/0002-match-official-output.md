@@ -9,7 +9,8 @@ official compiler's. The differential harness can only check that if "the same" 
 bytes. Probing the official compiler (`spike-layout/`, master `d217a51bf`, from `fe test
 --trace-evm` and revert payloads) gave:
 - **Storage:** one 32-byte slot per plain field, in declaration order from 0, with no packing.
-  `true` is stored as 1.
+  `true` is stored as 1. Fe 26.6.0 packs narrow fields into shared slots (#1826), and Fe0
+  follows it. SPEC §6 has the current rule.
 - **Return data:** standard ABI, one 32-byte word per value.
 - **Panics:** `Panic(0x11)` for overflow and underflow, `Panic(0x12)` for division by zero,
   `Panic(0x01)` for `assert!(false)`, each `0x4e487b71` followed by the code word.

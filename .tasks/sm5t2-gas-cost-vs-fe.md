@@ -47,13 +47,14 @@ Run it with `FE=<patched fe> uv run --project tools tools/gas_compare.py [--call
 summed over each program's calls:
 
 - Storage-bound (tokens, vault, escrow, auction, counter, ring, toggle, messages, two_msgs,
-  init_args, rate_limit, units, xorshift): 1.00 to 1.08. `tokens.fe`, the closest to an
-  ERC20 transfer: 1.01.
-- Mixed (voting, no_init, owner, arith, dispatch, logic): 1.2 to 1.4.
+  init_args, rate_limit, units, xorshift, voting, no_init, owner): 1.00 to 1.08. `tokens.fe`,
+  the closest to an ERC20 transfer: 1.01. Voting, no_init and owner were 1.2 to 1.4 until Fe0
+  packed storage as Fe does (Trcr1j): they had paid for extra `SSTORE`s.
+- Mixed (arith, dispatch, logic): 1.3 to 1.4.
 - Compute-bound (loops, primes, isqrt, power, bitcount, digits, collatz, factorial, sums,
   reverse_bits, parity, gcd): 2.0 to 3.7.
 - Call-bound (fib, ackermann, many_params): 2.0 to 3.1.
-- The whole corpus: 1.81 against `-O 1`, 1.76 against `-O s`.
+- The whole corpus: 1.75 against `-O 1`, 1.71 against `-O s` (1.81 and 1.76 before packing).
 
 - `amm.fe` (added Nov 12), a Uniswap v2–style pair without the tokens: 1.07. A swap costs
   about 12,450 gas against 11,500. Two `SSTORE`s and their cold `SLOAD`s make up about

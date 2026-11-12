@@ -75,7 +75,8 @@ length-prefixed run in one array. Ids, operators and written types are typed (`N
 - **Building lists:** one stack, `Parser.pending` in `fe0/src/parser.fe`, serves all lists, since
   inner lists close before outer ones.
 - **Interning:** a linear scan over `syms`, in `Ast.intern`.
-- **Check results go in side tables indexed by node** (`types`, `res` and `slots`, §5). The
+- **Check results go in side tables** (`types`, `res` and `slots` indexed by node, and the
+  fields' `places`, §5). The
   AST's nodes are never mutated after parsing; the checker only appends constant values to
   `words`.
 
@@ -111,6 +112,10 @@ Constants are evaluated before any body, in source order (`Checker.program`).
   - Both operands of `&&` and `||` are evaluated. `eval_binary` in `fe0/src/check.fe` says why.
 - **Effects:** `init` and each arm get a `Grant` built from their `uses` (`Checker.grant`).
   `FieldSet` in `fe0/src/check.fe` bounds the number of contract fields.
+- **Storage:** `Checker.fields` gives each field a `StoragePlace`, its slot and its bytes in the
+  slot (SPEC §6). Code generation writes a field that shares its slot by reading the slot,
+  clearing the field's bytes and `OR`ing the new value in. A field alone in its slot is read
+  and written whole.
   - A field read checks `Grant.read` (`E116`), and an assignment checks `Grant.write` (`E018`).
   - Free functions are pure (SPEC §5), so `fn_item` gives them an empty grant.
   - Duplicate entries are an error. An entry the body never reads or assigns is a warning,
@@ -174,7 +179,7 @@ Each expression leaves exactly one word on the stack (unit-typed ones leave noth
 |---|---|
 | Literal | `PUSHn` (the minimal n), `PUSH0` for 0 |
 | Local | `MLOAD(FP + off)`: `PUSH1 0x40 MLOAD PUSHn off ADD MLOAD` |
-| Field *i* | `PUSHn i SLOAD` |
+| Field | `PUSHn slot SLOAD`, then `SHR` and `AND` only when it shares the slot (SPEC §6) |
 | `a + b` | eval a, eval b, `DUP2 ADD`, `DUP1 SWAP2 GT` → `JUMPI panic_11` |
 | `a - b` | eval a, eval b, `DUP2 DUP2 GT` → `JUMPI panic_11`, `SWAP1 SUB` |
 | `a * b` | `MUL`, then if `a != 0 && r / a != b` → `panic_11` |
@@ -265,7 +270,7 @@ Each phase is its own contract, because lexer and parser together already exceed
 |---|---|---|
 | `Lexer` | `lex(bytes src) -> bytes` | lex, then serialize the tokens |
 | `Parser` | `parse(bytes src, bytes toks) -> bytes` | parse, then serialize nodes, lists, syms and words |
-| `Checker` | `check(bytes src, bytes ast) -> bytes` | check, then serialize `types`, `res`, `slots` and the words it adds |
+| `Checker` | `check(bytes src, bytes ast) -> bytes` | check, then serialize `types`, `res`, `slots`, `places` and the words it adds |
 | `Back` | `emit(bytes ir) -> bytes` | deserialize, codegen, assemble, return deploy code |
 | `Compiler` | `deploy(bytes src) -> address` | `STATICCALL` each phase in turn, then `create_raw` |
 

@@ -504,7 +504,8 @@ fn side_tables() {
     let k = c.ast.list_at(items, 3)
     let fields = c.ast.node(k).list()
     let b = c.ast.list_at(fields, 1)
-    assert!(c.storage_slot(b).word() == 1)
+    assert!(c.storage_place(b).slot() == 1)
+    assert!(c.storage_place(b).whole())
     assert!(c.ty(b) == TY_BOOL)
     // In `Get`, the tail `a` resolves to field a.
     let recv = c.ast.list_at(c.ast.node(k).recvs(), 0)
@@ -515,6 +516,32 @@ fn side_tables() {
     assert!(
         c.resolved(get) == c.ast.list_at(c.ast.node(c.resolved(recv)).list(), 0),
     )
+}
+
+// Fields narrower than a slot share one, in declaration order from the low end (SPEC §6).
+#[test]
+fn storage_places() {
+    let c = checked(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n}\ncontract K {\n    mut a: Address\n    mut b: bool\n    mut c: Address\n    mut d: u256\n    mut e: bool\n    recv M {\n        Get {} -> u256 uses (d) { d }\n    }\n}\n",
+    )
+    assert!(c.err.is_none())
+    let fields = c.ast.node(c.the_contract).list()
+    let a = c.storage_place(c.ast.list_at(fields, 0))
+    assert!(
+        a.slot() == 0 && a.shift() == 0 && a.shared_above() && !a.whole(),
+    )
+    let b = c.storage_place(c.ast.list_at(fields, 1))
+    assert!(
+        b.slot() == 0 && b.shift() == 160 && !b.shared_above() && b.mask() == 0xff,
+    )
+    // c's 20 bytes do not fit in the 11 left in slot 0.
+    let c2 = c.storage_place(c.ast.list_at(fields, 2))
+    assert!(c2.slot() == 1 && c2.whole())
+    let d = c.storage_place(c.ast.list_at(fields, 3))
+    assert!(d.slot() == 2 && d.whole())
+    // A field after a u256 starts a new slot.
+    let e = c.storage_place(c.ast.list_at(fields, 4))
+    assert!(e.slot() == 3 && e.whole())
 }
 
 fn nested(_ brackets: String<2>, _ depth: usize) -> Option<Diag> {

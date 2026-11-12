@@ -388,12 +388,18 @@ contract Counter {
     (`spike-layout/src/immut.fe`).
   - Supporting them means appending values to the runtime code at deploy time, which is a
     stretch goal.
-- The *i*-th `mut` field (counting from 0, in declaration order, **non-`mut` fields not
-  counted**) lives in storage slot *i*, one 32-byte slot per field with no packing **[✓]**. With
-  fields `a, mut b, c, mut d`, `b` is in slot 0 and `d` in slot 1.
+- The `mut` fields fill storage in declaration order, from slot 0, **non-`mut` fields not
+  counted** **[✓]**. Fe 26.6.0 packs them as Solidity does (#1826):
+  - a `u256` takes 32 bytes, an `Address` 20 and a `bool` 1;
+  - a field goes in the bytes of the current slot that follow the previous field, counted from
+    the low end, when it fits there. Otherwise it starts the next slot;
+  - so a `u256` always has a slot to itself, and the field after it starts a new one.
+- With fields `mut a: Address, b: u256, mut c: bool, mut d: Address`, `a` is in the low 20
+  bytes of slot 0, `c` in byte 20 of slot 0, and `d` in slot 1, since 21 + 20 bytes do not fit
+  in 32.
 - `bool` is stored as 0 or 1 **[✓]**.
-- `Address` is stored right-aligned with the high bits zero **[✓]**: the address `0xcc` is
-  stored as the word `0xcc`.
+- `Address` is stored with the high bits of its 20 bytes zero **[✓]**: the address `0xcc`
+  alone in a slot is stored as the word `0xcc`.
 - For when immutables are added: a field declared without `mut` is read-only after `init` **[✓]**.
   - `init` may still write it, with `uses (mut v)`.
   - An arm that declares `mut v` on it is rejected (`8-0085`).

@@ -8,7 +8,7 @@ use ingot::lexer::*
 const U256_MAX: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 const SELECTOR_MAX: u256 = 0xffffffff
 
-// A set of contract fields with one bit per storage slot, so it holds at most MAX_FIELDS fields.
+// A set of contract fields with one bit per field, so it holds at most MAX_FIELDS fields.
 struct FieldSet { bits: u256 }
 
 impl Copy for FieldSet {}
@@ -17,16 +17,21 @@ const MAX_FIELDS: usize = 256
 const NO_FIELDS: FieldSet = FieldSet { bits: 0 }
 
 impl FieldSet {
-    // Returns this set with storage slot `slot` added.
-    fn add(self, _ slot: StorageSlot) -> FieldSet {
-        FieldSet { bits: self.bits | (1 << slot.word()) }
+    // Returns this set with field `f` added.
+    fn add(self, _ f: FieldIndex) -> FieldSet {
+        FieldSet { bits: self.bits | (1 << f.n as u256) }
     }
 
-    // Whether the set holds storage slot `slot`.
-    fn has(self, _ slot: StorageSlot) -> bool {
-        (self.bits >> slot.word()) & 1 == 1
+    // Whether the set holds field `f`.
+    fn has(self, _ f: FieldIndex) -> bool {
+        (self.bits >> f.n as u256) & 1 == 1
     }
 }
+
+// A contract field's position among the contract's fields, counted from 0.
+struct FieldIndex { n: usize }
+
+impl Copy for FieldIndex {}
 
 // A slot in a body's frame. Parameters take the first slots, in order, then locals.
 pub struct FrameSlot { n: usize }
@@ -40,15 +45,58 @@ impl FrameSlot {
     }
 }
 
-// The storage slot of a contract field.
-pub struct StorageSlot { n: usize }
+const SLOT_BYTES: usize = 32
 
-impl Copy for StorageSlot {}
+// Where a contract field lives in storage (SPEC §6): its slot, and its bytes in the slot,
+// counted from the low end. Fields narrower than a slot share one, as in Fe 26.6.0.
+pub struct StoragePlace { slot: usize, offset: usize, size: usize, ends_slot: bool }
 
-impl StorageSlot {
-    // Returns the slot as the word that SLOAD and SSTORE take.
-    pub fn word(self) -> u256 {
-        self.n as u256
+impl Copy for StoragePlace {}
+
+// The place before the first field's, so that the first field starts slot 0.
+const NO_PLACE: StoragePlace = StoragePlace { slot: 0, offset: 0, size: 0, ends_slot: false }
+
+impl StoragePlace {
+    // Returns the place of a field of `size` bytes declared right after the field at this
+    // place: the bytes that follow, or the next slot when they do not fit.
+    fn next(self, _ size: usize) -> StoragePlace {
+        let end = self.offset + self.size
+        if end + size <= SLOT_BYTES {
+            StoragePlace { slot: self.slot, offset: end, size, ends_slot: false }
+        } else {
+            StoragePlace { slot: self.slot + 1, offset: 0, size, ends_slot: false }
+        }
+    }
+
+    // Returns this place, marked as the last one in its slot.
+    fn ended(self) -> StoragePlace {
+        StoragePlace { slot: self.slot, offset: self.offset, size: self.size, ends_slot: true }
+    }
+
+    // Returns the slot, as the word that SLOAD and SSTORE take.
+    pub fn slot(self) -> u256 {
+        self.slot as u256
+    }
+
+    // Returns the number of bits below the field in its slot.
+    pub fn shift(self) -> u256 {
+        (self.offset * 8) as u256
+    }
+
+    // Whether the field has the slot to itself, so that it is read and written whole.
+    pub fn whole(self) -> bool {
+        self.offset == 0 && self.ends_slot
+    }
+
+    // Whether another field may hold bytes above this one in its slot.
+    pub fn shared_above(self) -> bool {
+        !self.ends_slot
+    }
+
+    // Returns a word with the field's bits set, at the low end. Only for a field narrower than
+    // a slot.
+    pub fn mask(self) -> u256 {
+        (1 << (self.size * 8) as u256) - 1
     }
 }
 
@@ -79,6 +127,8 @@ pub struct Checked {
     // One number per node, written and read through the methods below. Its meaning depends
     // on the node's kind, so that the checker keeps one table instead of four.
     slots: MemVec<usize>,
+    // The storage place of each contract field, by FieldIndex.
+    places: MemVec<StoragePlace>,
     // The CONTRACT item, or NO_NODE.
     pub the_contract: NodeId,
     pub err: Option<Diag>,
@@ -129,13 +179,17 @@ impl Checked {
         self.slots.set(owner.index(), count)
     }
 
-    // Returns the storage slot of contract FIELD node `f`.
-    pub fn storage_slot(self, _ f: NodeId) -> StorageSlot {
-        StorageSlot { n: self.slots[f.index()] }
+    fn field_index(self, _ f: NodeId) -> FieldIndex {
+        FieldIndex { n: self.slots[f.index()] }
     }
 
-    fn set_storage_slot(mut self, _ f: NodeId, _ slot: StorageSlot) {
-        self.slots.set(f.index(), slot.n)
+    fn set_field_index(mut self, _ f: NodeId, _ i: FieldIndex) {
+        self.slots.set(f.index(), i.n)
+    }
+
+    // Returns the storage place of contract FIELD node `f`.
+    pub fn storage_place(self, _ f: NodeId) -> StoragePlace {
+        self.places[self.slots[f.index()]]
     }
 }
 
@@ -389,10 +443,10 @@ impl Checker {
                 return Result::Err(self.at(E_UNKNOWN_FIELD, u))
             }
             self.set_res(u, f)
-            let slot = self.c.storage_slot(f)
-            read = read.add(slot)
+            let i = self.c.field_index(f)
+            read = read.add(i)
             if self.node(u).is_mut() {
-                write = write.add(slot)
+                write = write.add(i)
             }
             k += 1
         }
@@ -414,7 +468,7 @@ impl Checker {
         var k: usize = 0
         while k < self.len(l) {
             let u = self.elem(l, k)
-            if !self.body.grant.used.has(self.c.storage_slot(self.c.resolved(u))) {
+            if !self.body.grant.used.has(self.c.field_index(self.c.resolved(u))) {
                 self.c.warns.push(self.at(E_UNUSED_USE, u))
             }
             k += 1
@@ -423,11 +477,11 @@ impl Checker {
 
     // Records that the body uses FIELD `f`. Errors with `err` when `allowed` does not hold `f`.
     fn access(mut self, _ f: NodeId, _ allowed: FieldSet, _ err: Diag) -> Result<Diag, ()> {
-        let slot = self.c.storage_slot(f)
-        if !allowed.has(slot) {
+        let i = self.c.field_index(f)
+        if !allowed.has(i) {
             return Result::Err(err)
         }
-        self.body.grant.used = self.body.grant.used.add(slot)
+        self.body.grant.used = self.body.grant.used.add(i)
         Result::Ok(())
     }
 
@@ -482,10 +536,11 @@ impl Checker {
         Result::Ok(())
     }
 
-    // Gives each contract field its storage slot. Fields share the item namespace.
+    // Gives each contract field its index and storage place. Fields share the item namespace.
     fn fields(mut self) -> Result<Diag, ()> {
         let l = self.node(self.c.the_contract).list()
         self.unique(l, N_DUPLICATE)?
+        var prev = NO_PLACE
         var k: usize = 0
         while k < self.len(l) {
             let f = self.elem(l, k)
@@ -495,9 +550,19 @@ impl Checker {
             if !self.item(self.node(f).name()).is_none() {
                 return Result::Err(self.at(N_DUPLICATE, f))
             }
-            self.set_ty(f, self.node(f).ty())
-            self.c.set_storage_slot(f, StorageSlot { n: k })
+            let ty = self.node(f).ty()
+            self.set_ty(f, ty)
+            self.c.set_field_index(f, FieldIndex { n: k })
+            let place = prev.next(ty.storage_bytes())
+            if k > 0 && place.slot != prev.slot {
+                self.c.places.set(k - 1, prev.ended())
+            }
+            self.c.places.push(place)
+            prev = place
             k += 1
+        }
+        if k > 0 {
+            self.c.places.set(k - 1, prev.ended())
         }
         Result::Ok(())
     }
@@ -1040,7 +1105,16 @@ pub fn check(_ ast: own Ast) -> Checked {
     }
     let err = ast.err
     var c = Checker {
-        c: Checked { ast, types, res, slots, the_contract: NO_NODE, err, warns: MemVec::new() },
+        c: Checked {
+            ast,
+            types,
+            res,
+            slots,
+            places: MemVec::new(),
+            the_contract: NO_NODE,
+            err,
+            warns: MemVec::new(),
+        },
         body: Body { locals: MemVec::new(), frame: 0, grant: NO_GRANT, ret: TY_UNIT, loops: 0 },
     }
     if c.c.err.is_none() {

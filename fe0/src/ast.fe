@@ -131,6 +131,17 @@ impl Ty {
     pub fn or_u256(self) -> Ty {
         if self == TY_INT { TY_U256 } else { self }
     }
+
+    // Returns the number of bytes that a contract field of this type takes in storage (SPEC §6).
+    pub fn storage_bytes(self) -> usize {
+        if self == TY_BOOL {
+            return 1
+        }
+        if self == TY_ADDRESS {
+            return 20
+        }
+        32
+    }
 }
 
 // Each accessor reads one fixed slot, and no kind uses two accessors of the same slot. The
