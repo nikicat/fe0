@@ -27,16 +27,19 @@ When a release includes it, our fork and the WORKAROUNDS.md entry can go.
 
 ## State
 Branch `native-aarch64-linux` in `/workspaces/fe-master` (a clone of argotorg/fe, remote
-`fork` = nikicat/fe), on master `1f247d1b1`. Not committed beyond the first commit:
-1. The gate commit, cherry-picked from `native-aarch64-linux-v26.6.0` (`17734f510`).
-2. In the working tree: `Arch` and `Platform` in `crates/common/src/compilation.rs`,
-   `target_arch` in `crates/hir/src/core/lower/attr.rs`, `stat_mode` split in
-   `ingots/std/src/sys/linux.fe`, and the callers and tests moved to `Platform`. The cfg
-   tests cover both architectures (`crates/uitest/fixtures/cfg/select.fe`) and an unknown one
-   (`cfg_attr.fe`). `cargo check --all-targets` and the `ty_check` suite pass.
+`fork` = nikicat/fe), on master `1f247d1b1`, two commits, not pushed:
+1. `17734f510`, the gate, cherry-picked from `native-aarch64-linux-v26.6.0`.
+2. `839f3a2e3`: `Platform { os, arch }`, the `target_arch` cfg (a private `CfgPredicate` in
+   `crates/hir/src/core/lower/attr.rs`), `stat_mode` at offset 16 on AArch64, and the
+   cleanups from the unsmell run of Nov 11 (`Platform::require_host`,
+   `BuildBackend::database`, a 60-second deadline in one native test).
+On AArch64 Linux: cli_output 1207/1207, corelib, ty_check, project_target and the fe unit
+tests pass, and clippy is clean. native_runtime passed 77 of 78 before the last cleanups,
+and the deadline test passed alone after its fix. frontend's
+`deeply_nested_malformed_type_paths_are_resolved_once` overflows its stack in a debug build
+here, on master too, so it is not ours. Follow-ups that stay out of this PR are in Tw56pax.
 
 ## Next
-1. Run the std analysis (`fe-driver --test corelib`), then the native suites (`native_runtime`
-   and `cli_output`) on AArch64 Linux. `native_fs_reads_writes_and_lists_files` must pass now.
-2. Commit, push to the fork, and open the PR with "Fixes #1975". Add the newsfragment
-   `<PR>.feature.md` once the PR has a number.
+1. Optional: run `native_runtime` once more on the final commit (about 30 minutes).
+2. With the user's go-ahead, push to the fork and open the PR with "Fixes #1975". Add the
+   newsfragment `<PR>.feature.md` once the PR has a number.
