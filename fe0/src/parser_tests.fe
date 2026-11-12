@@ -53,7 +53,6 @@ use ingot::lexer::{
     P_COMMA,
     P_LPAREN,
     Pos,
-    Span,
     StrValue,
     T_IDENT,
     Tok,
@@ -120,10 +119,6 @@ impl Printer {
         }
     }
 
-    fn span(mut self, _ s: Span) {
-        self.out.extend_from_slice(self.ast.lexed.text.span_bytes(s))
-    }
-
     // Writes byte `b`, escaped as the lexer reads it inside a string literal.
     fn escaped(mut self, _ b: u8) {
         let plain: String<5> = "\n\r\t\"\\"
@@ -141,8 +136,7 @@ impl Printer {
     }
 
     fn sym(mut self, _ s: Sym) {
-        let y = self.ast.span_of(s)
-        self.span(y)
+        self.out.extend_from_slice(self.ast.lexed.text.span_bytes(self.ast.span_of(s)))
     }
 
     // The source spelling of operator `t`.
