@@ -1,0 +1,24 @@
+init 1000*10**18 2000*10**18
+deploy 1 1                       # too little liquidity
+deploy 1                         # too short
+Reserve0
+Reserve1
+Supply
+Quote 10**18 true
+Swap 10**18 true
+Swap 10**18 false
+Swap 3*10**18 true
+Swap 2*10**18 false
+Swap 5*10**20 true
+Swap 7*10**19 false
+Quote 1 false
+Swap 1 false
+Swap 0 true                      # zero input
+Swap MAX true                    # overflows
+AddLiquidity 10**18 2*10**18
+AddLiquidity 0 0                 # zero liquidity
+RemoveLiquidity 10**18
+RemoveLiquidity MAX              # too much liquidity
+Reserve0
+Reserve1
+Supply

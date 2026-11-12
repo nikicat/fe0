@@ -124,6 +124,10 @@ class Payload(ABC):
     def pushes(self) -> list[Push]:
         """Returns the method calls that append the bytes."""
 
+    @abstractmethod
+    def encode(self) -> bytes:
+        """Returns the bytes, as the pushes append them."""
+
     def build(self, var: FeName) -> list[FeLine]:
         """Returns the Fe statements that declare `var` as a `difftest::Payload` and fill it with
         the bytes."""
@@ -132,9 +136,19 @@ class Payload(ABC):
         return [new] + [FeLine(f"{var}.{c}") for c in self.pushes()]
 
 
+# The byte that `extra` appends after the words.
+EXTRA_BYTE: int = 0x99
+
+
 def push_words(words: Sequence[Word], extra: int) -> list[Push]:
-    """Returns the Payload method calls that append the ABI `words`, then `extra` bytes of 0x99."""
-    return [Push(f"push_word({w:#x})") for w in words] + [Push("push(0x99)")] * extra
+    """Returns the Payload method calls that append the ABI `words`, then `extra` bytes of
+    EXTRA_BYTE."""
+    return [Push(f"push_word({w:#x})") for w in words] + [Push(f"push({EXTRA_BYTE:#x})")] * extra
+
+
+def encode_words(words: Sequence[Word], extra: int) -> bytes:
+    """Returns the ABI `words`, then `extra` bytes of EXTRA_BYTE, as push_words appends them."""
+    return b"".join(w.to_bytes(32, "big") for w in words) + bytes([EXTRA_BYTE]) * extra
 
 
 class Deploy(Payload):
@@ -147,6 +161,9 @@ class Deploy(Payload):
     def pushes(self) -> list[Push]:
         return push_words(self.words, self.extra)
 
+    def encode(self) -> bytes:
+        return encode_words(self.words, self.extra)
+
 
 class Call(Payload):
     """Calldata: a 4-byte selector, words, then `extra` bytes."""
@@ -158,6 +175,9 @@ class Call(Payload):
     def pushes(self) -> list[Push]:
         return [Push(f"push_selector({self.sel:#x})")] + push_words(self.words, self.extra)
 
+    def encode(self) -> bytes:
+        return self.sel.to_bytes(4, "big") + encode_words(self.words, self.extra)
+
 
 class RawCall(Payload):
     """Calldata given byte by byte."""
@@ -168,6 +188,9 @@ class RawCall(Payload):
 
     def pushes(self) -> list[Push]:
         return [Push(f"push({b})") for b in self.data]
+
+    def encode(self) -> bytes:
+        return bytes(self.data)
 
 
 # A selector that DISPATCH sends as an unknown one.

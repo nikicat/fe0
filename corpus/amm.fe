@@ -1,0 +1,123 @@
+// A constant-product pool of two tokens, shaped like a Uniswap v2 pair. It has no tokens:
+// amounts only change the reserves, and liquidity is only counted in total.
+msg AmmMsg {
+    #[selector = 1]
+    Swap { amount_in: u256, zero_for_one: bool } -> u256,
+    #[selector = 2]
+    Quote { amount_in: u256, zero_for_one: bool } -> u256,
+    #[selector = 3]
+    AddLiquidity { amount0: u256, amount1: u256 } -> u256,
+    #[selector = 4]
+    RemoveLiquidity { liquidity: u256 } -> u256,
+    #[selector = 5]
+    Reserve0 -> u256,
+    #[selector = 6]
+    Reserve1 -> u256,
+    #[selector = 7]
+    Supply -> u256,
+}
+
+// The fee is 0.3%: a swap keeps FEE of every FEE_BASE parts of its input.
+const FEE: u256 = 997
+const FEE_BASE: u256 = 1000
+// The liquidity that the first deposit must exceed.
+const MINIMUM_LIQUIDITY: u256 = 1000
+
+fn sqrt(_ x: u256) -> u256 {
+    if x < 2 { return x }
+    var r = x / 2 + 1
+    var next = (r + x / r) / 2
+    while next < r {
+        r = next
+        next = (r + x / r) / 2
+    }
+    r
+}
+
+fn min(_ a: u256, _ b: u256) -> u256 {
+    if a < b { a } else { b }
+}
+
+// Returns what a swap of `amount_in` pays out of `reserve_out`, after the fee.
+fn amount_out(_ amount_in: u256, _ reserve_in: u256, _ reserve_out: u256) -> u256 {
+    assert!(amount_in > 0, "zero input")
+    assert!(reserve_in > 0 && reserve_out > 0, "no liquidity")
+    let with_fee = amount_in * FEE
+    with_fee * reserve_out / (reserve_in * FEE_BASE + with_fee)
+}
+
+contract Amm {
+    mut reserve0: u256,
+    mut reserve1: u256,
+    mut supply: u256,
+
+    init(amount0: u256, amount1: u256) uses (mut reserve0, mut reserve1, mut supply) {
+        let liquidity = sqrt(amount0 * amount1)
+        assert!(liquidity > MINIMUM_LIQUIDITY, "too little liquidity")
+        reserve0 = amount0
+        reserve1 = amount1
+        supply = liquidity
+    }
+
+    recv AmmMsg {
+        Swap { amount_in, zero_for_one } -> u256 uses (mut reserve0, mut reserve1) {
+            let r_in = if zero_for_one { reserve0 } else { reserve1 }
+            let r_out = if zero_for_one { reserve1 } else { reserve0 }
+            let out = amount_out(amount_in, r_in, r_out)
+            assert!(out > 0, "zero output")
+            let k = reserve0 * reserve1
+            if zero_for_one {
+                reserve0 += amount_in
+                reserve1 -= out
+            } else {
+                reserve1 += amount_in
+                reserve0 -= out
+            }
+            // The pair's own check: with the fee taken out of the input, the product of the
+            // reserves did not fall.
+            var adjusted0 = reserve0 * FEE_BASE
+            var adjusted1 = reserve1 * FEE_BASE
+            if zero_for_one {
+                adjusted0 -= amount_in * (FEE_BASE - FEE)
+            } else {
+                adjusted1 -= amount_in * (FEE_BASE - FEE)
+            }
+            assert!(adjusted0 * adjusted1 >= k * FEE_BASE * FEE_BASE, "k")
+            out
+        }
+        Quote { amount_in, zero_for_one } -> u256 uses (reserve0, reserve1) {
+            if zero_for_one {
+                amount_out(amount_in, reserve0, reserve1)
+            } else {
+                amount_out(amount_in, reserve1, reserve0)
+            }
+        }
+        AddLiquidity { amount0, amount1 } -> u256 uses (mut reserve0, mut reserve1, mut supply) {
+            let liquidity = min(amount0 * supply / reserve0, amount1 * supply / reserve1)
+            assert!(liquidity > 0, "zero liquidity")
+            reserve0 += amount0
+            reserve1 += amount1
+            supply += liquidity
+            liquidity
+        }
+        RemoveLiquidity { liquidity } -> u256 uses (mut reserve0, mut reserve1, mut supply) {
+            assert!(liquidity < supply, "too much liquidity")
+            let out0 = liquidity * reserve0 / supply
+            let out1 = liquidity * reserve1 / supply
+            assert!(out0 > 0 && out1 > 0, "zero output")
+            reserve0 -= out0
+            reserve1 -= out1
+            supply -= liquidity
+            out0
+        }
+        Reserve0 {} -> u256 uses (reserve0) {
+            reserve0
+        }
+        Reserve1 {} -> u256 uses (reserve1) {
+            reserve1
+        }
+        Supply {} -> u256 uses (supply) {
+            supply
+        }
+    }
+}
