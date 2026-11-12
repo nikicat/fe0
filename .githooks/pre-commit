@@ -1,0 +1,15 @@
+#!/bin/sh
+# Rejects a commit whose staged Fe sources in fe0/ or fe0-cli/ are not formatted, which CI's
+# `fe fmt --check` would reject. It checks the staged files, not the working tree, so a commit
+# of part of a file is judged by what it commits. devcontainer.json enables it.
+set -e
+staged=$(mktemp -d)
+trap 'rm -rf "$staged"' EXIT
+for ingot in fe0 fe0-cli; do
+  git diff --cached --quiet --diff-filter=ACMR -- "$ingot/*.fe" && continue
+  git ls-files -z -- "$ingot" | xargs -0 git checkout-index --prefix="$staged/" --
+  if ! (cd "$staged/$ingot" && fe fmt --check >/dev/null 2>&1); then
+    echo "pre-commit: staged files in $ingot/ are not formatted. Run \`fe fmt $ingot\` and stage the result." >&2
+    exit 1
+  fi
+done
