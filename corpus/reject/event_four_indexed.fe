@@ -1,0 +1,25 @@
+// expect: T006 17:5
+// Fe0 and Fe allow at most three indexed fields, since LOG4 takes topic 0 and three more
+// (SPEC §6, "Events").
+msg M {
+    #[selector = 1]
+    Go { n: u256 },
+}
+#[event]
+struct E {
+    #[indexed]
+    a0: u256,
+    #[indexed]
+    a1: u256,
+    #[indexed]
+    a2: u256,
+    #[indexed]
+    a3: u256,
+}
+contract C uses (log: mut Log) {
+    recv M {
+        Go { n } uses (mut log) {
+            log.emit(E { a0: n, a1: n, a2: n, a3: n })
+        }
+    }
+}

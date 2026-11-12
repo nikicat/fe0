@@ -15,10 +15,8 @@ impl Display for Message {
     }
 }
 
-// The number of error codes in fe0/src/diag.fe.
-const COUNT: usize = 55
-
-const MESSAGES: [Message; COUNT] = [
+// One message per error code in fe0/src/diag.fe.
+const MESSAGES: [Message; 57] = [
     Message { code: L_UNEXPECTED_CHAR, text: "unexpected character" },
     Message { code: L_UNTERMINATED_STRING, text: "unterminated string" },
     Message { code: L_BAD_ESCAPE, text: "unknown escape in a string" },
@@ -58,11 +56,13 @@ const MESSAGES: [Message; COUNT] = [
     Message { code: N_DUPLICATE_SELECTOR, text: "selector used twice" },
     Message { code: N_UPPERCASE_LOCAL, text: "local name starts uppercase" },
     Message { code: N_SHADOWS_ITEM, text: "name shadows an item" },
+    Message { code: N_MISSING_FIELD, text: "event misses a field" },
     Message { code: T_MISMATCH, text: "type mismatch" },
     Message { code: T_ARG_COUNT, text: "wrong number of arguments" },
     Message { code: T_NO_VALUE, text: "expression has no value" },
     Message { code: T_SELECTOR_TOO_LARGE, text: "selector over 32 bits" },
     Message { code: T_NEEDS_TYPE, text: "integer needs a type" },
+    Message { code: T_TOO_MANY_INDEXED, text: "over three indexed fields" },
     Message { code: E_NOT_IN_USES, text: "field not listed in `uses`" },
     Message { code: E_NOT_MUT, text: "field not `mut` in `uses`" },
     Message { code: E_UNKNOWN_FIELD, text: "`uses` names no field" },
@@ -80,9 +80,9 @@ const MESSAGES: [Message; COUNT] = [
 // table is complete. A code missing from the table is a bug in Fe0, and the lookup panics.
 pub fn message(_ code: DiagCode) -> Message {
     var i: usize = 0
-    while i < COUNT && !(MESSAGES[i].code == code) {
+    while i < MESSAGES.len() && !(MESSAGES[i].code == code) {
         i += 1
     }
-    assert!(i < COUNT, "no message for an error code")
+    assert!(i < MESSAGES.len(), "no message for an error code")
     MESSAGES[i]
 }

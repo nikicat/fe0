@@ -1,6 +1,7 @@
 // A token with a balance per account, the shape of Fe's ERC20 example without allowances
 // (ADR 0018). The deployer gets the initial supply and is the only minter. Compare
-// `tokens.fe`, which has three fixed holders.
+// `tokens.fe`, which has three fixed holders. It emits the standard ERC20 `Transfer` event
+// (ADR 0019), with the address 0 as the sender of minted tokens.
 msg TokenMsg {
     #[selector = 0xa9059cbb]
     Transfer { to: Address, amount: u256 } -> bool,
@@ -12,23 +13,34 @@ msg TokenMsg {
     Mint { to: Address, amount: u256 } -> bool,
 }
 
-contract Token uses (ctx: Ctx) {
+#[event]
+struct Transfer {
+    #[indexed]
+    from: Address,
+    #[indexed]
+    to: Address,
+    value: u256,
+}
+
+contract Token uses (ctx: Ctx, log: mut Log) {
     mut balances: StorageMap<Address, u256>,
     mut supply: u256,
     mut minter: Address,
 
-    init(initial: u256) uses (ctx, mut balances, mut supply, mut minter) {
+    init(initial: u256) uses (ctx, mut log, mut balances, mut supply, mut minter) {
         minter = ctx.caller()
         balances[minter] = initial
         supply = initial
+        log.emit(Transfer { from: Address::zero(), to: minter, value: initial })
     }
 
     recv TokenMsg {
-        Transfer { to, amount } -> bool uses (ctx, mut balances) {
+        Transfer { to, amount } -> bool uses (ctx, mut log, mut balances) {
             let from = ctx.caller()
             assert!(balances[from] >= amount, "balance too low")
             balances[from] -= amount
             balances[to] += amount
+            log.emit(Transfer { from, to, value: amount })
             true
         }
         BalanceOf { who } -> u256 uses (balances) {
@@ -37,10 +49,11 @@ contract Token uses (ctx: Ctx) {
         TotalSupply {} -> u256 uses (supply) {
             supply
         }
-        Mint { to, amount } -> bool uses (ctx, mut balances, mut supply, minter) {
+        Mint { to, amount } -> bool uses (ctx, mut log, mut balances, mut supply, minter) {
             assert!(ctx.caller() == minter, "not the minter")
             supply += amount
             balances[to] += amount
+            log.emit(Transfer { from: Address::zero(), to, value: amount })
             true
         }
     }

@@ -1,0 +1,17 @@
+// expect: P002 8:10
+// An attribute must end its line, and Fe rejects `#[event] struct` on one line too
+// (SPEC §3.1).
+msg M {
+    #[selector = 1]
+    Go { n: u256 },
+}
+#[event] struct E {
+    n: u256,
+}
+contract C uses (log: mut Log) {
+    recv M {
+        Go { n } uses (mut log) {
+            log.emit(E { n })
+        }
+    }
+}

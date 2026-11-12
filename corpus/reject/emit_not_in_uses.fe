@@ -1,0 +1,19 @@
+// expect: E116 16:13
+// Emitting needs the `Log` effect in the body's `uses` (SPEC §6, "Events").
+msg M {
+    #[selector = 1]
+    Go { n: u256 },
+}
+#[event]
+struct E {
+    #[indexed]
+    to: Address,
+    n: u256,
+}
+contract C uses (log: mut Log) {
+    recv M {
+        Go { n } uses () {
+            log.emit(E { to: Address::zero(), n })
+        }
+    }
+}

@@ -1,0 +1,20 @@
+// expect: T003 17:21
+// fe: accepts
+// Emitting has no value (SPEC §6, "Events"), although Fe accepts `let x = log.emit(…)`.
+msg M {
+    #[selector = 1]
+    Go { n: u256 },
+}
+#[event]
+struct E {
+    #[indexed]
+    to: Address,
+    n: u256,
+}
+contract C uses (log: mut Log) {
+    recv M {
+        Go { n } uses (mut log) {
+            let x = log.emit(E { to: Address::zero(), n })
+        }
+    }
+}

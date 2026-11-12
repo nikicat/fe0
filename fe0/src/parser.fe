@@ -45,7 +45,7 @@ impl core::ops::Eq for ListOf {
 impl ListOf {
     // Checks whether this list allows doc comments before each element (SPEC.md §1).
     fn allows_docs(self) -> bool {
-        self == VARIANTS || self == FIELDS
+        self == VARIANTS || self == FIELDS || self == EVENT_FIELDS
     }
 }
 
@@ -56,6 +56,7 @@ const EFFECTS: ListOf = ListOf { code: 3 }
 const BINDS: ListOf = ListOf { code: 4 }
 const USES: ListOf = ListOf { code: 5 }
 const ARGS: ListOf = ListOf { code: 6 }
+const EVENT_FIELDS: ListOf = ListOf { code: 7 }
 
 // How tightly a binary operator binds its operands, from 1 for `||` to 9 for `*`.
 pub struct Power { level: usize }
@@ -247,6 +248,18 @@ impl Parser {
         Result::Ok(())
     }
 
+    // Reads `{`, then a list as `comma_list` does, up to and including `}`.
+    fn braced_list(mut self, _ elem: ListOf) -> Result<Diag, ListId> {
+        self.expect(P_LBRACE)?
+        self.comma_list(P_RBRACE, elem)
+    }
+
+    // Reads `(`, then a list as `comma_list` does, up to and including `)`.
+    fn paren_list(mut self, _ elem: ListOf) -> Result<Diag, ListId> {
+        self.expect(P_LPAREN)?
+        self.comma_list(P_RPAREN, elem)
+    }
+
     // Reads a list as `comma_items` does and returns it as a new list.
     fn comma_list(mut self, _ close: Tok, _ elem: ListOf) -> Result<Diag, ListId> {
         let mark = self.open_list()
@@ -286,7 +299,10 @@ impl Parser {
             return self.variant()
         }
         if elem == FIELDS {
-            return self.field(maps: false)
+            return self.field(maps: false, indexed: false)
+        }
+        if elem == EVENT_FIELDS {
+            return self.event_field()
         }
         if elem == BINDS {
             return self.bind()
@@ -361,6 +377,9 @@ impl Parser {
     }
 
     fn item(mut self) -> Result<Diag, NodeId> {
+        if self.peek() == P_HASH {
+            return self.event_item()
+        }
         self.eat(K_PUB)
         let k = self.peek()
         if k == K_CONST {
@@ -393,18 +412,12 @@ impl Parser {
     fn fn_item(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let name = self.ident()?
-        let params = self.params()?
+        let params = self.paren_list(PARAMS)?
         let ret = self.ret_ty()?
         let body = self.block()?
         Result::Ok(
             self.ast.add_node(Node::new_fn(pos, name, params, ret, body)),
         )
-    }
-
-    // SPEC.md §3.1, `"(" [ params ] ")"` with rule `params`.
-    fn params(mut self) -> Result<Diag, ListId> {
-        self.expect(P_LPAREN)?
-        self.comma_list(P_RPAREN, PARAMS)
     }
 
     // SPEC.md §3.1, rule `param`.
@@ -423,21 +436,16 @@ impl Parser {
     fn msg_item(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         let name = self.ident()?
-        self.expect(P_LBRACE)?
-        let variants = self.comma_list(P_RBRACE, VARIANTS)?
+        let variants = self.braced_list(VARIANTS)?
         Result::Ok(self.ast.add_node(Node::new_msg(pos, name, variants)))
     }
 
     // SPEC.md §3.1, rules `variant` and `selector`.
     fn variant(mut self) -> Result<Diag, NodeId> {
-        let hash = self.expect(P_HASH)?
-        self.expect(P_LBRACKET)?
-        self.expect_word(W_SELECTOR)?
+        let hash = self.attr_start(W_SELECTOR)?
         self.expect(O_ASSIGN)?
         let selector = self.ast.add_int(self.expect(T_INT)?)?
-        self.expect(P_RBRACKET)?
-        self.expect(T_NEWLINE)?
-        self.skip_docs()
+        self.attr_end()?
         let name = self.ident()?
         var fields = EMPTY_LIST
         if self.eat(P_LBRACE) {
@@ -448,9 +456,28 @@ impl Parser {
         Result::Ok(self.ast.add_node(n))
     }
 
+    // Reads `# [ w`, the start of an attribute named by the word `w`, and returns the `#`.
+    fn attr_start(mut self, _ w: Spelling) -> Result<Diag, Token> {
+        let hash = self.expect(P_HASH)?
+        self.expect(P_LBRACKET)?
+        self.expect_word(w)?
+        Result::Ok(hash)
+    }
+
+    // Reads the `]` that ends an attribute, the newline that must follow it, and any doc
+    // comments after that (SPEC.md §1).
+    fn attr_end(mut self) -> Result<Diag, ()> {
+        self.expect(P_RBRACKET)?
+        self.expect(T_NEWLINE)?
+        self.skip_docs()
+        Result::Ok(())
+    }
+
     // Parses rule `field` (SPEC.md §3.1). When `maps` is true, the type may also be a map, as
-    // rule `cfield` allows.
-    fn field(mut self, maps: bool) -> Result<Diag, NodeId> {
+    // rule `cfield` allows. `indexed` marks the field of an event that `#[indexed]` precedes.
+    // smell: only an event's field uses `indexed`. Kept: an Ast setter instead made ParseProbe
+    // 261 bytes larger (Nov 12). Fix when a setter costs no more than the argument.
+    fn field(mut self, maps: bool, indexed: bool) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let name = self.ident()?
         self.expect(P_COLON)?
@@ -459,7 +486,28 @@ impl Parser {
         } else {
             self.ty()?
         }
-        Result::Ok(self.ast.add_node(Node::new_field(pos, name, ty)))
+        Result::Ok(self.ast.add_node(Node::new_field(pos, name, ty, indexed)))
+    }
+
+    // SPEC.md §3.1, rule `event`.
+    fn event_item(mut self) -> Result<Diag, NodeId> {
+        self.attr_start(W_EVENT)?
+        self.attr_end()?
+        self.eat(K_PUB)
+        let pos = self.expect(K_STRUCT)?.span.start
+        let name = self.ident()?
+        let fields = self.braced_list(EVENT_FIELDS)?
+        Result::Ok(self.ast.add_node(Node::new_event(pos, name, fields)))
+    }
+
+    // SPEC.md §3.1, rule `efield`.
+    fn event_field(mut self) -> Result<Diag, NodeId> {
+        let indexed = self.peek() == P_HASH
+        if indexed {
+            self.attr_start(W_INDEXED)?
+            self.attr_end()?
+        }
+        self.field(maps: false, indexed)
     }
 
     // SPEC.md §3.1, rule `map`.
@@ -501,7 +549,7 @@ impl Parser {
             if !self.eat(K_MUT) {
                 return Result::Err(self.err(P_FIELD_NOT_MUT))
             }
-            let f = self.field(maps: true)?
+            let f = self.field(maps: true, indexed: false)?
             self.pending.push(f)
             self.eat(P_COMMA)
             self.skip_docs()
@@ -533,14 +581,22 @@ impl Parser {
         let pos = self.tok().span.start
         let name = self.ident()?
         self.expect(P_COLON)?
-        self.expect_word(W_CTX)?
-        Result::Ok(self.ast.add_node(Node::new_field(pos, name, ty: TY_CTX)))
+        var ty = TY_CTX
+        if self.eat(K_MUT) {
+            self.expect_word(W_LOG)?
+            ty = TY_LOG
+        } else {
+            self.expect_word(W_CTX)?
+        }
+        Result::Ok(
+            self.ast.add_node(Node::new_field(pos, name, ty, indexed: false)),
+        )
     }
 
     // SPEC.md §3.1, rule `init`.
     fn init(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
-        let params = self.params()?
+        let params = self.paren_list(PARAMS)?
         let use_list = self.uses_clause()?
         let body = self.block()?
         Result::Ok(
@@ -568,8 +624,7 @@ impl Parser {
     fn arm(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let variant = self.ident()?
-        self.expect(P_LBRACE)?
-        let binds = self.comma_list(P_RBRACE, BINDS)?
+        let binds = self.braced_list(BINDS)?
         let ret = self.ret_ty()?
         let use_list = self.uses_clause()?
         let body = self.block()?
@@ -604,8 +659,7 @@ impl Parser {
         if !self.eat(K_USES) {
             return Result::Ok(EMPTY_LIST)
         }
-        self.expect(P_LPAREN)?
-        self.comma_list(P_RPAREN, USES)
+        self.paren_list(USES)
     }
 
     // SPEC.md §3.1, rule `use`.
@@ -817,7 +871,7 @@ impl Parser {
                 return self.call()
             }
             if next == P_DOT {
-                return self.caller()
+                return self.effect_call()
             }
             if next == P_LBRACKET {
                 return self.index()
@@ -846,13 +900,30 @@ impl Parser {
         Result::Err(self.err(P_EXPECTED_EXPR))
     }
 
-    // SPEC.md §3.1, rule `caller`.
-    fn caller(mut self) -> Result<Diag, NodeId> {
+    // SPEC.md §3.1, rules `caller` and `emit`.
+    fn effect_call(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let effect = self.ident()?
         self.bump()
+        if self.at_word(W_EMIT) {
+            return self.emit(pos, effect)
+        }
         self.empty_call(W_CALLER)?
         Result::Ok(self.ast.add_node(Node::new_caller(pos, effect)))
+    }
+
+    // The rest of rule `emit`, from the word `emit` on, for the effect `effect` at `pos`. The
+    // values of the event's fields are read with rule `args`, so that they take labels as the
+    // arguments of a call do.
+    fn emit(mut self, _ pos: Pos, _ effect: Sym) -> Result<Diag, NodeId> {
+        self.bump()
+        self.expect(P_LPAREN)?
+        let event = self.ident()?
+        let args = self.braced_list(ARGS)?
+        self.expect(P_RPAREN)?
+        Result::Ok(
+            self.ast.add_node(Node::new_emit(pos, effect, event, args)),
+        )
     }
 
     // SPEC.md §3.1, rule `zero`.
@@ -890,8 +961,7 @@ impl Parser {
     fn call(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let name = self.ident()?
-        self.expect(P_LPAREN)?
-        let args = self.comma_list(P_RPAREN, ARGS)?
+        let args = self.paren_list(ARGS)?
         Result::Ok(self.ast.add_node(Node::new_call(pos, name, args)))
     }
 

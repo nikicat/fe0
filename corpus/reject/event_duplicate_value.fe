@@ -1,0 +1,19 @@
+// expect: N001 16:50
+// An emitted event gives each field one value (SPEC §6, "Events").
+msg M {
+    #[selector = 1]
+    Go { n: u256 },
+}
+#[event]
+struct E {
+    #[indexed]
+    to: Address,
+    n: u256,
+}
+contract C uses (log: mut Log) {
+    recv M {
+        Go { n } uses (mut log) {
+            log.emit(E { to: Address::zero(), n, n: 1 })
+        }
+    }
+}

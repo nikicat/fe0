@@ -56,7 +56,7 @@ fn keywords_and_idents() {
         [K_FN, K_LET, K_VAR, K_IF, K_ELSE, K_WHILE, K_RETURN, K_BREAK, K_CONTINUE, T_EOF],
     )
     expect(
-        "msg contract init recv uses mut const pub true false assert",
+        "msg contract init recv uses mut const pub true false assert struct",
         [
             K_MSG,
             K_CONTRACT,
@@ -69,6 +69,7 @@ fn keywords_and_idents() {
             K_TRUE,
             K_FALSE,
             K_ASSERT,
+            K_STRUCT,
             T_EOF,
         ],
     )
@@ -87,7 +88,39 @@ fn reserved_words_are_errors() {
     assert!(lex_err("let for = 1").code == L_RESERVED_WORD)
     assert!(lex_err("let loop = 1").code == L_RESERVED_WORD)
     assert!(lex_err("let x = with").pos() == Pos::at(8))
-    assert!(lex_err("struct").code == L_RESERVED_WORD)
+    assert!(lex_err("enum").code == L_RESERVED_WORD)
+}
+
+// Each fixed spelling is what `Text.packed` makes of its word, and `push_bytes` gives the word
+// back.
+#[test]
+fn word_spellings_round_trip() {
+    let l = lex_text(
+        "selector Ctx caller zero StorageMap event indexed Log emit uint256 bool address",
+    )
+    let words: [Spelling; 12] = [
+        W_SELECTOR,
+        W_CTX,
+        W_CALLER,
+        W_ZERO,
+        W_STORAGE_MAP,
+        W_EVENT,
+        W_INDEXED,
+        W_LOG,
+        W_EMIT,
+        ABI_UINT256,
+        ABI_BOOL,
+        ABI_ADDRESS,
+    ]
+    var i: usize = 0
+    while i < words.len() {
+        let span = l.toks[i].span
+        assert!(l.text.packed(span) == words[i])
+        var out: MemVec<u8> = MemVec::new()
+        words[i].push_bytes(mut out)
+        assert!(out.as_slice() == l.text.span_bytes(span))
+        i += 1
+    }
 }
 
 #[test]

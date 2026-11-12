@@ -40,15 +40,17 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 - **No block comments.** Fe's compiler lexer has none, even though the tree-sitter grammar does.
 - **Doc comments.** A comment that starts with `///`, including `////`, is a doc comment. It may
   come only before an item, a contract field, `init`, `recv`, an arm, a variant or a field of a
-  variant. Only newlines and other comments may come between it and what it documents. A doc
-  comment may also stand at the end of the line where a contract field, `init`, `recv`, an arm,
-  a variant or a variant's field ends. It then documents the next of these. It may not stand at
-  the end of the line where an item ends, because only a newline or a plain comment may follow
-  an item on its line (§3.1). It may also end the line of the `{` that opens a `msg`, a
-  contract, a `recv` block or a variant's fields. A variant's doc comment may come before or
-  after its selector, but not on the selector's line. A doc comment must come before what it
-  documents, so one right before `}` or at the end of the file is a syntax error. Fe allows doc
-  comments in the same places:
+  variant or of an event. Only newlines and other comments may come between it and what it
+  documents. A doc comment may also stand at the end of the line where a contract field, `init`,
+  `recv`, an arm, a variant, a variant's field or an event's field ends. It then documents the
+  next of these. It may not stand at the end of the line where an item ends, because only a
+  newline or a plain comment may follow an item on its line (§3.1). It may also end the line of
+  the `{` that opens a `msg`, an event, a contract, a `recv` block or a variant's fields. A
+  variant's doc comment may come before or after its selector, but not on the selector's line.
+  In the same way, an event's doc comment may come before or after its `#[event]`, and the doc
+  comment of an event's field may come before or after its `#[indexed]`. A doc comment must come
+  before what it documents, so one right before `}` or at the end of the file is a syntax error.
+  Fe allows doc comments in the same places:
   - Fe accepts each of these places **[✓]**. The program `corpus/doc_comments.fe` has one of
     each.
   - Fe rejects a doc comment in a block (`1-0001`) **[✓]**. The probe is
@@ -116,16 +118,18 @@ rule for every name, which the subset rule allows.
 The grammar is EBNF. `{ x }` means zero or more, `[ x ]` means optional. Terminals are quoted.
 `NL` is a newline token.
 - The grammar leaves out doc comments (§1). It also leaves out the optional newlines inside
-  `msg`, `contract` and `recv` bodies. A newline that is required, such as the one after a
-  selector, is shown as `NL`.
+  `msg`, `contract`, `recv` and event bodies. A newline that is required, such as the one after
+  a selector, is shown as `NL`.
 - Fe rejects two items on one line (`1-0001`) **[✓]**. The probe is
   `corpus/reject/items_one_line.fe`. Fe accepts contract members and arms on one line **[V]**.
 - Fe rejects a selector with its variant on the same line (`1-0001`) **[✓]**. The probe is
-  `corpus/reject/selector_same_line.fe`.
+  `corpus/reject/selector_same_line.fe`. It also rejects `#[event]` with its struct on the
+  same line, and `#[indexed]` with its field (`1-0001`) **[✓]**. The probes are
+  `corpus/reject/event_attr_same_line.fe` and `corpus/reject/indexed_same_line.fe`.
 
 ```ebnf
 program     = { NL } { item TERM { NL } } ;      (* one item per line *)
-item        = [ "pub" ] ( const | function | msg | contract ) ;
+item        = [ "pub" ] ( const | function | msg | contract ) | event ;
 
 const       = "const" IDENT ":" type "=" expr ;
 function    = "fn" IDENT "(" [ params ] ")" [ "->" type ] block ;
@@ -141,8 +145,11 @@ field       = IDENT ":" type ;
 
 contract    = "contract" IDENT [ effects ] "{" { cfield } [ init ] { recv } "}" ;
 effects     = "uses" "(" [ effect { "," effect } [ "," ] ] ")" ;
-effect      = IDENT ":" "Ctx" ;                   (* §6, "The caller" *)
+effect      = IDENT ":" ( "Ctx" | "mut" "Log" ) ;  (* §6, "The caller" and "Events" *)
 cfield      = "mut" IDENT ":" ( type | map ) [ "," ] ;   (* v1: mut only, see §6 *)
+event       = "#" "[" "event" "]" NL [ "pub" ] "struct" IDENT "{" [ efields ] "}" ;
+efields     = efield { "," efield } [ "," ] ;
+efield      = [ "#" "[" "indexed" "]" NL ] IDENT ":" type ;
 map         = "StorageMap" "<" type "," type ">" ;  (* §6, "Maps" *)
 init        = "init" "(" [ params ] ")" [ uses ] block ;
 recv        = "recv" IDENT "{" { arm } "}" ;
@@ -179,12 +186,13 @@ unary       = ( "!" | "~" ) unary | primary ;
 args        = arg { "," arg } [ "," ] ;
 arg         = [ IDENT ":" ] expr ;
 primary     = INT | "true" | "false" | IDENT "(" [ args ] ")" | IDENT | "(" expr ")" | block | if
-            | assert | caller | zero | index ;
+            | assert | caller | zero | index | emit ;
 if          = "if" expr block [ "else" ( if | block ) ] ;
 assert      = "assert" "!" "(" expr [ "," STRING ] ")" ;
 caller      = IDENT "." "caller" "(" ")" ;
 zero        = "Address" "::" "zero" "(" ")" ;
 index       = IDENT "[" expr "]" ;
+emit        = IDENT "." "emit" "(" IDENT "{" [ args ] "}" ")" ;   (* §6, "Events" *)
 
 CMPOP       = "==" | "!=" | "<" | ">" | "<=" | ">=" ;
 AUGOP       = "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
@@ -226,11 +234,13 @@ and index
 ### 3.3 Left out of Fe0 (all valid Fe)
 
 - `**`, unary `-` and `+`, `as` casts, ranges, `for` and `match`;
-- method calls other than `ctx.caller()`, path calls other than `Address::zero()`, field
-  access, generics and traits;
-- `struct`, `enum`, `use`, `mod`, `impl`, `extern`, `unsafe`, `with` and closures;
-- contract effects other than `Ctx`, `uses` on a free function, `#[payable]`, events,
+- method calls other than `ctx.caller()` and `log.emit(…)`, path calls other than
+  `Address::zero()`, field access, generics and traits;
+- structs other than events, struct values, `enum`, `use`, `mod`, `impl`, `extern`, `unsafe`,
+  `with` and closures;
+- contract effects other than `Ctx` and `Log`, `uses` on a free function, `#[payable]`,
   fallback arms (`_`);
+- events with fields of other types, such as arrays and strings;
 - maps anywhere but as a contract field's type, maps of maps, tuple keys, key and value types
   other than `u256`, `bool` and `Address`, and the methods of `StorageMap` (`get`, `set`,
   `remove`);
@@ -252,8 +262,9 @@ A statement ends at a newline, right before the `}` that closes its block, as in
 - A statement must end before the next one starts, so `while c { } x = 1` on one line is
   rejected.
 - The `{` that opens a block must be on the same line as the header or condition before it.
-  This holds for a function, `init`, arm, `recv`, `msg` and `contract` header, and for the
-  condition of an `if` or `while`. `else` must be on the same line as the `}` before it.
+  This holds for a function, `init`, arm, `recv`, `msg`, `contract` and event `struct` header,
+  and for the condition of an `if` or `while`. `else` must be on the same line as the `}`
+  before it.
 - A line that starts with `{` may not follow a statement that ends with a name. Fe can read
   the two as a record literal of that name. So `let a: u256 = x` followed by `{ a }` is
   rejected with `8-0006` **[✓]**. Fe0 rejects it with `P012`. Fe0's rule is wider than Fe's.
@@ -295,6 +306,8 @@ Probed **[✓]**:
 - In `m[k] = e` and `m[k] op= e`, `e` is evaluated before `k` **[✓]**. So with `z = 0`,
   `m[1 / z] = z - 1` reverts with `Panic(0x11)`, from `z - 1`. The probe is the arm `Order` of
   `corpus/maps.fe`.
+- In `log.emit(E { … })`, the values are evaluated in the order written, not in the order of
+  the event's fields **[✓]**. The probe is the arm `Order` of `corpus/events.fe`.
 - `&&` and `||` short-circuit.
 
 **Arithmetic on `u256`** is checked. Probed failure behaviour:
@@ -325,8 +338,9 @@ ABI-encoded string.
 
 ## 5. Names, scopes and checking
 
-1. **Items** (`const`, `fn`, `msg`, `contract`) form one namespace and may be declared in any
-   order. Duplicates are an error.
+1. **Items** (`const`, `fn`, `msg`, `contract` and events) form one namespace and may be
+   declared in any order. Duplicates are an error. Fe rejects an event named like a msg
+   (`2-0004`) **[✓]**.
 2. **Locals.** `let`, `var` and the binds of a `recv` arm declare locals. The name rules below
    apply to locals and to parameters.
    - `let` declares an immutable local and `var` a mutable one. Assigning to a `let` local is an
@@ -334,7 +348,7 @@ ABI-encoded string.
    - Shadowing with a new `let`/`var` is allowed **[✓]**.
    - A local's scope runs from after its declaration to the end of its block.
    - The name of a local or a parameter may not be the name of a contract field (`N005`). A
-     contract field is a storage field or a `Ctx` effect. So a name never silently stops
+     contract field is a storage field or an effect. So a name never silently stops
      referring to the field. Fe accepts a local named like a storage field **[✓]**.
    - The name of a local or a parameter may not be the name of any item (`N018`), so a name in a
      body always means one declaration.
@@ -362,8 +376,8 @@ ABI-encoded string.
      is the identifier `x` itself **[✓]**. Leaving out a required label is `8-0024` **[✓]**.
    - Arguments must follow the parameter order. Swapped labels are `8-0024` **[✓]**.
    - Recursion is allowed. Fe0 adds no limit beyond EVM gas and stack depth.
-5. **Free functions are pure.** They have no `uses` clause, so they cannot touch storage or
-   read the caller (§6).
+5. **Free functions are pure.** They have no `uses` clause, so they cannot touch storage, read
+   the caller or emit an event (§6).
 6. **Return paths.** A function with `-> T` must produce a `T` on every path, either through its
    final expression or through `return`. Otherwise it is an error (`8-0000`, type mismatch)
    **[✓]**.
@@ -454,9 +468,9 @@ grant a storage field.
   `.caller()`. Assigning to one is an error (`N014`), even when `uses` names it `mut`. Fe
   rejects both **[✓]**.
 - A `Ctx` effect takes no storage. The storage fields' slots are the same as without it.
-- A storage field may not take the name of a `Ctx` effect (`N001`). Neither may a local, a
-  parameter or a bind (§5.2). Fe rejects such a storage field, bind or parameter **[✓]**. It
-  accepts such a local **[✓]**.
+- A storage field may not take the name of an effect (`N001`). Neither may a local, a parameter
+  or a bind (§5.2). For a `Ctx` effect, Fe rejects such a storage field, bind or parameter
+  **[✓]**. It accepts such a local **[✓]**.
 - Fe0 rejects a `Ctx` effect written `mut Ctx` (`P002`) and the same `Ctx` effect declared
   twice (`N001`). Fe accepts both **[✓]**. Other methods of `Ctx`, such as `ctx.origin()`, are
   left out of Fe0 (§3.3). So is `uses` on a free function (§5.5).
@@ -486,6 +500,53 @@ Storage. Fe lays maps out as Solidity does **[✓]**:
   zero-extended. Each entry has its slot to itself, and its value is stored as the whole word.
 
 The probe is `corpus/maps.fe`, which also runs on a node (DESIGN.md §10, "On a node").
+
+**Events** ([ADR 0019](adr/0019-events.md)). An event is a struct marked `#[event]`. Its
+fields are `u256`, `bool` or `Address`, and each may be marked `#[indexed]`:
+
+```fe
+#[event]
+struct Transfer {
+    #[indexed]
+    from: Address,
+    #[indexed]
+    to: Address,
+    value: u256,
+}
+```
+
+A contract emits events through a `Log` effect, declared `mut`, as in
+`contract Token uses (ctx: Ctx, log: mut Log) {`.
+- `log.emit(E { f: e, … })` emits event `E`. `{ f }` stands for `{ f: f }`, and the fields may
+  be written in any order.
+- Only an event can be emitted (`T001`). Fe rejects emitting a msg too **[✓]**. A name that
+  nothing declares is `N002`.
+- Each field of `E` gets one value of its type. A value that names no field of `E` is `N010`. A
+  field given twice is `N001`. A field left out is `N019`. A value of another type is `T001`.
+  Fe rejects each of these errors too **[✓]**.
+- Emitting needs `mut log` in the body's `uses` (`E116`, `E018`). Fe rejects a body that does
+  not list `log` (`8-0012`), and accepts `uses (log)` **[✓]**. Fe0 rejects `uses (log)`,
+  because emitting changes the log, and Fe0 grants a change to an effect or a field only
+  through `mut` in `uses`. The subset rule allows Fe0 to be stricter here.
+- `log.emit(…)` has no value (`T003`). Fe accepts `let x = log.emit(…)` **[✓]**.
+- An event has at most three indexed fields (`T006`). Fe rejects four (`10-0006`) **[✓]**.
+- An event is not a value (`N003`), and neither is a `Log` effect. Fe rejects `log` as a value
+  (`16-0002`) **[✓]**.
+- A `Log` effect has no `caller()` (`T001`). Fe accepts `log.caller()` **[✓]**.
+- Fe0 rejects `log: Log` without `mut` (`P002`). Fe rejects it once a body emits (`8-0066`)
+  **[✓]**. A contract may have several `Log` effects. Like `Ctx` effects, they take no storage.
+
+The log. `log.emit(E { … })` emits `LOGn` with `n` one more than the number of indexed
+fields **[✓]**:
+- Topic 0 is `keccak256` of the event's signature: its name, then the types of all its fields
+  in declaration order, as `uint256`, `bool` and `address`, in parentheses and separated by
+  commas. The `Transfer` above has the signature `Transfer(address,address,uint256)`.
+- The indexed fields follow as topics, in declaration order. A `bool` is the word 0 or 1, and
+  an `Address` its 20 bytes, zero-extended.
+- The data is the other fields as ABI words, in declaration order. An event with no data
+  fields logs no data.
+
+The probe is `corpus/events.fe`, which runs on a node (DESIGN.md §10, "On a node").
 
 **Messages and dispatch.**
 - A `recv M` block must have exactly one arm per variant of `M` **[✓]** (the "missing variants"

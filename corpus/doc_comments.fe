@@ -21,6 +21,17 @@ msg PingMsg {
     Ping -> u256,
 }
 
+/// Before the `#[event]` of an event.
+#[event]
+/// After the `#[event]` of an event.
+struct DocEvent { /// After the `{` of an event.
+    /// Before the `#[indexed]` of an event's field.
+    #[indexed]
+    /// After the `#[indexed]` of an event's field.
+    a: u256, /// At the end of an event field's line.
+    b: u256,
+}
+
 //// Four slashes start a doc comment too.
 
 /// A constant.

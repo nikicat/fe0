@@ -1,0 +1,103 @@
+// Events (SPEC §6, "Events"). The node check compares the logs of each call, so it pins topic 0,
+// the order of the topics and of the data words, and which call logs what. Each field type is
+// indexed in one event and data in another, and the fields are written in another order than
+// they are declared.
+msg EventsMsg {
+    #[selector = 1]
+    Moved { who: Address, n: u256 } -> bool,
+    #[selector = 2]
+    Flags { a: bool, b: bool, n: u256 },
+    #[selector = 3]
+    Empty {},
+    #[selector = 4]
+    Order { z: u256 },
+    #[selector = 5]
+    Repeat { n: u256 },
+    #[selector = 6]
+    Deep { n: u256 },
+    #[selector = 7]
+    Undone { n: u256 },
+}
+
+/// A move, with data between the indexed fields.
+#[event]
+struct Move {
+    #[indexed]
+    from: Address,
+    amount: u256,
+    #[indexed]
+    up: bool,
+    /// Data.
+    to: Address,
+}
+
+#[event]
+pub struct ThreeTopics {
+    #[indexed]
+    a: bool,
+    #[indexed]
+    n: u256,
+    #[indexed]
+    b: bool,
+}
+
+#[event]
+struct Data {
+    first: u256,
+    flag: bool,
+    who: Address,
+}
+
+#[event]
+struct Nothing {}
+
+// A sum that recurses, so that its frames use the memory past the caller's frame.
+fn sum(_ n: u256) -> u256 {
+    if n == 0 { 0 } else { n + sum(n - 1) }
+}
+
+contract Events uses (ctx: Ctx, log: mut Log, other: mut Log) {
+    mut count: u256,
+
+    init(start: u256) uses (ctx, mut log, mut count) {
+        count = start
+        log.emit(Data { who: ctx.caller(), flag: start > 1, first: start })
+    }
+
+    recv EventsMsg {
+        Moved { who, n } -> bool uses (ctx, mut log) {
+            log.emit(Move { to: who, up: n > 10, amount: n, from: ctx.caller() })
+            true
+        }
+        Flags { a, b, n } uses (mut other) {
+            other.emit(ThreeTopics { b, n, a })
+        }
+        Empty {} uses (mut log, mut count) {
+            count += 1
+            log.emit(Nothing {})
+            log.emit(Nothing {})
+        }
+        Order { z } uses (mut log) {
+            // Fe evaluates the values in the order written: Panic(0x11), not 0x12.
+            log.emit(Data { flag: z - 1 == 0, first: 1 / z, who: Address::zero() })
+        }
+        Repeat { n } uses (mut log, count) {
+            var i: u256 = 0
+            while i < n {
+                log.emit(Data { first: i, flag: i == count, who: Address::zero() })
+                i += 1
+            }
+        }
+        Deep { n } uses (ctx, mut log) {
+            // The values before the call are kept while the call's frames use memory.
+            log.emit(Move { from: ctx.caller(), up: true, amount: n, to: Address::zero() })
+            log.emit(Data { first: n * 2, flag: n > 0, who: ctx.caller() })
+            log.emit(ThreeTopics { a: true, b: sum(n) > 0, n: sum(n) })
+            log.emit(Data { who: ctx.caller(), flag: false, first: sum(n) })
+        }
+        Undone { n } uses (mut log) {
+            log.emit(Data { first: n, flag: true, who: Address::zero() })
+            assert!(n < 5, "too large")
+        }
+    }
+}

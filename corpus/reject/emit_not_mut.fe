@@ -1,0 +1,21 @@
+// expect: E018 18:13
+// fe: accepts
+// Fe0 emits only through a `Log` effect that `uses` grants as `mut` (SPEC §6, "Events"),
+// although Fe accepts `uses (log)`.
+msg M {
+    #[selector = 1]
+    Go { n: u256 },
+}
+#[event]
+struct E {
+    #[indexed]
+    to: Address,
+    n: u256,
+}
+contract C uses (log: mut Log) {
+    recv M {
+        Go { n } uses (log) {
+            log.emit(E { to: Address::zero(), n })
+        }
+    }
+}

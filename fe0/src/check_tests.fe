@@ -21,6 +21,7 @@ use ingot::diag::{
     N_FORWARD_CONST,
     N_MISSING_ARM,
     N_MISSING_BIND,
+    N_MISSING_FIELD,
     N_NOT_A_FUNCTION,
     N_NOT_A_MSG,
     N_NOT_A_VALUE,
@@ -37,6 +38,7 @@ use ingot::diag::{
     T_NEEDS_TYPE,
     T_NO_VALUE,
     T_SELECTOR_TOO_LARGE,
+    T_TOO_MANY_INDEXED,
     Diag,
     DiagCode,
 }
@@ -464,6 +466,123 @@ fn maps() {
 }
 
 #[test]
+fn events() {
+    accepts(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log, ctx) { log.emit(E { to: ctx.caller(), amount: v }) }\n    }\n}\n",
+    )
+    accepts(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log) {\n            let to = Address::zero()\n            log.emit(E { amount: v + 1, to })\n        }\n    }\n}\n",
+    )
+    accepts(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    init() uses (mut log, ctx) { log.emit(E { to: ctx.caller(), amount: 1 }) }\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } { }\n    }\n}\n",
+    )
+    accepts(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, l2: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut l2, ctx) { l2.emit(E { to: ctx.caller(), amount: v }) }\n    }\n}\n",
+    )
+    accepts(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\n#[event]\nstruct D {}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log) { log.emit(D {}) }\n    }\n}\n",
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (log, ctx) { log.emit(E { to: ctx.caller(), amount: v }) }\n    }\n}\n",
+        E_NOT_MUT,
+        312,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (ctx) { log.emit(E { to: ctx.caller(), amount: v }) }\n    }\n}\n",
+        E_NOT_IN_USES,
+        307,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log, ctx) { ctx.emit(E { to: ctx.caller(), amount: v }) }\n    }\n}\n",
+        T_MISMATCH,
+        316,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log) { assert!(log.caller() == Address::zero()) }\n    }\n}\n",
+        T_MISMATCH,
+        319,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log) { let x = log }\n    }\n}\n",
+        N_NOT_A_VALUE,
+        319,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log) { log.emit(M { amount: v }) }\n    }\n}\n",
+        T_MISMATCH,
+        311,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log) { log.emit(F { amount: v }) }\n    }\n}\n",
+        N_UNKNOWN_NAME,
+        311,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log) { log.emit(E { amount: v }) }\n    }\n}\n",
+        N_MISSING_FIELD,
+        311,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log) { log.emit(E { to: Address::zero(), amount: v, amount: v }) }\n    }\n}\n",
+        N_DUPLICATE,
+        356,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log) { log.emit(E { to: Address::zero(), c: v }) }\n    }\n}\n",
+        N_UNKNOWN_FIELD,
+        345,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log) { log.emit(E { to: Address::zero(), v + 1 }) }\n    }\n}\n",
+        N_UNKNOWN_FIELD,
+        345,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log) { log.emit(E { to: v, amount: v }) }\n    }\n}\n",
+        T_MISMATCH,
+        328,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log, ctx) { let x = log.emit(E { to: ctx.caller(), amount: v }) }\n    }\n}\n",
+        T_NO_VALUE,
+        324,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } { let x = E }\n    }\n}\n",
+        N_NOT_A_VALUE,
+        304,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } { E() }\n    }\n}\n",
+        N_NOT_A_FUNCTION,
+        296,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } { }\n    }\n}\nfn f() { log.emit(E { to: Address::zero(), amount: 1 }) }",
+        E_NOT_IN_USES,
+        315,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    to: u256,\n    to: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } { }\n    }\n}\n",
+        N_DUPLICATE,
+        38,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } { }\n    }\n}\n#[event]\nstruct M {}",
+        N_DUPLICATE,
+        315,
+    )
+    accepts(
+        "#[event]\nstruct E {\n    #[indexed]\n    a0: u256,\n    #[indexed]\n    a1: u256,\n    #[indexed]\n    a2: u256,\n    b: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } { }\n    }\n}\n",
+    )
+    rejects(
+        "#[event]\nstruct E {\n    b: u256,\n    #[indexed]\n    a0: bool,\n    #[indexed]\n    a1: bool,\n    #[indexed]\n    a2: bool,\n    #[indexed]\n    a3: bool,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } { }\n    }\n}\n",
+        T_TOO_MANY_INDEXED,
+        139,
+    )
+}
+
+#[test]
 fn selectors() {
     accepts(
         "msg N {\n    #[selector = 0xffffffff]\n    A {},\n    #[selector = 0]\n    B {},\n}",
@@ -554,7 +673,7 @@ fn side_tables() {
     assert!(c.err.is_none())
     let items = c.ast.items
     let a = c.ast.list_at(items, 0)
-    assert!(c.const_value(a) == 42)
+    assert!(c.word_of(a) == 42)
     // f has three frame slots: p, x and y.
     let f = c.ast.list_at(items, 1)
     assert!(c.frame_slots(f) == 3)
@@ -599,6 +718,30 @@ fn storage_places() {
     // A field after a u256 starts a new slot.
     let e = c.storage_place(c.ast.list_at(fields, 4))
     assert!(e.slot() == 3 && e.whole())
+}
+
+// An event's topic 0 is the keccak of its signature, and its data fields take the first words
+// of the log data, then its indexed fields (SPEC §6, "Events").
+#[test]
+fn event_words() {
+    let c = checked(
+        "#[event]\nstruct Transfer {\n    #[indexed]\n    from: Address,\n    #[indexed]\n    to: Address,\n    value: u256,\n}\n#[event]\nstruct Empty {}\n",
+    )
+    assert!(c.err.is_none())
+    let e = c.ast.list_at(c.ast.items, 0)
+    assert!(
+        c.topic0(e) == 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,
+    )
+    assert!(c.data_words(e) == 1)
+    let fields = c.ast.node(e).list()
+    assert!(c.log_word(c.ast.list_at(fields, 0)).number() == 1)
+    assert!(c.log_word(c.ast.list_at(fields, 1)).number() == 2)
+    assert!(c.log_word(c.ast.list_at(fields, 2)).number() == 0)
+    let empty = c.ast.list_at(c.ast.items, 1)
+    // keccak("Empty()")
+    assert!(
+        c.topic0(empty) == 0x3db2a12a1fcfb6e2e0de8666c64b3244166edb7b25b200204a8d0cca9b65cf37,
+    )
 }
 
 fn nested(_ brackets: String<2>, _ depth: usize) -> Option<Diag> {

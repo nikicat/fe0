@@ -1,0 +1,16 @@
+// expect: P001 7:1
+// A struct is an event only with `#[event]`, and Fe0 has no other structs (SPEC §3.3).
+msg M {
+    #[selector = 1]
+    Go { n: u256 },
+}
+struct E {
+    n: u256,
+}
+contract C uses (log: mut Log) {
+    recv M {
+        Go { n } uses (mut log) {
+            log.emit(E { n })
+        }
+    }
+}

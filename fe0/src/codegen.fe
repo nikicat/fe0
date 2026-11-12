@@ -4,7 +4,7 @@
 
 use ingot::asm::*
 use ingot::ast::*
-use ingot::check::{Checked, FrameSlot, StoragePlace, check}
+use ingot::check::{Checked, FIRST_LOG_WORD, FrameSlot, LogWord, StoragePlace, check}
 use ingot::diag::*
 use ingot::io::Source
 use ingot::lexer::*
@@ -506,7 +506,7 @@ impl Gen {
     fn load(mut self, _ d: NodeId) {
         let k = self.node(d).kind
         if k == NODE_CONST {
-            self.push(self.c.const_value(d))
+            self.push(self.c.word_of(d))
         } else if k == NODE_FIELD {
             self.load_field(self.c.storage_place(d))
         } else {
@@ -722,6 +722,9 @@ impl Gen {
             self.entry_slot(i)
             self.op(OP_SLOAD)
             return LEAVES_WORD
+        } else if k == NODE_EMIT {
+            self.emit(i)
+            return LEAVES_NOTHING
         } else {
             // NODE_ASSERT, the only other kind of expression.
             self.assert(i)
@@ -1052,6 +1055,48 @@ impl Gen {
         self.push(self.c.storage_place(self.c.resolved(i)).slot())
         self.store_at(SCRATCH.after(WORD))
         self.on_scratch(OP_KECCAK256, words(2))
+    }
+
+    // Emits `log.emit(E { … })` as one LOGn (SPEC §6, "Events").
+    // smell: the push and store loops repeat those of `call`. Kept: shared helpers made
+    // CompileProbe 39 to 97 bytes larger (Nov 12). Fix when Fe inlines small methods.
+    fn emit(mut self, _ i: NodeId) {
+        let e = self.c.resolved(i)
+        let args = self.node(i).list()
+        var k: usize = 0
+        while k < self.len(args) {
+            self.value(self.node(self.elem(args, k)).value())
+            k += 1
+        }
+        // Store the values only after all of them are evaluated, because a call in a later value
+        // uses the memory past the frame.
+        while k > 0 {
+            k -= 1
+            self.fp_plus(
+                self.log_offset(self.c.log_word(self.c.resolved(self.elem(args, k)))),
+            )
+            self.op(OP_MSTORE)
+        }
+        self.body.depth -= self.len(args)
+        // LOGn takes the offset on top, then the size, topic 0, topic 1 and the later topics.
+        // So the last indexed field is pushed first.
+        let data = self.c.data_words(e)
+        var w = self.len(self.node(e).list())
+        let indexed = w - data
+        while w > data {
+            w -= 1
+            self.fp_plus(self.log_offset(LogWord::at(w)))
+            self.op(OP_MLOAD)
+        }
+        self.push(self.c.topic0(e))
+        self.push(words(data).word())
+        self.fp_plus(self.log_offset(FIRST_LOG_WORD))
+        self.op(log_op(indexed + 1))
+    }
+
+    // The offset in the frame of word `w` of the log data, which starts where the frame ends.
+    fn log_offset(self, _ w: LogWord) -> FrameOff {
+        FrameOff { o: 0 }.past(self.body.frame.plus(words(w.number())))
     }
 
     // `assert!(c)` reverts with Panic(0x01), and `assert!(c, "m")` with Error("m") (SPEC §4).

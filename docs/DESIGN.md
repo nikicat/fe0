@@ -75,10 +75,9 @@ length-prefixed run in one array. Ids, operators and written types are typed (`N
 - **Building lists:** one stack, `Parser.pending` in `fe0/src/parser.fe`, serves all lists, since
   inner lists close before outer ones.
 - **Interning:** a linear scan over `syms`, in `Ast.intern`.
-- **Check results go in side tables** (`types`, `res` and `slots` indexed by node, and the
-  fields' `places`, §5). The
-  AST's nodes are never mutated after parsing; the checker only appends constant values to
-  `words`.
+- **Check results go in side tables** (`types`, `res` and `slots` indexed by node, `places` by
+  field and `events` by event, §5). The AST's nodes are never mutated after parsing. The
+  checker only appends to `words`, as `Ast.words` says.
 
 ## 4. Parser
 
@@ -105,23 +104,22 @@ Constants are evaluated before any body, in source order (`Checker.program`).
 - **Scopes:** a stack of locals, innermost last (`Body.locals`). Lookup scans it from the
   top, then the contract fields, then the items. A block truncates the stack back to where it
   started. `Checker.declare` rejects a local or parameter named like a contract field (a
-  storage field or a `Ctx` effect) or an item (SPEC §5.2).
+  storage field or an effect) or an item (SPEC §5.2).
 - **Constants:** evaluated during checking with the same checked arithmetic as run time.
   Overflow gives `C034` and division by zero `C025`.
   - Only earlier constants may be referenced.
   - Both operands of `&&` and `||` are evaluated. `eval_binary` in `fe0/src/check.fe` says why.
 - **Effects:** `init` and each arm get a `Grant` built from their `uses` (`Checker.grant`).
   `FieldSet` in `fe0/src/check.fe` bounds the number of contract fields.
-  - A contract's `Ctx` effects are fields of type `TY_CTX`, as `NODE_FIELD` in
-    `fe0/src/ast.fe` says. So the unused-entry warning and the name rules treat them as
-    fields with no extra code.
+  - A contract's effects are contract fields, as `NODE_FIELD` in `fe0/src/ast.fe` says. So the
+    unused-entry warning and the name rules treat them as fields with no extra code.
 - **Maps:** a map field has one of the map types, which `Ty::map` builds from the key and value
-  types. `Ty.is_value` is false for a map and for `TY_CTX`, so a name of either is not a value
-  (`N003`) and is not assignable (`N014`). `m[k]` is an INDEX node, and `m[k] = v` is an ASSIGN
-  whose place is that INDEX. `Checker.entry` checks the INDEX in both. Reading or writing an
-  entry checks the map's grant, as for a field (below).
+  types. A name that `Ty.is_value` rejects is not a value (`N003`) and is not assignable
+  (`N014`). `m[k]` is an INDEX node, and `m[k] = v` is an ASSIGN whose place is that INDEX.
+  `Checker.entry` checks the INDEX in both. Reading or writing an entry checks the map's grant,
+  as for a field (below).
 - **Storage:** `Checker.fields` gives each field a `StoragePlace`, its slot and its bytes in the
-  slot (SPEC §6). `Ty.storage_bytes` gives `TY_CTX` zero bytes and a map 32, so a map has a
+  slot (SPEC §6). `Ty.storage_bytes` gives an effect zero bytes and a map 32, so a map has a
   slot to itself (SPEC §6, "Maps"). Code generation writes a field that shares its slot by
   reading the slot, clearing the field's bytes and `OR`ing the new value in. A field alone in
   its slot is read and written whole, and so is a map entry.
@@ -129,6 +127,12 @@ Constants are evaluated before any body, in source order (`Checker.program`).
   - Free functions are pure (SPEC §5), so `fn_item` gives them an empty grant.
   - Duplicate entries are an error. An entry the body never reads or assigns is a warning,
     `E003`, collected in `Checked.warns`.
+- **Events** (SPEC §6, "Events"): `Checker.event_item` gives each field of an event its word of
+  the log data (`Checked.log_word`). It records the event's `EventLog`: topic 0, which
+  `Checker.topic0` builds from the source, and the number of data words (`Checked.topic0`,
+  `Checked.data_words`). Code generation reads only these. The update to
+  [ADR 0019](adr/0019-events.md#update-nov-12) says why it hashes with
+  `std::evm::crypto::keccak256`.
 - **Selectors** (SPEC §6): `Checker.msg_item` checks the selectors of each msg (`T004`,
   `N016`), and `Checker.distinct_received_selectors` checks them across the msgs the contract
   receives (`N016`).
@@ -151,7 +155,7 @@ Opcodes are emitted straight from the AST, with no IR
 | `0x00–0x3f` | Scratch: return value, panic payload head, the key and slot that a map entry's slot is hashed from |
 | `0x40` | **FP**, the current frame pointer |
 | `0x60–0x7f` | Reserved (EVM convention, unused) |
-| `0x80…` | Frames, growing upward |
+| `0x80…` | Frames, growing upward. While `log.emit` runs, its data and topics are in the words past the current frame |
 
 **Frames.** Each function has a frame of `2 + params + locals` words at FP:
 - `[FP+0]` saved FP of the caller;
@@ -203,6 +207,7 @@ Each expression leaves exactly one word on the stack (unit-typed ones leave noth
 | `m[k]` | eval k, `PUSH0 MSTORE`, `PUSHn slot PUSH1 0x20 MSTORE`, `PUSH1 0x40 PUSH0 KECCAK256 SLOAD` |
 | `m[k] = v` | eval v, then k's slot as for `m[k]`, then `SSTORE`. Fe evaluates `v` first (SPEC §4) |
 | `m[k] op= v` | eval v, k's slot, then `SWAP1 DUP2 SLOAD SWAP1`, the operator, `SWAP1 SSTORE` |
+| `log.emit(E { … })` | eval each value as written, then `MSTORE` each past the frame at its field's word, `MLOAD` the indexed ones back as topics, then `PUSH topic0`, the data's size and offset, `LOGn` |
 
 The table sketches each sequence. `Gen.apply` and its neighbours in `fe0/src/codegen.fe` emit the
 exact ones. The differential tests of §13 check their results against Fe, not the instructions.
@@ -283,7 +288,7 @@ Each phase is its own contract, because lexer and parser together already exceed
 |---|---|---|
 | `Lexer` | `lex(bytes src) -> bytes` | lex, then serialize the tokens |
 | `Parser` | `parse(bytes src, bytes toks) -> bytes` | parse, then serialize nodes, lists, syms and words |
-| `Checker` | `check(bytes src, bytes ast) -> bytes` | check, then serialize `types`, `res`, `slots`, `places` and the words it adds |
+| `Checker` | `check(bytes src, bytes ast) -> bytes` | check, then serialize `types`, `res`, `slots`, `places`, `events` and the words it adds |
 | `Back` | `emit(bytes ir) -> bytes` | deserialize, codegen, assemble, return deploy code |
 | `Compiler` | `deploy(bytes src) -> address` | `STATICCALL` each phase in turn, then `create_raw` |
 
@@ -439,9 +444,9 @@ Shrinking a failing program is a stretch goal. It would delete lines while the f
 
 ## 12. Hashing (`sol("…")` selectors, a stretch goal)
 
-- `sol("f()")` needs keccak at Fe0's own run time. Since Fe 26.6.0, `core::keccak` lowers on
-  both targets, so Fe0 can call it on the EVM and natively.
-  `spike-native/probe_keccak.fe` checks it natively: `keccak("answer()") = 0x85bb7d69…`.
+- `sol("f()")` needs keccak at Fe0's own run time. Fe0 hashes a signature with
+  `std::evm::crypto::keccak256`, as `Checker.topic0` does. The update to
+  [ADR 0019](adr/0019-events.md#update-nov-12) says why `core::keccak` cannot hash it.
 - [ADR 0004](adr/0004-literal-selectors-first.md) says why selectors are literal first.
   [ADR 0015](adr/0015-move-to-26-6-0.md) says why hashing needs no `Hasher` effect.
 - Remaining work: parse `sol("…")`, hash the signature, and take its first 4 bytes.

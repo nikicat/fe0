@@ -1,0 +1,15 @@
+init 7
+Moved account1 5
+Moved account2 11 from=1
+Flags true false 3
+Flags false true MAX
+Empty
+Order 0                   # Panic(0x11), from the value written first
+Order 1
+Repeat 0
+Repeat 3
+Repeat 9                  # one of them has i == count
+Deep 0
+Deep 20
+Undone 4
+Undone 5                  # too large: the call reverts, and its log is gone

@@ -110,6 +110,7 @@ pub const K_PUB: Tok = Tok { code: 26 }
 pub const K_TRUE: Tok = Tok { code: 27 }
 pub const K_FALSE: Tok = Tok { code: 28 }
 pub const K_ASSERT: Tok = Tok { code: 29 }
+pub const K_STRUCT: Tok = Tok { code: 31 }
 
 // A doc comment: `///` up to the end of the line (SPEC.md §1).
 pub const T_DOC: Tok = Tok { code: 30 }
@@ -175,12 +176,36 @@ impl core::ops::Eq for Spelling {
     }
 }
 
+impl Spelling {
+    // Appends the bytes of this spelling to `out`, first byte first, as `Text.packed` packed
+    // them. Skips every zero byte, so it gives back the bytes of any word that has no zero byte.
+    pub fn push_bytes(self, _ out: mut MemVec<u8>) {
+        var k: u256 = 32
+        while k > 0 {
+            k -= 1
+            let b = (self.packed >> (k * 8)) & 0xff
+            if b != 0 {
+                out.push(b.downcast_truncate())
+            }
+        }
+    }
+}
+
 // Identifiers that Fe gives a fixed meaning but does not reserve, unlike the K_ keywords.
 pub const W_SELECTOR: Spelling = Spelling { packed: 0x73656c6563746f72 }
 pub const W_CTX: Spelling = Spelling { packed: 0x437478 }
 pub const W_CALLER: Spelling = Spelling { packed: 0x63616c6c6572 }
 pub const W_ZERO: Spelling = Spelling { packed: 0x7a65726f }
 pub const W_STORAGE_MAP: Spelling = Spelling { packed: 0x53746f726167654d6170 }
+pub const W_EVENT: Spelling = Spelling { packed: 0x6576656e74 }
+pub const W_INDEXED: Spelling = Spelling { packed: 0x696e6465786564 }
+pub const W_LOG: Spelling = Spelling { packed: 0x4c6f67 }
+pub const W_EMIT: Spelling = Spelling { packed: 0x656d6974 }
+
+// The Solidity names of Fe's value types, which an event's signature spells.
+pub const ABI_UINT256: Spelling = Spelling { packed: 0x75696e74323536 }
+pub const ABI_BOOL: Spelling = Spelling { packed: 0x626f6f6c }
+pub const ABI_ADDRESS: Spelling = Spelling { packed: 0x61646472657373 }
 
 // A byte offset in the source text. A length is a plain count. An offset plus a length is an
 // offset. The distance between two offsets is a length.
@@ -631,6 +656,9 @@ impl Lexer {
         if self.word("assert") {
             return K_ASSERT
         }
+        if self.word("struct") {
+            return K_STRUCT
+        }
         T_IDENT
     }
 
@@ -647,7 +675,6 @@ impl Lexer {
             || self.word("yield")
             || self.word("self")
             || self.word("Self")
-            || self.word("struct")
             || self.word("enum")
             || self.word("trait")
             || self.word("impl")

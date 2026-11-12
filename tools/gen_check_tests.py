@@ -81,16 +81,35 @@ GET_OK = "        Get {} -> u256 uses (a) { a }\n"
 ARMS_OK = GET_OK + "        Set { v } uses (mut a) { a = v }\n"
 # The fields of the maps cases. FIELD_A stays because GET_OK reads it.
 MAPS = FIELD_A + "    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n"
-# `msgs` go after MSG and `recvs` after `recv M`.
 def contract(arms: str, body_fields: str = FIELD_A, init: str = "", msgs: str = "",
-             recvs: str = "") -> str:
-    return (MSG + msgs + "contract K {\n" + body_fields + init + "    recv M {\n" + arms + "    }\n"
-            + recvs + "}\n")
-def set_arm(body: str, fields: str = FIELD_A) -> str:
-    """The contract with the fields `fields`, GET_OK, and a Set arm whose text after `Set { v } `
-    is `body`."""
-    return contract(GET_OK + "        Set { v } " + body + "\n", fields)
+             recvs: str = "", effects: str = "") -> str:
+    """Returns a program of MSG, then contract K, which receives M with the arms `arms`. Its
+    `uses` clause is left out when `effects` is empty."""
+    uses = f"uses ({effects}) " if effects else ""
+    return (MSG + msgs + "contract K " + uses + "{\n" + body_fields + init + "    recv M {\n" + arms
+            + "    }\n" + recvs + "}\n")
+def set_arm(body: str, fields: str = FIELD_A, init: str = "", effects: str = "") -> str:
+    """Returns the contract whose arms are GET_OK and a Set arm with the text `body` after
+    `Set { v } `."""
+    return contract(GET_OK + "        Set { v } " + body + "\n", fields, init, effects=effects)
+def event(name: str, *fields: str) -> str:
+    """The event struct `name` with the fields `fields`, each written without its comma."""
+    body = "".join(f"    {f},\n" for f in fields)
+    return f"#[event]\nstruct {name} {{" + ("\n" + body if fields else "") + "}\n"
+def indexed(field: str) -> str:
+    """The event field `field`, marked as indexed."""
+    return "#[indexed]\n    " + field
 RECV_N = "    recv N {\n        O {} { }\n    }\n"
+# The event that the events cases emit.
+EVENT = event("E", indexed("to: Address"), "amount: u256")
+def log_arm(body: str, items: str = EVENT, init: str = "",
+            effects: str = "log: mut Log, ctx: Ctx") -> str:
+    """The contract of set_arm(body) with the init `init` and the effects `effects`, after the
+    items `items`."""
+    return items + set_arm(body, init=init, effects=effects)
+def emit_ok(effect: str = "log", amount: str = "v") -> str:
+    """An emit of an EVENT value through the effect `effect`, with the amount `amount`."""
+    return f"{effect}.emit(E {{ to: ctx.caller(), amount: {amount} }})"
 groups: dict[TestName, list[Case]] = {
 TestName("types_of_operators"): [
     ok("fn f(_ a: u256, _ b: bool, _ c: Address, _ d: Address) -> bool {\n    a + 1 * 2 / 3 % 4 & 5 | 6 ^ 7 << 8 >> 9 > 0 && !b || c == d && ~a != 0\n}"),
@@ -239,6 +258,34 @@ TestName("maps"): [
     err(set_arm("uses (mut f) { |f[v] += true }", MAPS), "T_MISMATCH"),
     err(set_arm("{ |g[v] = v }", MAPS), "N_UNKNOWN_NAME"),
 ],
+TestName("events"): [
+    ok(log_arm("uses (mut log, ctx) { " + emit_ok() + " }")),
+    ok(log_arm("uses (mut log) {\n            let to = Address::zero()\n            log.emit(E { amount: v + 1, to })\n        }")),
+    ok(log_arm("{ }", init="    init() uses (mut log, ctx) { " + emit_ok(amount="1") + " }\n")),
+    ok(log_arm("uses (mut l2, ctx) { " + emit_ok("l2") + " }", effects="log: mut Log, l2: mut Log, ctx: Ctx")),
+    ok(log_arm("uses (mut log) { log.emit(D {}) }", EVENT + event("D"))),
+    err(log_arm("uses (log, ctx) { |" + emit_ok() + " }"), "E_NOT_MUT"),
+    err(log_arm("uses (ctx) { |" + emit_ok() + " }"), "E_NOT_IN_USES"),
+    err(log_arm("uses (mut log, ctx) { |" + emit_ok("ctx") + " }"), "T_MISMATCH"),
+    err(log_arm("uses (mut log) { assert!(|log.caller() == Address::zero()) }"), "T_MISMATCH"),
+    err(log_arm("uses (mut log) { let x = |log }"), "N_NOT_A_VALUE"),
+    err(log_arm("uses (mut log) { |log.emit(M { amount: v }) }"), "T_MISMATCH"),
+    err(log_arm("uses (mut log) { |log.emit(F { amount: v }) }"), "N_UNKNOWN_NAME"),
+    err(log_arm("uses (mut log) { |log.emit(E { amount: v }) }"), "N_MISSING_FIELD"),
+    err(log_arm("uses (mut log) { log.emit(E { to: Address::zero(), amount: v, |amount: v }) }"), "N_DUPLICATE"),
+    err(log_arm("uses (mut log) { log.emit(E { to: Address::zero(), |c: v }) }"), "N_UNKNOWN_FIELD"),
+    err(log_arm("uses (mut log) { log.emit(E { to: Address::zero(), |v + 1 }) }"), "N_UNKNOWN_FIELD"),
+    err(log_arm("uses (mut log) { log.emit(E { to: |v, amount: v }) }"), "T_MISMATCH"),
+    err(log_arm("uses (mut log, ctx) { let x = |" + emit_ok() + " }"), "T_NO_VALUE"),
+    err(log_arm("{ let x = |E }"), "N_NOT_A_VALUE"),
+    err(log_arm("{ |E() }"), "N_NOT_A_FUNCTION"),
+    err(log_arm("{ }") + "fn f() { |log.emit(E { to: Address::zero(), amount: 1 }) }", "E_NOT_IN_USES"),
+    err(log_arm("{ }", event("E", "to: u256", "|to: u256")), "N_DUPLICATE"),
+    err(log_arm("{ }") + "#[event]\n|struct M {}", "N_DUPLICATE"),
+    ok(log_arm("{ }", event("E", *(indexed(f"a{k}: u256") for k in range(3)), "b: u256"))),
+    err(log_arm("{ }", event("E", "b: u256", *(indexed(f"a{k}: bool") for k in range(3)),
+                        indexed("|a3: bool"))), "T_TOO_MANY_INDEXED"),
+],
 TestName("selectors"): [
     ok("msg N {\n    #[selector = 0xffffffff]\n    A {},\n    #[selector = 0]\n    B {},\n}"),
     err("msg N {\n    |#[selector = 0x100000000]\n    A {},\n}", "T_SELECTOR_TOO_LARGE"),
@@ -315,6 +362,9 @@ SIDE = ("const A: u256 = 6 * 7\nfn f(_ p: u256) -> u256 {\n    let x = p + A\n  
 PLACES = contract("        Get {} -> u256 uses (d) { d }\n        Set { v } uses (mut d) { d = v }\n",
                   "    mut a: Address\n    mut b: bool\n    mut c: Address\n    mut d: u256\n"
                   "    mut e: bool\n")
+# The standard ERC20 Transfer event, and an event with no fields.
+EVENTS = (event("Transfer", indexed("from: Address"), indexed("to: Address"), "value: u256")
+          + event("Empty"))
 CHAIN = "fn f(_ c: bool) -> u256 { " + " else ".join(f"if c {{ {k} }}" for k in range(CHAIN_LEN)) + " else { 0 } }"
 out += lines(FeSource(f"""
 // The side tables that code generation reads.
@@ -324,7 +374,7 @@ fn side_tables() {{
     assert!(c.err.is_none())
     let items = c.ast.items
     let a = c.ast.list_at(items, 0)
-    assert!(c.const_value(a) == 42)
+    assert!(c.word_of(a) == 42)
     // f has three frame slots: p, x and y.
     let f = c.ast.list_at(items, 1)
     assert!(c.frame_slots(f) == 3)
@@ -361,6 +411,24 @@ fn storage_places() {{
     // A field after a u256 starts a new slot.
     let e = c.storage_place(c.ast.list_at(fields, 4))
     assert!(e.slot() == 3 && e.whole())
+}}
+
+// An event's topic 0 is the keccak of its signature, and its data fields take the first words
+// of the log data, then its indexed fields (SPEC §6, "Events").
+#[test]
+fn event_words() {{
+    let c = checked({lit(EVENTS)})
+    assert!(c.err.is_none())
+    let e = c.ast.list_at(c.ast.items, 0)
+    assert!(c.topic0(e) == 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef)
+    assert!(c.data_words(e) == 1)
+    let fields = c.ast.node(e).list()
+    assert!(c.log_word(c.ast.list_at(fields, 0)).number() == 1)
+    assert!(c.log_word(c.ast.list_at(fields, 1)).number() == 2)
+    assert!(c.log_word(c.ast.list_at(fields, 2)).number() == 0)
+    let empty = c.ast.list_at(c.ast.items, 1)
+    // keccak("Empty()")
+    assert!(c.topic0(empty) == 0x3db2a12a1fcfb6e2e0de8666c64b3244166edb7b25b200204a8d0cca9b65cf37)
 }}
 
 fn nested(_ brackets: String<2>, _ depth: usize) -> Option<Diag> {{

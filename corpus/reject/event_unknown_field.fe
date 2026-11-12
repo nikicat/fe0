@@ -1,0 +1,19 @@
+// expect: N010 16:50
+// An emitted value must name a field of the event (SPEC §6, "Events").
+msg M {
+    #[selector = 1]
+    Go { n: u256 },
+}
+#[event]
+struct E {
+    #[indexed]
+    to: Address,
+    n: u256,
+}
+contract C uses (log: mut Log) {
+    recv M {
+        Go { n } uses (mut log) {
+            log.emit(E { to: Address::zero(), n, m: n })
+        }
+    }
+}

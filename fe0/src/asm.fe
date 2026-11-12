@@ -47,8 +47,17 @@ pub const OP_DUP3: Op = Op { code: 0x82 }
 pub const OP_DUP4: Op = Op { code: 0x83 }
 pub const OP_SWAP1: Op = Op { code: 0x90 }
 pub const OP_SWAP2: Op = Op { code: 0x91 }
+// LOGn is OP_LOG0 plus n, for n up to MAX_TOPICS.
+const OP_LOG0: Op = Op { code: 0xa0 }
+// The most topics a log may have, which LOG4 takes.
+pub const MAX_TOPICS: usize = 4
 pub const OP_RETURN: Op = Op { code: 0xf3 }
 pub const OP_REVERT: Op = Op { code: 0xfd }
+
+// Returns the opcode LOGn that logs `topics` topics, which is at most MAX_TOPICS.
+pub fn log_op(_ topics: usize) -> Op {
+    Op { code: OP_LOG0.code + topics.downcast_truncate() }
+}
 
 // A code offset that `Asm.bind` or `Asm.mark` fixes, and that pushes may use before then.
 pub struct Label { id: usize }

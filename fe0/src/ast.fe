@@ -6,7 +6,19 @@
 // TY_NONE when none is.
 
 use ingot::diag::Diag
-use ingot::lexer::{Lexed, Pos, SOURCE_START, Span, T_EOF, Tok, Token}
+use ingot::lexer::{
+    ABI_ADDRESS,
+    ABI_BOOL,
+    ABI_UINT256,
+    Lexed,
+    Pos,
+    SOURCE_START,
+    Span,
+    Spelling,
+    T_EOF,
+    Tok,
+    Token,
+}
 
 // The kind of a node. The NODE_ constants below are its only values.
 pub struct Kind { code: u8 }
@@ -45,8 +57,9 @@ pub const NODE_PARAM: Kind = Kind { code: 3 }
 pub const NODE_MSG: Kind = Kind { code: 4 }
 // variant: name, ty (the return type), word (the selector), list of FIELDs.
 pub const NODE_VARIANT: Kind = Kind { code: 5 }
-// field of a variant or a contract: name, ty. An effect of a contract, such as `ctx: Ctx`, is
-// a contract field of type TY_CTX, so that `uses` grants it as it grants a storage field.
+// field of a variant, a contract or an event: name, ty, is_indexed (only an event's field may
+// be indexed). An effect of a contract, such as `ctx: Ctx`, is a contract field of an effect
+// type (Ty.is_effect), so that `uses` grants it as it grants a storage field.
 pub const NODE_FIELD: Kind = Kind { code: 6 }
 // contract: name, list of FIELDs (its effects first), init (INIT or NO_NODE), recvs (a list
 // of RECVs).
@@ -63,6 +76,8 @@ pub const NODE_BIND: Kind = Kind { code: 11 }
 pub const NODE_USE: Kind = Kind { code: 12 }
 // string literal: word (its bytes as a `StrValue.word`), str_len.
 pub const NODE_STR: Kind = Kind { code: 13 }
+// `#[event] struct`: name, list of FIELDs.
+pub const NODE_EVENT: Kind = Kind { code: 14 }
 
 // Statements.
 // let or var: name, ty, value, is_var.
@@ -106,6 +121,9 @@ pub const NODE_CALLER: Kind = Kind { code: 50 }
 pub const NODE_ZERO_ADDRESS: Kind = Kind { code: 51 }
 // an entry of a map, `m[k]`: name (the map), key.
 pub const NODE_INDEX: Kind = Kind { code: 52 }
+// `log.emit(E { f: e, … })`: name (the effect), event (the event's name), list of ARGs, each
+// labelled with a field of the event.
+pub const NODE_EMIT: Kind = Kind { code: 53 }
 
 // A type. A node's ty() holds one written in the source, or TY_NONE when none is written.
 // The checker also uses TY_UNIT, TY_NEVER and TY_INT.
@@ -131,10 +149,12 @@ pub const TY_NEVER: Ty = Ty { code: 5 }
 // blocks, such as `1 + 2` or `{ 1 }`.
 pub const TY_INT: Ty = Ty { code: 6 }
 
-// TY_CTX is the last code below the maps, and is_value relies on it.
-// Give a new type a code below TY_CTX.
-// The type of an effect of the contract, `Ctx`. Only an effect has it, and it is not a value.
+// The codes from TY_CTX on are the types of names that are not values, and is_value relies on
+// it. Give a new value type a code below TY_CTX. The codes from TY_CTX up to MAP_BASE are the
+// effect types, and is_effect relies on it.
+// The types of a contract's effects, `Ctx` and `mut Log`. Only an effect has one.
 pub const TY_CTX: Ty = Ty { code: 7 }
+pub const TY_LOG: Ty = Ty { code: 8 }
 // The code of the first map type. Its low four bits are zero, to hold the key and value codes.
 const MAP_BASE: u8 = 16
 // The shift of the key code within a map code.
@@ -180,15 +200,34 @@ impl Ty {
         Ty { code: self.code & MAP_PART }
     }
 
-    // Checks whether a name of this type is a value. A `Ctx` effect and a map are not.
+    // Checks whether a name of this type is a value. An effect and a map are not, and neither is
+    // a name with no type, such as a function's.
     pub fn is_value(self) -> bool {
-        self.code < TY_CTX.code
+        self != TY_NONE && self.code < TY_CTX.code
+    }
+
+    // Returns the Solidity name of value type `self`, such as `uint256` for TY_U256.
+    pub fn abi_name(self) -> Spelling {
+        if self == TY_U256 {
+            return ABI_UINT256
+        }
+        if self == TY_BOOL {
+            return ABI_BOOL
+        }
+        ABI_ADDRESS
+    }
+
+    // Checks whether this is the type of an effect of a contract, such as `Ctx` or `Log`.
+    pub fn is_effect(self) -> bool {
+        self.code >= TY_CTX.code && self.code < MAP_BASE
     }
 
     // Returns the number of bytes that a contract field of this type takes in storage (SPEC §6).
     // An effect takes none. A map takes a whole slot.
     pub fn storage_bytes(self) -> usize {
-        if self == TY_CTX { return 0 }
+        if self.is_effect() {
+            return 0
+        }
         if self == TY_BOOL {
             return 1
         }
@@ -210,7 +249,7 @@ pub struct Node {
     ty: Ty,
     // name, cond, lhs, operand or place
     a: usize,
-    // value, rhs, word, local, use_list, recvs, otherwise or message
+    // value, rhs, word, local, event, use_list, recvs, otherwise or message
     b: usize,
     // list
     c: usize,
@@ -300,8 +339,20 @@ impl Node {
         )
     }
 
-    pub fn new_field(_ pos: Pos, name: Sym, ty: Ty) -> Node {
-        Node::typed(NODE_FIELD, pos, ty, a: name.id, b: 0, c: 0, d: 0)
+    pub fn new_field(_ pos: Pos, name: Sym, ty: Ty, indexed: bool) -> Node {
+        Node::typed(
+            NODE_FIELD,
+            pos,
+            ty,
+            a: name.id,
+            b: 0,
+            c: 0,
+            d: flag(indexed),
+        )
+    }
+
+    pub fn new_event(_ pos: Pos, name: Sym, fields: ListId) -> Node {
+        Node::make(NODE_EVENT, pos, a: name.id, b: 0, c: fields.id, d: 0)
     }
 
     pub fn new_contract(
@@ -471,6 +522,17 @@ impl Node {
         Node::make(NODE_INDEX, pos, a: map.id, b: 0, c: 0, d: key.id)
     }
 
+    pub fn new_emit(_ pos: Pos, effect: Sym, event: Sym, args: ListId) -> Node {
+        Node::make(
+            NODE_EMIT,
+            pos,
+            a: effect.id,
+            b: event.id,
+            c: args.id,
+            d: 0,
+        )
+    }
+
     // Returns the position of the token that diagnostics about the node point at.
     pub fn pos(self) -> Pos {
         Pos::at(self.pos_off)
@@ -509,6 +571,9 @@ impl Node {
         WordId { id: self.b }
     }
     pub fn local(self) -> Sym {
+        Sym { id: self.b }
+    }
+    pub fn event(self) -> Sym {
         Sym { id: self.b }
     }
     pub fn use_list(self) -> ListId {
@@ -554,6 +619,9 @@ impl Node {
         self.flag_set()
     }
     pub fn is_true(self) -> bool {
+        self.flag_set()
+    }
+    pub fn is_indexed(self) -> bool {
         self.flag_set()
     }
 }
@@ -642,8 +710,8 @@ pub struct Ast {
     lists: MemVec<usize>,
     // The source span of each distinct identifier.
     pub syms: MemVec<Span>,
-    // 256-bit values that nodes refer to: integer literals, selectors and the packed bytes of
-    // `assert!` messages.
+    // The 256-bit values that nodes refer to, each by its WordId. The checker adds constant values
+    // and the topic 0 of each event.
     words: MemVec<u256>,
     // The list of items.
     pub items: ListId,
@@ -746,9 +814,9 @@ impl Ast {
         Sym { id: self.syms.len() - 1 }
     }
 
-    // Returns the source span of the first spelling of `sym`.
-    pub fn span_of(self, _ sym: Sym) -> Span {
-        self.syms[sym.id]
+    // Returns the source bytes of name `sym`.
+    pub fn name_bytes(self, _ sym: Sym) -> ref MemSlice<u8> {
+        self.lexed.text.span_bytes(self.syms[sym.id])
     }
 
     // Whether name `sym` starts with an uppercase letter.

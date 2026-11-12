@@ -1,12 +1,17 @@
 // Checks names, types, constants and effects (SPEC §2 and §4–6), and records what code
 // generation needs in side tables indexed by node. The design is in DESIGN.md §5.
 
+use ingot::asm::MAX_TOPICS
 use ingot::ast::*
 use ingot::diag::*
 use ingot::lexer::*
+use std::evm::crypto::keccak256
 
 const U256_MAX: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 const SELECTOR_MAX: u256 = 0xffffffff
+
+// The most indexed fields an event may have. Topic 0 is the hash of the event's signature.
+const MAX_INDEXED: usize = MAX_TOPICS - 1
 
 // A set of contract fields with one bit per field, so it holds at most MAX_FIELDS fields.
 struct FieldSet { bits: u256 }
@@ -44,6 +49,32 @@ impl FrameSlot {
         self.n
     }
 }
+
+// A word of an event's log data, counted from the first.
+pub struct LogWord { n: usize }
+
+impl Copy for LogWord {}
+
+// The first word of the log data.
+pub const FIRST_LOG_WORD: LogWord = LogWord { n: 0 }
+
+impl LogWord {
+    // Returns word `n` of the log data.
+    pub fn at(_ n: usize) -> LogWord {
+        LogWord { n }
+    }
+
+    // Returns the word's number, counted from the first word of the log data.
+    pub fn number(self) -> usize {
+        self.n
+    }
+}
+
+// What code generation needs to log an event: its topic 0, and the number of words of its log
+// data that hold its data fields.
+pub struct EventLog { topic0: WordId, data_words: usize }
+
+impl Copy for EventLog {}
 
 const SLOT_BYTES: usize = 32
 
@@ -118,17 +149,20 @@ const NO_GRANT: Grant = Grant {
 pub struct Checked {
     pub ast: Ast,
     // The type of every expression node, and of every node that declares a name: CONST, PARAM,
-    // FIELD, LET and BIND.
+    // contract FIELD, LET and BIND.
     types: MemVec<Ty>,
     // What a name refers to. For NAME: the declaring node (CONST, PARAM, FIELD, LET or BIND).
-    // For INDEX: the map's FIELD. For CALLER: the effect's FIELD. For CALL: the FN. For RECV: the
-    // MSG. For ARM: the VARIANT. For BIND: the variant's FIELD. For USE: the FIELD.
+    // For INDEX: the map's FIELD. For CALLER: the effect's FIELD. For EMIT: the EVENT. For CALL:
+    // the FN. For RECV: the MSG. For ARM: the VARIANT. For BIND: the variant's FIELD. For an ARG
+    // of an EMIT: the event's FIELD. For USE: the FIELD.
     res: MemVec<NodeId>,
     // One number per node, written and read through the methods below. Its meaning depends
-    // on the node's kind, so that the checker keeps one table instead of four.
+    // on the node's kind, so that the checker keeps one table, not one per meaning.
     slots: MemVec<usize>,
     // The storage place of each contract field, by FieldIndex.
     places: MemVec<StoragePlace>,
+    // The EventLog of each event, by the EVENT's slot.
+    events: MemVec<EventLog>,
     // The CONTRACT item, or NO_NODE.
     pub the_contract: NodeId,
     pub err: Option<Diag>,
@@ -153,12 +187,43 @@ impl Checked {
     }
 
     // Returns the value of CONST node `d`.
-    pub fn const_value(self, _ d: NodeId) -> u256 {
+    pub fn word_of(self, _ d: NodeId) -> u256 {
         self.ast.word(WordId::at(self.slots[d.index()]))
     }
 
-    fn set_const_word(mut self, _ d: NodeId, _ w: WordId) {
+    fn set_word(mut self, _ d: NodeId, _ v: u256) {
+        let w = self.ast.add_word(v)
         self.slots.set(d.index(), w.index())
+    }
+
+    // Returns the word of the log data that holds the value of an event's FIELD node `f`. The
+    // data fields take the first words, then the indexed fields, which become topics, each in
+    // declaration order.
+    pub fn log_word(self, _ f: NodeId) -> LogWord {
+        LogWord { n: self.slots[f.index()] }
+    }
+
+    fn set_log_word(mut self, _ f: NodeId, _ w: LogWord) {
+        self.slots.set(f.index(), w.n)
+    }
+
+    // Returns topic 0 of EVENT node `e`.
+    pub fn topic0(self, _ e: NodeId) -> u256 {
+        self.ast.word(self.event_log(e).topic0)
+    }
+
+    // Returns the number of words of EVENT node `e`'s log data that hold its data fields.
+    pub fn data_words(self, _ e: NodeId) -> usize {
+        self.event_log(e).data_words
+    }
+
+    fn event_log(self, _ e: NodeId) -> EventLog {
+        self.events[self.slots[e.index()]]
+    }
+
+    fn set_event_log(mut self, _ e: NodeId, _ log: EventLog) {
+        self.slots.set(e.index(), self.events.len())
+        self.events.push(log)
     }
 
     // Returns the frame slot of LET, PARAM or BIND node `d`.
@@ -260,9 +325,16 @@ fn label_ok(_ arg: Node, _ value: Node, _ param: Node) -> bool {
     if param.is_positional() {
         return arg.name() == NO_SYM
     }
-    // A labelled parameter also takes, unlabelled, a name that spells its label.
-    let punned = arg.name() == NO_SYM && value.kind == NODE_NAME && value.name() == param.name()
-    arg.name() == param.name() || punned
+    arg_label(arg, value) == param.name()
+}
+
+// Returns the label of argument `arg`, whose value is `value`. An argument without a label whose
+// value is a name has that name as its label, as `{ x }` stands for `{ x: x }` (SPEC §5.4).
+fn arg_label(_ arg: Node, _ value: Node) -> Sym {
+    if arg.name() == NO_SYM && value.kind == NODE_NAME {
+        return value.name()
+    }
+    arg.name()
 }
 
 fn bit(_ b: bool) -> u256 {
@@ -527,6 +599,8 @@ impl Checker {
                 self.fn_item(i)?
             } else if kind == NODE_MSG {
                 self.msg_item(i)?
+            } else if kind == NODE_EVENT {
+                self.event_item(i)?
             }
             k += 1
         }
@@ -573,7 +647,7 @@ impl Checker {
         if !v.ty.fits(n.ty()) {
             return Result::Err(self.at(T_MISMATCH, n.value()))
         }
-        self.c.set_const_word(i, self.c.ast.add_word(v.v))
+        self.c.set_word(i, v.v)
         self.set_ty(i, n.ty())
         Result::Ok(())
     }
@@ -600,7 +674,7 @@ impl Checker {
                 return Result::Err(self.at(N_FORWARD_CONST, i))
             }
             self.set_res(i, d)
-            v = Val { v: self.c.const_value(d), ty: self.c.ty(d) }
+            v = Val { v: self.c.word_of(d), ty: self.c.ty(d) }
         } else if k == NODE_UNARY {
             let a = self.eval(n.operand())?
             v.ty = self.fit(n.operand(), a.ty, unary_ty(n.op()))?
@@ -700,6 +774,56 @@ impl Checker {
             k += 1
         }
         Result::Ok(())
+    }
+
+    // Checks EVENT `e`, gives each of its fields its word of the log data, and records its
+    // EventLog. Errors with T_TOO_MANY_INDEXED at a fourth indexed field.
+    fn event_item(mut self, _ e: NodeId) -> Result<Diag, ()> {
+        let l = self.node(e).list()
+        self.unique(l, N_DUPLICATE)?
+        var data: usize = 0
+        var k: usize = 0
+        while k < self.len(l) {
+            if !self.node(self.elem(l, k)).is_indexed() {
+                data += 1
+            }
+            k += 1
+        }
+        var data_word: usize = 0
+        var indexed: usize = 0
+        k = 0
+        while k < self.len(l) {
+            let f = self.elem(l, k)
+            if !self.node(f).is_indexed() {
+                self.c.set_log_word(f, LogWord { n: data_word })
+                data_word += 1
+            } else if indexed == MAX_INDEXED {
+                return Result::Err(self.at(T_TOO_MANY_INDEXED, f))
+            } else {
+                self.c.set_log_word(f, LogWord { n: data + indexed })
+                indexed += 1
+            }
+            k += 1
+        }
+        let topic0 = self.c.ast.add_word(self.topic0(e))
+        self.c.set_event_log(e, EventLog { topic0, data_words: data })
+        Result::Ok(())
+    }
+
+    // Returns topic 0 of EVENT `e`: the keccak of its signature, as in `Moved(address,uint256)`.
+    fn topic0(self, _ e: NodeId) -> u256 {
+        let n = self.node(e)
+        var sig: MemVec<u8> = MemVec::new()
+        sig.extend_from_slice(self.c.ast.name_bytes(n.name()))
+        sig.push(b'(')
+        var k: usize = 0
+        while k < self.len(n.list()) {
+            if k > 0 { sig.push(b',') }
+            self.node(self.elem(n.list(), k)).ty().abi_name().push_bytes(mut sig)
+            k += 1
+        }
+        sig.push(b')')
+        keccak256(sig.as_slice().as_bytes())
     }
 
     fn contract_item(mut self) -> Result<Diag, ()> {
@@ -868,6 +992,8 @@ impl Checker {
         } else if k == NODE_INDEX {
             let m = self.read(i)?
             t = self.entry(i, m)?
+        } else if k == NODE_EMIT {
+            self.emit(i)?
         }
         self.set_ty(i, t)
         Result::Ok(t)
@@ -888,22 +1014,27 @@ impl Checker {
 
     fn name(mut self, _ i: NodeId) -> Result<Diag, Ty> {
         let d = self.read(i)?
-        let kind = self.node(d).kind
-        let value = self.c.ty(d).is_value()
-        if kind == NODE_FN || kind == NODE_MSG || kind == NODE_CONTRACT || !value {
+        if !self.c.ty(d).is_value() {
             return Result::Err(self.at(N_NOT_A_VALUE, i))
         }
         Result::Ok(self.c.ty(d))
     }
 
-    // Returns the type of CALLER `i`, which is always TY_ADDRESS. Errors as `read` does, and
-    // with T_MISMATCH when `.caller()` follows a name that is not an effect.
+    // Returns the type of CALLER `i`, which is always TY_ADDRESS. Errors as `effect` does, so
+    // `.caller()` needs a `Ctx` effect.
     fn caller(mut self, _ i: NodeId) -> Result<Diag, Ty> {
+        self.effect(i, TY_CTX)?
+        Result::Ok(TY_ADDRESS)
+    }
+
+    // Returns the declaration that the name of node `i` refers to. Errors as `read` does, and
+    // with T_MISMATCH when that declaration is not an effect of type `want`.
+    fn effect(mut self, _ i: NodeId, _ want: Ty) -> Result<Diag, NodeId> {
         let d = self.read(i)?
-        if self.c.ty(d) != TY_CTX {
+        if self.c.ty(d) != want {
             return Result::Err(self.at(T_MISMATCH, i))
         }
-        Result::Ok(TY_ADDRESS)
+        Result::Ok(d)
     }
 
     // Checks the key of INDEX `i`, whose name `m` declares, and returns the type of the map's
@@ -916,6 +1047,55 @@ impl Checker {
         }
         self.want(self.node(i).key(), t.map_key())?
         Result::Ok(t.map_value())
+    }
+
+    // Checks EMIT `i` (SPEC §6, "Events"). Errors as `effect` and `event_args` do, with E_NOT_MUT
+    // when the body may not write the `Log` effect, with N_UNKNOWN_NAME or T_MISMATCH when the
+    // event's name is not an event, and with N_MISSING_FIELD when a field has no value.
+    fn emit(mut self, _ i: NodeId) -> Result<Diag, ()> {
+        let n = self.node(i)
+        let log = self.effect(i, TY_LOG)?
+        self.access(log, self.body.grant.write, self.at(E_NOT_MUT, i))?
+        let e = self.item(n.event())
+        if e.is_none() {
+            return Result::Err(self.at(N_UNKNOWN_NAME, i))
+        }
+        if self.node(e).kind != NODE_EVENT {
+            return Result::Err(self.at(T_MISMATCH, i))
+        }
+        self.set_res(i, e)
+        let fields = self.node(e).list()
+        self.event_args(n.list(), fields)?
+        if self.len(n.list()) != self.len(fields) {
+            return Result::Err(self.at(N_MISSING_FIELD, i))
+        }
+        Result::Ok(())
+    }
+
+    // Matches each ARG of list `args` to the event FIELD of list `fields` that its label names,
+    // and checks its value against the field's type. Errors with N_UNKNOWN_FIELD or N_DUPLICATE
+    // at a bad argument, and as `want` does.
+    fn event_args(mut self, _ args: ListId, _ fields: ListId) -> Result<Diag, ()> {
+        var k: usize = 0
+        while k < self.len(args) {
+            let a = self.elem(args, k)
+            let value = self.node(a).value()
+            let f = self.find(fields, arg_label(self.node(a), self.node(value)))
+            if f.is_none() {
+                return Result::Err(self.at(N_UNKNOWN_FIELD, a))
+            }
+            var j: usize = 0
+            while j < k {
+                if self.c.resolved(self.elem(args, j)) == f {
+                    return Result::Err(self.at(N_DUPLICATE, a))
+                }
+                j += 1
+            }
+            self.set_res(a, f)
+            self.want(value, self.node(f).ty())?
+            k += 1
+        }
+        Result::Ok(())
     }
 
     fn binary(mut self, _ i: NodeId) -> Result<Diag, Ty> {
@@ -1157,6 +1337,7 @@ pub fn check(_ ast: own Ast) -> Checked {
             res,
             slots,
             places: MemVec::new(),
+            events: MemVec::new(),
             the_contract: NO_NODE,
             err,
             warns: MemVec::new(),

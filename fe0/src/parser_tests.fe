@@ -136,7 +136,7 @@ impl Printer {
     }
 
     fn sym(mut self, _ s: Sym) {
-        self.out.extend_from_slice(self.ast.lexed.text.span_bytes(self.ast.span_of(s)))
+        self.out.extend_from_slice(self.ast.name_bytes(s))
     }
 
     // The source spelling of operator `t`.
@@ -217,6 +217,8 @@ impl Printer {
             self.put("Address")
         } else if t == TY_CTX {
             self.put("Ctx")
+        } else if t == TY_LOG {
+            self.put("mut Log")
         } else if t.is_map() {
             self.put("StorageMap<")
             self.ty(t.map_key())
@@ -308,7 +310,15 @@ impl Printer {
             self.ty(n.ty())
             self.put(")")
         } else if k == NODE_FIELD {
+            if n.is_indexed() {
+                self.put("#")
+            }
             self.typed(n.name(), n.ty())
+        } else if k == NODE_EVENT {
+            self.put("(event ")
+            self.sym(n.name())
+            self.list(n.list())
+            self.put(")")
         } else if k == NODE_CONTRACT {
             self.put("(contract ")
             self.sym(n.name())
@@ -438,6 +448,13 @@ impl Printer {
         } else if k == NODE_CALLER {
             self.put("(caller ")
             self.sym(n.name())
+            self.put(")")
+        } else if k == NODE_EMIT {
+            self.put("(emit ")
+            self.sym(n.name())
+            self.put(" ")
+            self.sym(n.event())
+            self.list(n.list())
             self.put(")")
         } else if k == NODE_ZERO_ADDRESS {
             self.put("(zero)")
@@ -673,6 +690,55 @@ fn maps() {
 }
 
 #[test]
+fn events() {
+    // An event is a struct with `#[event]`, whose fields may be `#[indexed]` (ADR 0019). Doc
+    // comments may come before and after each attribute, and the struct may be `pub`.
+    item_is(
+        "#[event]\nstruct E {\n    #[indexed]\n    a: Address,\n    b: u256,\n}",
+        "(event E (#a:Address b:u256))",
+    )
+    item_is(
+        "/// e\n#[event]\n/// e\npub struct E {\n    /// a\n    #[indexed]\n    /// a\n    a: bool\n}",
+        "(event E (#a:bool))",
+    )
+    item_is("#[event]\n\nstruct E {}", "(event E ())")
+    item_is(
+        "contract C uses (ctx: Ctx, log: mut Log) {\n}",
+        "(contract C (ctx:Ctx log:mut Log) ? ())",
+    )
+    // `log.emit(E { … })` is a whole expression. A value without a label is a name that spells
+    // its field, as in a call.
+    tail_is(
+        "fn f() { log.emit(E { a, b: x + 1 }) }",
+        "(emit log E (a b:(+ x 1)))",
+    )
+    tail_is(
+        "fn f() { log . emit ( E {\n    a,\n\n    b: 1,\n} ) }",
+        "(emit log E (a b:1))",
+    )
+    // The attribute must end its line, and Fe rejects it too.
+    rejects("#[event] struct E {}", P_EXPECTED_TOKEN, 9)
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed] a: u256\n}",
+        P_EXPECTED_TOKEN,
+        35,
+    )
+    // Only `event` may name the struct's attribute, and a struct needs it.
+    rejects("#[evnt]\nstruct E {}", P_EXPECTED_TOKEN, 2)
+    rejects("struct E {}", P_EXPECTED_ITEM, 0)
+    rejects("#[event]\nfn f() {}", P_EXPECTED_TOKEN, 9)
+    // An event's field has one of the three types.
+    rejects(
+        "#[event]\nstruct E {\n    m: StorageMap<u256, u256>\n}",
+        P_EXPECTED_TYPE,
+        27,
+    )
+    // The event is written as a literal in place.
+    rejects("fn f() { log.emit(e) }", P_EXPECTED_TOKEN, 19)
+    rejects("fn f() { log.emit(E {}, 1) }", P_EXPECTED_TOKEN, 22)
+}
+
+#[test]
 fn statements() {
     item_is(
         "fn f(_ a: u256, b: bool) -> u256 {\n    let x = 1\n    var y: u256 = 2\n    y += x\n    while y < 9 { y = y + 1 }\n    if b { return y }\n    break\n    continue\n    return\n}",
@@ -789,9 +855,10 @@ fn errors() {
     assert!(
         parse_err("msg M { #[slector = 1] A {} }").code == P_EXPECTED_TOKEN,
     )
-    // A contract's effect must have type `Ctx`, written without `mut`.
+    // A contract's effect must have type `Ctx`, or `Log` written with `mut`.
     rejects("contract C uses (ctx: u256) {}", P_EXPECTED_TOKEN, 22)
-    rejects("contract C uses (ctx: mut Ctx) {}", P_EXPECTED_TOKEN, 22)
+    rejects("contract C uses (ctx: mut Ctx) {}", P_EXPECTED_TOKEN, 26)
+    rejects("contract C uses (log: Log) {}", P_EXPECTED_TOKEN, 22)
     rejects("contract C uses (ctx) {}", P_EXPECTED_TOKEN, 20)
     // A lexer error stops the parse.
     assert!(

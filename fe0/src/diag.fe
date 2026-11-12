@@ -81,10 +81,10 @@ pub const P_RECORD_LITERAL: DiagCode = DiagCode { raw: 2012 }
 // Names
 
 // Two declarations of one name: items and contract fields, or within one list of parameters,
-// variants, fields, binds, arms or `recv` blocks.
+// variants, fields, binds, arms or `recv` blocks. Also one event field given twice in an emit.
 pub const N_DUPLICATE: DiagCode = DiagCode { raw: 3001 }
 pub const N_UNKNOWN_NAME: DiagCode = DiagCode { raw: 3002 }
-// A function, msg, contract or `Ctx` effect used as a value.
+// A name used as a value when `Ty.is_value` says it is not one.
 pub const N_NOT_A_VALUE: DiagCode = DiagCode { raw: 3003 }
 pub const N_NOT_A_FUNCTION: DiagCode = DiagCode { raw: 3004 }
 // A local or parameter named like a contract field (SPEC §5.2).
@@ -94,7 +94,8 @@ pub const N_FORWARD_CONST: DiagCode = DiagCode { raw: 3006 }
 pub const N_NOT_A_MSG: DiagCode = DiagCode { raw: 3007 }
 pub const N_UNKNOWN_VARIANT: DiagCode = DiagCode { raw: 3008 }
 pub const N_MISSING_ARM: DiagCode = DiagCode { raw: 3009 }
-// A bind that names no field of its variant.
+// A bind that names no field of its variant, or an emitted value that names no field of its
+// event.
 pub const N_UNKNOWN_FIELD: DiagCode = DiagCode { raw: 3010 }
 pub const N_MISSING_BIND: DiagCode = DiagCode { raw: 3011 }
 // A missing, extra or wrong argument label (SPEC §5.4).
@@ -109,6 +110,8 @@ pub const N_DUPLICATE_SELECTOR: DiagCode = DiagCode { raw: 3016 }
 pub const N_UPPERCASE_LOCAL: DiagCode = DiagCode { raw: 3017 }
 // A local or parameter named like an item (SPEC §5.2).
 pub const N_SHADOWS_ITEM: DiagCode = DiagCode { raw: 3018 }
+// An emitted event without a value for one of its fields (SPEC §6, "Events").
+pub const N_MISSING_FIELD: DiagCode = DiagCode { raw: 3019 }
 
 // Types
 pub const T_MISMATCH: DiagCode = DiagCode { raw: 4001 }
@@ -119,6 +122,8 @@ pub const T_NO_VALUE: DiagCode = DiagCode { raw: 4003 }
 pub const T_SELECTOR_TOO_LARGE: DiagCode = DiagCode { raw: 4004 }
 // An integer of type TY_INT where nothing gives it a type (SPEC §2).
 pub const T_NEEDS_TYPE: DiagCode = DiagCode { raw: 4005 }
+// An event with more than three indexed fields (SPEC §6, "Events").
+pub const T_TOO_MANY_INDEXED: DiagCode = DiagCode { raw: 4006 }
 
 // Effects
 

@@ -1,0 +1,21 @@
+// expect: N001 14:1
+// An event is an item, so it may not share its name with another item (SPEC §5.1).
+msg M {
+    #[selector = 1]
+    Go { n: u256 },
+}
+#[event]
+struct E {
+    #[indexed]
+    to: Address,
+    n: u256,
+}
+#[event]
+struct M {}
+contract C uses (log: mut Log) {
+    recv M {
+        Go { n } uses (mut log) {
+            log.emit(E { to: Address::zero(), n })
+        }
+    }
+}

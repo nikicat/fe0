@@ -1,0 +1,19 @@
+// expect: T001 16:13
+// Only an event can be emitted (SPEC §6, "Events"). `M` is a msg.
+msg M {
+    #[selector = 1]
+    Go { n: u256 },
+}
+#[event]
+struct E {
+    #[indexed]
+    to: Address,
+    n: u256,
+}
+contract C uses (log: mut Log) {
+    recv M {
+        Go { n } uses (mut log) {
+            log.emit(M { n })
+        }
+    }
+}
