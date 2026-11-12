@@ -648,10 +648,26 @@ fn maps() {
     rejects("fn f() { (m)[k] = 2 }", P_EXPECTED_END, 12)
     // A map type is only a contract field's, with two of the three types as its arguments.
     rejects("fn f(m: StorageMap<u256, u256>) {}", P_EXPECTED_TYPE, 8)
-    rejects("msg M {\n    #[selector = 1]\n    A { m: StorageMap<u256, u256> }\n}", P_EXPECTED_TYPE, 39)
-    rejects("contract C {\n    mut m: StorageMap<u256, StorageMap<u256, u256>>\n}", P_EXPECTED_TYPE, 41)
-    rejects("contract C {\n    mut m: StorageMap<u256>\n}", P_EXPECTED_TOKEN, 39)
-    rejects("contract C {\n    mut m: Map<u256, u256>\n}", P_EXPECTED_TYPE, 24)
+    rejects(
+        "msg M {\n    #[selector = 1]\n    A { m: StorageMap<u256, u256> }\n}",
+        P_EXPECTED_TYPE,
+        39,
+    )
+    rejects(
+        "contract C {\n    mut m: StorageMap<u256, StorageMap<u256, u256>>\n}",
+        P_EXPECTED_TYPE,
+        41,
+    )
+    rejects(
+        "contract C {\n    mut m: StorageMap<u256>\n}",
+        P_EXPECTED_TOKEN,
+        39,
+    )
+    rejects(
+        "contract C {\n    mut m: Map<u256, u256>\n}",
+        P_EXPECTED_TYPE,
+        24,
+    )
     // A newline may not come inside `[ ]`, and Fe rejects it too.
     rejects("fn f() { m[\nk] }", P_EXPECTED_EXPR, 11)
 }

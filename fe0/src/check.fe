@@ -1115,7 +1115,11 @@ impl Checker {
         let p = n.place()
         let d = self.resolve(p)?
         let target = self.node(d)
-        let t = if self.node(p).kind == NODE_INDEX { self.entry(p, d)? } else { self.c.ty(d) }
+        let t = if self.node(p).kind == NODE_INDEX {
+            self.entry(p, d)?
+        } else {
+            self.c.ty(d)
+        }
         if target.kind == NODE_FIELD && t.is_value() {
             self.access(d, self.body.grant.write, self.at(E_NOT_MUT, i))?
         } else if target.kind != NODE_LET || !target.is_var() {
