@@ -33,7 +33,8 @@ jobs:
             fe --version
             echo "::endgroup::"
             echo "::group::tools types"
-            (cd tools && mypy && pyright)
+            # The tools run in their own uv environment (tools/pyproject.toml, tools/uv.lock).
+            (cd tools && uv sync --locked && uv run --locked mypy && uv run --locked pyright)
             echo "::endgroup::"
             # CI skips the spike-*/ probes, because several of their tests fail on purpose to
             # report values. tools/spikes.sh runs them.
@@ -44,13 +45,13 @@ jobs:
             (cd fe0-cli && fe fmt --check)
             echo "::endgroup::"
             echo "::group::corpus"
-            python3 tools/embed.py
+            uv run --project tools --locked tools/embed.py
             echo "::endgroup::"
             # Fixed seeds, see DESIGN.md §11.
             echo "::group::generated programs"
-            python3 tools/gen.py -n 25
+            uv run --project tools --locked tools/gen.py -n 25
             echo "::endgroup::"
             # DESIGN.md §10. It runs after the generated programs, so it checks those too.
             echo "::group::native CLI"
-            python3 tools/cli_check.py
+            uv run --project tools --locked tools/cli_check.py
             echo "::endgroup::"

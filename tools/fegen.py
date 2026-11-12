@@ -36,6 +36,9 @@ Push = NewType("Push", str)
 Wei = NewType("Wei", int)
 # A 256-bit ABI word.
 Word = NewType("Word", int)
+# The index of the account that sends a deployment or call, among the node's funded accounts.
+# It applies only on a node (tools/node.py). DESIGN.md §10, "On a node", says why.
+Sender = NewType("Sender", int)
 # The code of a Panic that a test fails with (`Kind` says what it names).
 PanicCode = NewType("PanicCode", int)
 
@@ -257,6 +260,7 @@ class Case(NamedTuple):
 
     number: int
     payload: Payload
+    sender: Sender = Sender(0)
 
     @property
     def code(self) -> FeExpr:

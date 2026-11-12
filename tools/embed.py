@@ -15,7 +15,9 @@ of the program deploys and sends. A call script has one entry per line, and `#` 
 An argument is an integer, `MAX` (2**256 - 1), `true` or `false`, or such values combined with
 parentheses and the operators + - * // ** << >> & | ^. It is written without spaces, as in
 `2**255` or `MAX-1`, and its value must fit in 256 bits. Any entry but `raw` may end with
-`value=N`, the wei sent with it, and `extra=N`, a number of bytes appended after the words.
+`value=N`, the wei sent with it, `extra=N`, a number of bytes appended after the words, and
+`from=N`, the node account that sends it. `from` applies only on a node (tools/node.py), as
+DESIGN.md §10, "On a node", says.
 Without an `init` line, the main deployment has no arguments. Every program also gets the calls
 of `fegen.DISPATCH`.
 
@@ -49,7 +51,7 @@ from typing import ClassVar, Never, NamedTuple, NewType, Protocol, Self
 import fegen
 from fegen import (MAX, ROOT, ByteOffset, Call, Case, Cases, Deploy, DiagCode, DiagWord, DiffTest,
                    Failure, FeLine, FeName, FeSource, Kind, LineCol, PanicCode, Payload, PhaseLetter,
-                   RawCall, Selector, TestName, Wei, Word)
+                   RawCall, Selector, Sender, TestName, Wei, Word)
 
 CORPUS: Path = ROOT / "corpus"
 REJECTS: Path = CORPUS / "reject"
@@ -130,6 +132,8 @@ class ScriptOption(StrEnum):
     VALUE = "value"
     # The number of bytes appended after the words.
     EXTRA = "extra"
+    # The account that sends the entry (fegen.Sender).
+    FROM = "from"
 
 
 class Args(NamedTuple):
@@ -138,10 +142,12 @@ class Args(NamedTuple):
     words: tuple[Word, ...] = ()
     value: Wei = Wei(0)
     extra: int = 0
+    sender: Sender = Sender(0)
 
     def render(self) -> list[str]:
         """The tokens of the words and of each option that is not 0."""
-        opts = {ScriptOption.VALUE: self.value, ScriptOption.EXTRA: self.extra}
+        opts = {ScriptOption.VALUE: self.value, ScriptOption.EXTRA: self.extra,
+                ScriptOption.FROM: self.sender}
         return [*map(_render_word, self.words),
                 *(f"{o}={_render_word(v)}" for o, v in opts.items() if v)]
 
@@ -157,7 +163,7 @@ class Args(NamedTuple):
             args.pop()
             opts[ScriptOption(m[1])] = word(m[2])
         return cls(tuple(word(a) for a in args), Wei(opts.get(ScriptOption.VALUE, 0)),
-                   opts.get(ScriptOption.EXTRA, 0))
+                   opts.get(ScriptOption.EXTRA, 0), Sender(opts.get(ScriptOption.FROM, 0)))
 
     def deploy(self) -> Deploy:
         """Returns a deployment with these constructor arguments."""
@@ -182,6 +188,17 @@ class ScriptLine(ABC):
         Errors when the entry names a variant that `sels` lacks.
         """
 
+    def sender(self) -> Sender:
+        """Returns the account that sends the entry."""
+        return Sender(0)
+
+    def case(self, number: int, sels: Mapping[FeName, Selector]) -> Case:
+        """Returns the entry as the case `number`, with `sels` as the selectors by variant name.
+
+        Errors as payload does.
+        """
+        return Case(number, self.payload(sels), self.sender())
+
     @staticmethod
     def parse(text: str) -> "ScriptLine | None":
         """Returns the entry that the line `text` gives, or None for a blank or comment line.
@@ -205,8 +222,17 @@ class ScriptLine(ABC):
         return NamedCallLine(FeName(first), Args.parse(args))
 
 
+class ArgsLine(ScriptLine):
+    """An entry that takes arguments, among them its sender."""
+
+    args: Args
+
+    def sender(self) -> Sender:
+        return self.args.sender
+
+
 @dataclass(frozen=True)
-class DeploymentLine(ScriptLine):
+class DeploymentLine(ArgsLine):
     """An entry that deploys the program, with its arguments as constructor arguments."""
 
     # The keyword that starts the entry.
@@ -233,7 +259,7 @@ class DeployLine(DeploymentLine):
 
 
 @dataclass(frozen=True)
-class NamedCallLine(ScriptLine):
+class NamedCallLine(ArgsLine):
     """A call to a msg variant by its name."""
 
     name: FeName
@@ -249,7 +275,7 @@ class NamedCallLine(ScriptLine):
 
 
 @dataclass(frozen=True)
-class SelectorCallLine(ScriptLine):
+class SelectorCallLine(ArgsLine):
     """A call by selector."""
 
     sel: Selector
@@ -286,7 +312,7 @@ def check_script_line() -> None:
     """Checks that rendered call-script entries parse back to the same entries."""
     for line in [InitLine(Args((Word(5), Word(1)))),
                  DeployLine(Args((Word(2),), value=Wei(7), extra=3)),
-                 NamedCallLine(FeName("Set"), Args((MAX, Word(2**200)), extra=1)),
+                 NamedCallLine(FeName("Set"), Args((MAX, Word(2**200)), extra=1, sender=Sender(2))),
                  SelectorCallLine(Selector(0x2a)), RawLine(bytes([0, 0x2a])), RawLine(b"")]:
         assert ScriptLine.parse(line.render()) == line, line
 
@@ -303,17 +329,18 @@ def parse_calls(path: Path, sels: Mapping[FeName, Selector]) -> Cases:
     for n, text in enumerate(path.read_text().splitlines(), start=1):
         try:
             line = ScriptLine.parse(text)
+            if line is None:
+                continue
+            case = line.case(n, sels)
             match line:
-                case None:
-                    continue
                 case InitLine() if main.number:
                     raise ScriptError(f"a second {Head.INIT.value} line")
                 case InitLine():
-                    main = Case(n, line.payload(sels))
+                    main = case
                 case DeployLine():
-                    deploys.append(Case(n, line.payload(sels)))
+                    deploys.append(case)
                 case _:
-                    calls.append(Case(n, line.payload(sels)))
+                    calls.append(case)
         except ScriptError as e:
             raise ScriptError(f"{path.relative_to(ROOT)}:{n}: {e}") from None
     return Cases(main, deploys, calls)

@@ -368,6 +368,13 @@ Each batch ingot holds `BATCH` programs and depends on `fe0` by path. One `fe te
 run tests all the batches. [ADR 0003](adr/0003-own-corpus-and-generator.md#measurements) gives
 the measurements behind this layout.
 
+**On a node.** Inside `fe test`, every call comes from the test contract, and logs are not
+visible. `tools/node_check.py` ([ADR 0016](adr/0016-steps-toward-real-contracts.md), step 0)
+runs the same call scripts on a local anvil node instead (`tools/node.py`). It deploys Fe0's
+build and Fe's build and sends each entry from the account its `from=N` names. The docstring of
+`node_check.py` lists what the two builds must agree on. `tools/gas_compare.py` runs the same
+way and reports each build's gas.
+
 **One test per batch.** The root module of each batch ingot holds one test that calls every
 runner of the batch. Its name starts with `embed.BATCH_TEST`. The harness runs only these
 tests. It runs the programs' own tests only in a batch whose test fails, to get each program's

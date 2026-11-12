@@ -4,7 +4,7 @@
   "files.associations": {
     "**/corpus/reject/*.fe": "plaintext"
   },
-  // The tools import each other by module name (`import fegen`), as `python3 tools/x.py`
-  // runs them with tools/ on the path.
+  // The tools import each other by module name (`import fegen`), as `uv run --project tools
+  // tools/x.py` runs them with tools/ on the path.
   "python.analysis.extraPaths": ["tools"]
 }

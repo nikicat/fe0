@@ -1,9 +1,35 @@
-# The type checks of the scripts here. Run `mypy` and `pyright` in this directory; CI does.
-# The dev container pins both (.devcontainer/Containerfile).
+# The Python tools of the repo. They run in this project's environment (tools/.venv), which
+# `uv run --project tools` creates from uv.lock.
+
+[project]
+name = "fe0-tools"
+version = "0"
+requires-python = ">=3.15"
+dependencies = [
+    "web3==8.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy==2.4.1",
+    "pyright[nodejs]==1.1.414",
+]
+
+[tool.uv]
+package = false
+# Dependencies resolve as they were on this day, so that a fresh lock gives the same versions.
+exclude-newer = "2026-11-12T00:00:00Z"
+
+# The type checks of the scripts here. Run `uv run mypy` and `uv run pyright` in this
+# directory.
 
 [tool.mypy]
 strict = true
 files = ["."]
+exclude = ['^\.venv/']
 
 [tool.pyright]
 include = ["."]
+exclude = [".venv"]
+venvPath = "."
+venv = ".venv"

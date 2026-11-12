@@ -6,11 +6,13 @@
   "remoteEnv": { "FE_PATH": "/usr/local/bin/fe" },
   "customizations": {
     "vscode": {
-      // ms-python.python brings Pylance, which navigates the tools' Python
+      // ms-python.python brings Pylance, which navigates the tools' Python. It reads the
+      // tools' own environment, which postCreateCommand creates from tools/uv.lock.
       "extensions": ["tamasfe.even-better-toml", "ms-python.python"],
-      "settings": { "python.defaultInterpreterPath": "/usr/local/bin/python3" }
+      "settings": { "python.defaultInterpreterPath": "${containerWorkspaceFolder}/tools/.venv/bin/python" }
     }
   },
+  "postCreateCommand": "uv sync --project tools --locked",
   // Fe's extension is not on the marketplace, so the image holds its VSIX (Containerfile).
   // CI attaches without VS Code, so the install runs only where `code` exists.
   "postAttachCommand": "if command -v code >/dev/null; then code --install-extension /usr/local/share/vscode/fe-language.vsix; fi"

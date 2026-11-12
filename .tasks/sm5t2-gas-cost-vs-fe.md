@@ -43,7 +43,7 @@ decision, written into ADR 0007 or a new ADR, on whether the frame design stays.
 `tools/gas_compare.py` measures it (Nov 12). It deploys Fe0's build and Fe's builds at `-O 1`
 and `-O s` of each corpus program on anvil (Cancun), sends the call script, and counts the
 gas each call's code spends (gasUsed less the same transaction to an address with no code).
-Run it with `FE=<patched fe> python3 tools/gas_compare.py [--calls]`. Fe0's gas over Fe's,
+Run it with `FE=<patched fe> uv run --project tools tools/gas_compare.py [--calls]`. Fe0's gas over Fe's,
 summed over each program's calls:
 
 - Storage-bound (tokens, vault, escrow, auction, counter, ring, toggle, messages, two_msgs,

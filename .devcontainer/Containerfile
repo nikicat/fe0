@@ -85,11 +85,3 @@ RUN set -e; arch=$(dpkg --print-architecture); \
     fi; \
     rm /tmp/rustup-init /tmp/foundry.tgz
 
-# the type checkers of tools/ (tools/pyproject.toml): mypy, with its dependencies as they were
-# on the day it was pinned, and pyright, which has none
-ARG MYPY=2.4.1
-ARG MYPY_DEPS_DATE=2026-11-11
-ARG PYRIGHT=1.1.414
-ENV UV_TOOL_DIR=/usr/local/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin
-RUN uv tool install --exclude-newer "$MYPY_DEPS_DATE" "mypy==$MYPY" \
- && npm install -g --no-fund --no-audit "pyright@$PYRIGHT"
