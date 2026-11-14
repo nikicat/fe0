@@ -30,7 +30,7 @@ the result with `create_raw`. Deploy to Arbitrum One and script the demo: compil
   `--to`, and the user approves each one in their browser wallet.
 
 ## State
-- The on-chain compiler is built and checked on anvil. It is not committed yet.
+- The on-chain compiler is built, checked on anvil and committed (0096f38).
   - `fe0-chain/` holds Lexer, Parser, Checker, Back and Compiler.
   - The wire format is `fe0/src/wire.fe`.
   - Every contract fits EIP-170. Parser is the largest, at 22,072 runtime bytes.
@@ -43,13 +43,15 @@ the result with `create_raw`. Deploy to Arbitrum One and script the demo: compil
   - deploying all five costs 15.4M;
   - compiling costs up to 14.8M, for `amm.fe`;
   - deploying `counter.fe` through Compiler costs 2.4M.
-- `browser-web3-signer` is no longer in `~/.local/bin`. The container was rebuilt, and how it
-  was installed is not recorded.
+- `browser-web3-signer` 0.12.1 is installed with `cargo install --locked browser-web3-signer`.
+  It lands in `~/.local/bin`. After a container rebuild, run that again.
+- **Deployed to Arbitrum One on Nov 14** with `tools/deploy.py`. The addresses are in
+  `deployments/42161.json`:
+  - Compiler is at `0xc3166Af5e42019C1f986b2e1f4958D69C377fe79`.
+  - The demo compiled `counter.fe` by `eth_call` (268 bytes of deploy code).
+  - It then deployed `counter.fe` through Compiler at `0x58307ED5Db3E1F9EdCe546258Cbf2d23fBA89F57`
+    (2,415,927 gas), and `Get` returns 2.
+- Deploy gas on Arbitrum: Lexer 1.74M, Parser 4.88M, Checker 4.75M, Back 3.79M, Compiler 0.50M.
 
 ## Next
-1. Reinstall `browser-web3-signer` (needs the user: where it comes from) and record how.
-2. Write the deploy and demo script. It deploys the four phases, then Compiler with their
-   addresses, each with `browser-web3-signer evm send-transaction --data 0x<initcode>`. Then it
-   compiles a program by `eth_call` and deploys it with `deploy(bytes,bytes)`.
-3. Rehearse the script on anvil, then deploy to Arbitrum One close to Nov 21. Use a wallet with
-   about 0.001 ETH.
+1. Script the public demo for the submission (T0010): the commands and what each shows.
