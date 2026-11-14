@@ -24,9 +24,12 @@ fe0/            ingot: the compiler as a library; no I/O, target-agnostic
   src/asm.fe    opcodes, pushes and label resolution
   src/diag.fe   error codes and positions
   src/io.fe     the `Source` effect and its adapter, BytesReader (`text` and `bytes`)
+  src/wire.fe   the words that carry one phase's output to the next phase's contract (§8)
   src/difftest.fe what each differential test calls: both builds, deploy, call, compare (§10)
 fe0-cli/        ingot: native `main`, stdin → hex on stdout, errors on stderr (§9)
 fe0-chain/      ingot: one contract per phase plus Compiler (on-chain split, §8)
+  src/lib.fe    the contracts and their messages; the wire format is fe0/src/wire.fe
+  Compiler.abi.json  Compiler's interface for callers; README.md explains it
 corpus/         Fe0 programs (*.fe) + call scripts (*.calls); generated ones under corpus/gen/
 corpus/reject/  programs that Fe0 must reject, each with the error it expects
 out/            written by the tools, not committed
@@ -34,8 +37,10 @@ out/            written by the tools, not committed
   gen/          batch ingots of the random programs, written by tools/gen.py
   cli-check/    batch ingots of tools/cli_check.py
   cli/          the CLI executable, built by tools/cli_check.py
+  chain/        fe0-chain's contracts, built by tools/chain_check.py
 tools/          embed.py, fegen.py (shared by the generators), gen.py (random programs),
-                cli_check.py (the native CLI against the EVM, §10), corpus_scan.py,
+                cli_check.py (the native CLI against the EVM, §10), chain_check.py (the
+                compiler on chain against the CLI, §8), corpus_scan.py,
                 gen_codegen_tests.py and gen_check_tests.py (the unit-test generators),
                 spikes.sh (the spike probes)
 ```
@@ -93,8 +98,8 @@ length-prefixed run in one array. Ids, operators and written types are typed (`N
 
 ## 5. Checker
 
-`check(ast)` in `fe0/src/check.fe` returns a `Checked`, which documents what each of its fields
-holds.
+`check(ast)` in `fe0/src/check.fe` returns a `CheckOutput`. Its program is a `Checked`, which
+documents what each of its fields holds.
 
 Constants are evaluated before any body, in source order (`Checker.program`).
 
@@ -126,7 +131,7 @@ Constants are evaluated before any body, in source order (`Checker.program`).
   - A field read checks `Grant.read` (`E116`), and an assignment checks `Grant.write` (`E018`).
   - Free functions are pure (SPEC §5), so `fn_item` gives them an empty grant.
   - Duplicate entries are an error. An entry the body never reads or assigns is a warning,
-    `E003`, collected in `Checked.warns`.
+    `E003`, collected in `CheckOutput.warns`.
 - **Events** (SPEC §6, "Events"): `Checker.event_item` gives each field of an event its word of
   the log data (`Checked.log_word`). It records the event's `EventLog`: topic 0, which
   `Checker.topic0` builds from the source, and the number of data words (`Checked.topic0`,
@@ -286,15 +291,41 @@ Each phase is its own contract, because lexer and parser together already exceed
 
 | Contract | Message | Does |
 |---|---|---|
-| `Lexer` | `lex(bytes src) -> bytes` | lex, then serialize the tokens |
-| `Parser` | `parse(bytes src, bytes toks) -> bytes` | parse, then serialize nodes, lists, syms and words |
-| `Checker` | `check(bytes src, bytes ast) -> bytes` | check, then serialize `types`, `res`, `slots`, `places`, `events` and the words it adds |
-| `Back` | `emit(bytes ir) -> bytes` | deserialize, codegen, assemble, return deploy code |
-| `Compiler` | `deploy(bytes src) -> address` | `STATICCALL` each phase in turn, then `create_raw` |
+| `Lexer` | `lex(bytes src) -> uint256[]` | lex, then put the tokens |
+| `Parser` | `parse(bytes src, uint256[] toks) -> uint256[]` | parse, then put the AST (`Ast.put`) |
+| `Checker` | `check(bytes src, uint256[] ast) -> uint256[]` | check, then put the checked program (`Checked.put`) |
+| `Back` | `generate(uint256[] ir) -> bytes` | take the checked program, generate and assemble, return the deploy code |
+| `Compiler` | `compile(bytes src) -> bytes`, `deploy(bytes src, bytes args) -> address` | `STATICCALL` each phase in turn; `deploy` appends `args` and runs `create_raw` |
 
-- **Serialization format:** the arrays are dumped as 32-byte words with length prefixes. No
-  schema; every side is compiled from the same `fe0` ingot.
-- Errors cross the boundary as `Error(string)`-style revert data that carries the `Diag`.
+The contracts are in `fe0-chain/`. Compiler takes the four phase addresses in its constructor.
+Callers use `fe0-chain/Compiler.abi.json`. `tools/chain_check.py` writes it and says why it
+differs from the ABI that `fe build` writes.
+
+- **Wire format:** each phase returns ABI `uint256[]`, in the format of `fe0/src/wire.fe`. The
+  source does not cross. It is each phase's own `bytes` argument, so Back never sees it.
+- **Errors:** see `CompileError` in `fe0-chain/src/lib.fe`. Warnings do not cross (§9).
+- **Trust:** a phase contract trusts its input and decodes it without checks. Compiler, its
+  intended caller, gives each phase the previous phase's output. A direct caller that sends
+  malformed words gets a revert or a wrong result, and only for itself: the phases keep no
+  state, so the call changes nothing on chain. Checks would cost bytes in Parser and Checker,
+  which sit near the limit.
+- **Measured on Fe 26.6.0 at `-O s` (Nov 14):**
+
+  | Contract | Runtime bytes | Deploy gas |
+  |---|---|---|
+  | Lexer | 7,685 | 1.72M |
+  | Parser | 22,072 | 4.82M |
+  | Checker | 21,411 | 4.68M |
+  | Back | 17,049 | 3.74M |
+  | Compiler | 1,893 | 0.49M |
+
+  - **Deploying all five costs 15.4M gas.**
+  - **Compiling costs up to 14.8M gas, for `corpus/amm.fe`.**
+    - That program is 4,249 bytes of source.
+    - Lexing alone takes 6.2M of that, at about 1,470 gas per byte.
+    - The boundaries cost little, compared to the phases themselves.
+  - **`deploy` of `counter.fe` costs 2.4M gas.**
+  - `tools/chain_check.py` measures all of these and checks the limits.
 
 ## 8a. Measured limits of the host (official Fe on the EVM)
 
@@ -320,10 +351,10 @@ Measured Oct 28 on master `d217a51bf` (`spike-limits/`, 30M gas per call):
     fine (measured Nov 6). The harness checks both limits on Fe0's builds (§10, item 6).
   - **A real node does enforce it.** Local `anvil` (Foundry 1.8.4, hardfork BPO1) deploys a
     24,576-byte runtime and rejects 24,577 bytes (status 0).
-  - So the final gate is a deploy script: `anvil` plus `cast send --create`, run in CI and before
-    any Arbitrum One deploy. A Fe-built `.bin` deploys and works there: the spec Counter returns
-    `get() = 2` after two increments, and its on-chain runtime size equals `fe build`'s
-    `.runtime.bin` (99 bytes).
+  - So the final gate is a real node: `tools/chain_check.py` (§8) deploys Fe0's contracts on
+    `anvil` in CI and before any Arbitrum One deploy. A Fe-built `.bin` deploys and works
+    there: the spec Counter returns `get() = 2` after two increments, and its on-chain runtime
+    size equals `fe build`'s `.runtime.bin` (99 bytes).
 
 ## 9. Diagnostics
 
@@ -348,14 +379,14 @@ differ: they report the error in a field instead
 | Constants | overflow (`C034`), division by zero (`C025`) |
 | Generation | no contract (`G001`), code too large (`G002`) |
 
-The CLI prints `<stdin>:line:col: CODE message` on stderr and exits with 1. On chain, the
-message is the code, the line and the column.
+The CLI prints `<stdin>:line:col: CODE message` on stderr and exits with 1. On chain, Compiler
+reverts with `CompileError`, which holds the code and the byte offset (§8).
 
-The checker also reports warnings, in `Checked.warns`. They never stop the compile.
+The checker also reports warnings, in `CheckOutput.warns`. They never stop the compile.
 - The CLI prints each one on stderr as `<stdin>:line:col: warning: CODE message` and still
   writes its output.
-- On chain, the `Checker` contract does not serialize them. `deploy` returns only an address,
-  so nothing would read them.
+- On chain, Checker puts only the checked program, so they do not cross. `compile` returns only
+  the deploy code and `deploy` only an address, so nothing would read them.
 
 ## 10. Differential test harness
 

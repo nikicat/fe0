@@ -92,13 +92,35 @@ FE0: Path = ROOT / "fe0"
 MAX: Word = Word((1 << 256) - 1)
 
 
+def _fe_const(path: Path, name: str, type_: str, value: str) -> str:
+    """Returns the first group that the pattern `value` matches in the declaration of the constant
+    `name` in the Fe module `path`. `type_` is a pattern that matches the constant's type. Errors
+    with ValueError when the module has no such declaration."""
+    m = re.search(rf"^(?:pub )?const {name}: {type_} = {value}$", path.read_text(), re.MULTILINE)
+    if m is None:
+        raise ValueError(f"{path} declares no const {name}: {type_}")
+    return m[1]
+
+
 def fe_const(path: Path, name: str) -> int:
     """Returns the value of the `usize` constant `name` that the Fe module `path` declares. Errors
-    when the module has no such declaration."""
-    m = re.search(rf"^(?:pub )?const {name}: usize = (\d+)$", path.read_text(), re.MULTILINE)
-    if m is None:
-        raise ValueError(f"{path} declares no const {name}: usize")
-    return int(m[1])
+    as `_fe_const` does."""
+    return int(_fe_const(path, name, "usize", r"(\d+)"))
+
+
+def fe_string(path: Path, name: str) -> str:
+    """Returns the value of the `String` constant `name` that the Fe module `path` declares. The
+    value holds no quote and no backslash. Errors as `_fe_const` does."""
+    return _fe_const(path, name, r"String<\d+>", r'"([^"\\]*)"')
+
+
+def fe_build(ingot: Path, out_dir: Path, *options: str) -> None:
+    """Builds the ingot `ingot` into `out_dir` with `fe build` and `options`. Exits with what
+    `fe build` printed when it fails."""
+    r = subprocess.run([FE, "build", *options, "--out-dir", str(out_dir), str(ingot)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"Errors when building {ingot.relative_to(ROOT)}:\n{r.stdout}{r.stderr}")
 
 
 # The deepest nesting of blocks and binary expressions that Fe0's parser accepts.
@@ -438,6 +460,10 @@ class LineCol(NamedTuple):
         return f"{self.line}:{self.col}"
 
 
+# The letters of the phases, from phase 1 on.
+PHASE_LETTERS: str = fe_string(FE0 / "src/diag.fe", "PHASE_LETTERS")
+
+
 class DiagCode(NamedTuple):
     """The kind of an error of Fe0, apart from where it points."""
 
@@ -451,6 +477,15 @@ class DiagCode(NamedTuple):
         """Returns the code that the match `m` names. The pattern of `m` holds the groups of
         CODE."""
         return cls(PhaseLetter(m["letter"]), int(m["number"]))
+
+    @classmethod
+    def of_value(cls, value: int) -> Self:
+        """Returns the code that `DiagCode.value()` in fe0/src/diag.fe gives as `value`, such as
+        C034 for 6034. Errors with ValueError when `value` names no phase."""
+        phase = value // 1000
+        if not 1 <= phase <= len(PHASE_LETTERS):
+            raise ValueError(f"the error code {value} names no phase")
+        return cls(PhaseLetter(PHASE_LETTERS[phase - 1]), value % 1000)
 
     def __str__(self) -> str:
         """Returns the code as CODE spells it, such as `E116`."""
@@ -491,9 +526,11 @@ class DiagWord:
 
 
 def check_diag_word() -> None:
-    r"""Checks DiagWord against the example of `difftest::DiagWord` and one source with `\r`."""
+    r"""Checks DiagCode and DiagWord against the examples of fe0/src/diag.fe and
+    `difftest::DiagWord`, and one source with `\r`."""
     e116 = DiagCode(PhaseLetter("E"), 116)
     assert str(e116) == "E116"
+    assert DiagCode.of_value(6034) == DiagCode(PhaseLetter("C"), 34)
     at9 = DiagWord(e116, ByteOffset(9))
     assert at9.pack() == 0x45_0074_000009 and DiagWord.unpack(at9.pack()) == at9
     assert Failure.decode(at9.pack()) == Failure(Kind.DIAG, at9.pack())

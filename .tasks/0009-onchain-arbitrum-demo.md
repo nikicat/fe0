@@ -1,5 +1,5 @@
 ---
-status: todo
+status: doing
 deps: [T0003, T0005, T324k1]
 due: 2026-11-21
 tags: [onchain]
@@ -29,7 +29,27 @@ the result with `create_raw`. Deploy to Arbitrum One and script the demo: compil
   `browser-web3-signer evm send-transaction --chain <arbitrum> --data 0x<initcode>`, with no
   `--to`, and the user approves each one in their browser wallet.
 
+## State
+- The on-chain compiler is built and checked on anvil. It is not committed yet.
+  - `fe0-chain/` holds Lexer, Parser, Checker, Back and Compiler.
+  - The wire format is `fe0/src/wire.fe`.
+  - Every contract fits EIP-170. Parser is the largest, at 22,072 runtime bytes.
+- `tools/chain_check.py` deploys all five on anvil (Cancun). Then it checks three things:
+  - all 50 corpus programs compile by `eth_call` to the CLI's exact bytes;
+  - all 129 reject programs revert with their header's `CompileError`;
+  - `deploy(bytes,bytes)` of `counter.fe` works.
+- CI runs `tools/chain_check.py`.
+- The gas numbers are in DESIGN.md §8:
+  - deploying all five costs 15.4M;
+  - compiling costs up to 14.8M, for `amm.fe`;
+  - deploying `counter.fe` through Compiler costs 2.4M.
+- `browser-web3-signer` is no longer in `~/.local/bin`. The container was rebuilt, and how it
+  was installed is not recorded.
+
 ## Next
-Build the phase contracts and check each one's size and deploy gas on anvil with
-`--hardfork cancun`. Then deploy with `browser-web3-signer` from a wallet that holds about 0.001
-ETH on Arbitrum One (needs the user).
+1. Reinstall `browser-web3-signer` (needs the user: where it comes from) and record how.
+2. Write the deploy and demo script. It deploys the four phases, then Compiler with their
+   addresses, each with `browser-web3-signer evm send-transaction --data 0x<initcode>`. Then it
+   compiles a program by `eth_call` and deploys it with `deploy(bytes,bytes)`.
+3. Rehearse the script on anvil, then deploy to Arbitrum One close to Nov 21. Use a wallet with
+   about 0.001 ETH.

@@ -1,0 +1,6 @@
+[ingot]
+name = "fe0_chain"
+version = "0.1.0"
+
+[dependencies]
+fe0 = { path = "../fe0" }

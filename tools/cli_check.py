@@ -52,11 +52,8 @@ HEX: re.Pattern[str] = re.compile(r"(?:[0-9a-f]{2})+\n")
 
 
 def build() -> None:
-    """Builds the CLI. Errors when `fe build` fails."""
-    r = subprocess.run([fegen.FE, "build", "--backend", "native", "-e", "executable", "--out-dir",
-                        str(EXE.parent), str(CLI)], capture_output=True, text=True)
-    if r.returncode != 0:
-        sys.exit(f"Errors when building {CLI.relative_to(ROOT)}:\n{r.stdout}{r.stderr}")
+    """Builds the CLI. Exits as `fegen.fe_build` does."""
+    fegen.fe_build(CLI, EXE.parent, "--backend", "native", "-e", "executable")
 
 
 @dataclass
@@ -214,10 +211,7 @@ def main() -> None:
     fe_test = embed.requested_fe_test(embed.parser(__doc__).parse_args())
     build()
     paths = sorted(p.relative_to(ROOT) for p in [*embed.CORPUS.glob("*.fe"), *gen.GEN.glob("*.fe")])
-    try:
-        rejects = [embed.Reject.load(p) for p in sorted(embed.REJECTS.glob("*.fe"))]
-    except embed.ScriptError as e:
-        sys.exit(str(e))
+    rejects = embed.load_rejects()
     with ThreadPoolExecutor() as pool:
         runs = list(pool.map(Run.read, paths))
         misjudged = [m for m in pool.map(misjudgement, rejects) if m is not None]

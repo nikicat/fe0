@@ -16,8 +16,10 @@ use ingot::diag::{
     L_UNTERMINATED_STRING,
 }
 use ingot::io::{Byte, Source}
+use ingot::wire::{Lanes, Reader, Wire, Writer}
 
-// Kind of a token. The constants below are its only values.
+// Kind of a token. The lexer makes only the constants below. A Tok from `Tok::from_wire` is
+// only as good as the code it was given.
 pub struct Tok { code: u8 }
 
 impl Copy for Tok {}
@@ -33,6 +35,16 @@ impl core::ops::Eq for Tok {
 const ASSIGN_OFFSET: u8 = 30
 
 impl Tok {
+    // Returns the code that carries this kind across a phase boundary (`wire.fe`).
+    pub fn wire(self) -> usize {
+        self.code as usize
+    }
+
+    // Returns the kind whose `wire()` is `w`.
+    pub fn from_wire(_ w: usize) -> Tok {
+        Tok { code: w.downcast_truncate() }
+    }
+
     // Returns the assignment form of this operator, such as A_PLUS for O_PLUS.
     const fn assign_form(self) -> Tok {
         Tok { code: self.code + ASSIGN_OFFSET }
@@ -265,6 +277,39 @@ pub struct Token { pub kind: Tok, pub span: Span }
 
 impl Copy for Token {}
 
+impl Wire for Token {
+    fn put(self, _ w: mut Writer) {
+        self.span.put_beside(self.kind.wire(), mut w)
+    }
+
+    fn take(_ r: mut Reader) -> Token {
+        let l = r.lanes()
+        Token { kind: Tok::from_wire(l.c()), span: Span::from_lanes(l) }
+    }
+}
+
+impl Span {
+    // Puts the span into lanes a and b of one word, with `extra` in lane c.
+    fn put_beside(self, _ extra: usize, _ w: mut Writer) {
+        w.lanes(self.start.off, self.len, extra, 0)
+    }
+
+    // Returns the span that `put_beside` put into `l`.
+    fn from_lanes(_ l: Lanes) -> Span {
+        Span { start: Pos::at(l.a()), len: l.b() }
+    }
+}
+
+impl Wire for Span {
+    fn put(self, _ w: mut Writer) {
+        self.put_beside(0, mut w)
+    }
+
+    fn take(_ r: mut Reader) -> Span {
+        Span::from_lanes(r.lanes())
+    }
+}
+
 // The lexed source. On error, `toks` holds the tokens before it. ADR 0011 says why this is
 // not a `Result`.
 pub struct Lexed { pub text: Text, pub toks: MemVec<Token>, pub err: Option<Diag> }
@@ -278,7 +323,8 @@ impl Copy for LineCol {}
 pub struct Text { bytes: MemVec<u8> }
 
 impl Text {
-    fn new() -> Text {
+    // Returns an empty text.
+    pub fn new() -> Text {
         Text { bytes: MemVec::new() }
     }
 

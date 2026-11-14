@@ -93,7 +93,7 @@ fn diag_word_layout() {
 // Fe0's build of `s`.
 pub fn compiled(_ s: own DynString) -> Output {
     with (Source = text(s)) {
-        compile()
+        compile().out
     }
 }
 

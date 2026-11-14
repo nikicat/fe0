@@ -1,0 +1,146 @@
+// The words that carry one phase's output to the next phase's contract (DESIGN.md §8). Each
+// side is compiled from this ingot, and a reader takes the words in the order its writer put
+// them, so the format has no schema. Most values pack into one word as four 64-bit lanes.
+// Each type that crosses has its `Wire` impl next to its definition. A reader trusts its words
+// and checks nothing (DESIGN.md §8, Trust).
+
+use std::abi::DynArray
+
+const LANE_BITS: u256 = 64
+const LANE_MASK: u256 = (1 << LANE_BITS) - 1
+
+// A value that crosses a phase boundary.
+pub trait Wire {
+    fn put(self, _ w: mut Writer)
+    fn take(_ r: mut Reader) -> Self
+}
+
+// Collects the words of a phase's output.
+pub struct Writer { words: MemVec<u256> }
+
+impl Writer {
+    pub fn new() -> Writer {
+        Writer { words: MemVec::new() }
+    }
+
+    // Puts one word that holds `a` to `d`, each below 2^64.
+    pub fn lanes(mut self, _ a: usize, _ b: usize, _ c: usize, _ d: usize) {
+        let lo = (a as u256) | ((b as u256) << LANE_BITS)
+        let hi = (c as u256) | ((d as u256) << LANE_BITS)
+        self.words.push(lo | (hi << (2 * LANE_BITS)))
+    }
+
+    // Returns the words as the ABI array that the next phase takes.
+    pub fn finish(own self) -> DynArray<u256> {
+        DynArray::from_mem_vec(self.words)
+    }
+}
+
+// Reads the words that a Writer put, in the same order.
+pub struct Reader { words: DynArray<u256>, at: usize }
+
+impl Reader {
+    pub fn new(_ words: own DynArray<u256>) -> Reader {
+        Reader { words, at: 0 }
+    }
+
+    // Takes a word that Writer.lanes put. Read its lanes with Lanes.a to Lanes.d.
+    pub fn lanes(mut self) -> Lanes {
+        Lanes { w: u256::take(mut self) }
+    }
+}
+
+// Returns the words of `v`, for the next phase's contract.
+pub fn words<T: Wire>(_ v: T) -> DynArray<u256> {
+    var w = Writer::new()
+    v.put(mut w)
+    w.finish()
+}
+
+// Returns the value that `words` turned into `w`.
+pub fn from_words<T: Wire>(_ w: own DynArray<u256>) -> T {
+    var r = Reader::new(w)
+    T::take(mut r)
+}
+
+// The four 64-bit lanes of one word.
+pub struct Lanes { w: u256 }
+
+impl Copy for Lanes {}
+
+impl Lanes {
+    pub fn a(self) -> usize {
+        (self.w & LANE_MASK).downcast_truncate()
+    }
+
+    pub fn b(self) -> usize {
+        ((self.w >> LANE_BITS) & LANE_MASK).downcast_truncate()
+    }
+
+    pub fn c(self) -> usize {
+        ((self.w >> (2 * LANE_BITS)) & LANE_MASK).downcast_truncate()
+    }
+
+    pub fn d(self) -> usize {
+        (self.w >> (3 * LANE_BITS)).downcast_truncate()
+    }
+}
+
+// A vector crosses as its length, then its elements.
+impl<T: Wire + Copy> Wire for MemVec<T> {
+    fn put(self, _ w: mut Writer) {
+        self.len().put(mut w)
+        var i: usize = 0
+        while i < self.len() {
+            self[i].put(mut w)
+            i += 1
+        }
+    }
+
+    fn take(_ r: mut Reader) -> MemVec<T> {
+        let n = usize::take(mut r)
+        var v: MemVec<T> = MemVec::with_capacity(n)
+        var i: usize = 0
+        while i < n {
+            v.push(T::take(mut r))
+            i += 1
+        }
+        v
+    }
+}
+
+impl Wire for usize {
+    fn put(self, _ w: mut Writer) {
+        w.words.push(self as u256)
+    }
+
+    fn take(_ r: mut Reader) -> usize {
+        u256::take(mut r).downcast_truncate()
+    }
+}
+
+impl Wire for u256 {
+    fn put(self, _ w: mut Writer) {
+        w.words.push(self)
+    }
+
+    fn take(_ r: mut Reader) -> u256 {
+        let v = r.words.get(r.at)
+        r.at += 1
+        v
+    }
+}
+
+#[test]
+fn lanes_round_trip() {
+    let full: usize = LANE_MASK.downcast_truncate()
+    var w = Writer::new()
+    w.lanes(1, full, 0, 7)
+    let none: MemVec<u256> = MemVec::new()
+    none.put(mut w)
+    var r = Reader::new(w.finish())
+    let l = r.lanes()
+    assert!(l.a() == 1 && l.b() == full && l.c() == 0 && l.d() == 7)
+    let read: MemVec<u256> = Wire::take(mut r)
+    assert!(read.len() == 0)
+}

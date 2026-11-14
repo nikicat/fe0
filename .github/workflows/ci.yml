@@ -66,3 +66,8 @@ jobs:
             echo "::group::programs on a node"
             uv run --project tools --locked tools/node_check.py
             echo "::endgroup::"
+            # DESIGN.md §8: the phase contracts and Compiler on anvil, against the native CLI.
+            echo "::group::compiler on chain"
+            (cd fe0-chain && fe fmt --check)
+            uv run --project tools --locked tools/chain_check.py
+            echo "::endgroup::"

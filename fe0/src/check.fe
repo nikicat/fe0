@@ -5,6 +5,7 @@ use ingot::asm::MAX_TOPICS
 use ingot::ast::*
 use ingot::diag::*
 use ingot::lexer::*
+use ingot::wire::{Reader, Wire, Writer}
 use std::evm::crypto::keccak256
 
 const U256_MAX: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
@@ -76,6 +77,17 @@ pub struct EventLog { topic0: WordId, data_words: usize }
 
 impl Copy for EventLog {}
 
+impl Wire for EventLog {
+    fn put(self, _ w: mut Writer) {
+        w.lanes(self.topic0.index(), self.data_words, 0, 0)
+    }
+
+    fn take(_ r: mut Reader) -> EventLog {
+        let l = r.lanes()
+        EventLog { topic0: WordId::at(l.a()), data_words: l.b() }
+    }
+}
+
 const SLOT_BYTES: usize = 32
 
 // Where a contract field lives in storage (SPEC §6): its slot, and its bytes in the slot,
@@ -83,6 +95,17 @@ const SLOT_BYTES: usize = 32
 pub struct StoragePlace { slot: usize, offset: usize, size: usize, ends_slot: bool }
 
 impl Copy for StoragePlace {}
+
+impl Wire for StoragePlace {
+    fn put(self, _ w: mut Writer) {
+        w.lanes(self.slot, self.offset, self.size, flag(self.ends_slot))
+    }
+
+    fn take(_ r: mut Reader) -> StoragePlace {
+        let l = r.lanes()
+        StoragePlace { slot: l.a(), offset: l.b(), size: l.c(), ends_slot: is_flag(l.d()) }
+    }
+}
 
 // The place before the first field's, so that the first field starts slot 0.
 const NO_PLACE: StoragePlace = StoragePlace { slot: 0, offset: 0, size: 0, ends_slot: false }
@@ -144,8 +167,16 @@ const NO_GRANT: Grant = Grant {
     used: NO_FIELDS,
 }
 
-// The checked program. On error, `err` holds the first error and the side tables are partly
-// filled. This is not a `Result` for the same reason `Ast` is not.
+// What `check` returns. On error, the program's side tables are partly filled.
+// This is not a `Result` for the same reason `Ast` is not.
+pub struct CheckOutput {
+    pub program: Checked,
+    pub err: Option<Diag>,
+    // Warnings, in source order: unused `uses` entries (E_UNUSED_USE).
+    pub warns: MemVec<Diag>,
+}
+
+// The checked program: the AST and the side tables that code generation reads.
 pub struct Checked {
     pub ast: Ast,
     // The type of every expression node, and of every node that declares a name: CONST, PARAM,
@@ -165,9 +196,29 @@ pub struct Checked {
     events: MemVec<EventLog>,
     // The CONTRACT item, or NO_NODE.
     pub the_contract: NodeId,
-    pub err: Option<Diag>,
-    // Warnings, in source order: unused `uses` entries (E_UNUSED_USE).
-    pub warns: MemVec<Diag>,
+}
+
+impl Wire for Checked {
+    fn put(self, _ w: mut Writer) {
+        self.ast.put(mut w)
+        self.types.put(mut w)
+        self.res.put(mut w)
+        self.slots.put(mut w)
+        self.places.put(mut w)
+        self.events.put(mut w)
+        self.the_contract.put(mut w)
+    }
+
+    fn take(_ r: mut Reader) -> Checked {
+        let ast = Ast::take(mut r)
+        let types = Wire::take(mut r)
+        let res = Wire::take(mut r)
+        let slots = Wire::take(mut r)
+        let places = Wire::take(mut r)
+        let events = Wire::take(mut r)
+        let the_contract = NodeId::take(mut r)
+        Checked { ast, types, res, slots, places, events, the_contract }
+    }
 }
 
 impl Checked {
@@ -276,7 +327,7 @@ struct Val { v: u256, ty: Ty }
 
 impl Copy for Val {}
 
-struct Checker { c: Checked, body: Body }
+struct Checker { c: Checked, warns: MemVec<Diag>, body: Body }
 
 // The state of checking one FN, INIT or ARM body. `begin` replaces it for each body.
 struct Body {
@@ -541,7 +592,7 @@ impl Checker {
         while k < self.len(l) {
             let u = self.elem(l, k)
             if !self.body.grant.used.has(self.c.field_index(self.c.resolved(u))) {
-                self.c.warns.push(self.at(E_UNUSED_USE, u))
+                self.warns.push(self.at(E_UNUSED_USE, u))
             }
             k += 1
         }
@@ -1318,7 +1369,7 @@ impl Checker {
 }
 
 // Checks `ast`. A lexer or parser error in `ast.err` is passed on without checking.
-pub fn check(_ ast: own Ast) -> Checked {
+pub fn check(_ ast: own Ast) -> CheckOutput {
     var types: MemVec<Ty> = MemVec::new()
     var res: MemVec<NodeId> = MemVec::new()
     var slots: MemVec<usize> = MemVec::new()
@@ -1329,7 +1380,7 @@ pub fn check(_ ast: own Ast) -> Checked {
         slots.push(0)
         k += 1
     }
-    let err = ast.err
+    var err = ast.err
     var c = Checker {
         c: Checked {
             ast,
@@ -1339,18 +1390,17 @@ pub fn check(_ ast: own Ast) -> Checked {
             places: MemVec::new(),
             events: MemVec::new(),
             the_contract: NO_NODE,
-            err,
-            warns: MemVec::new(),
         },
+        warns: MemVec::new(),
         body: Body { locals: MemVec::new(), frame: 0, grant: NO_GRANT, ret: TY_UNIT, loops: 0 },
     }
-    if c.c.err.is_none() {
+    if err.is_none() {
         match c.program() {
             Result::Ok(_) => {},
             Result::Err(d) => {
-                c.c.err = Option::Some(d)
+                err = Option::Some(d)
             },
         }
     }
-    c.c
+    CheckOutput { program: c.c, err, warns: c.warns }
 }

@@ -124,6 +124,7 @@ pub fn binding_power(_ t: Tok) -> Power {
 
 struct Parser {
     ast: Ast,
+    toks: MemVec<Token>,
     // Index of the current token.
     at: usize,
     depth: usize,
@@ -131,7 +132,7 @@ struct Parser {
     pending: MemVec<NodeId>,
 }
 
-// The index of a token in `Ast.lexed.toks`, while the parser looks ahead.
+// The index of a token in `Parser.toks`, while the parser looks ahead.
 struct TokIdx { i: usize }
 
 impl Copy for TokIdx {}
@@ -145,7 +146,7 @@ impl TokIdx {
 impl Parser {
     // Token `i`.
     fn tok_at(self, _ i: usize) -> Token {
-        self.ast.lexed.toks[i]
+        self.toks[i]
     }
 
     fn tok(self) -> Token {
@@ -524,7 +525,7 @@ impl Parser {
     // Checks whether the current token is the identifier `w`, one of the W_ words.
     fn at_word(self, _ w: Spelling) -> bool {
         let t = self.tok()
-        t.kind == T_IDENT && self.ast.lexed.text.packed(t.span) == w
+        t.kind == T_IDENT && self.ast.text.packed(t.span) == w
     }
 
     // Reads the identifier `w`, one of the W_ words. Errors with P_EXPECTED_TOKEN when the
@@ -1012,7 +1013,7 @@ impl Parser {
         var message = NO_NODE
         if self.eat(P_COMMA) {
             let s = self.expect(T_STR)?
-            let v = self.ast.lexed.text.string_value(s.span)
+            let v = self.ast.text.string_value(s.span)
             if v.len > MAX_MESSAGE {
                 return Result::Err(diag(P_MESSAGE_TOO_LONG, s.span.start))
             }
@@ -1026,7 +1027,18 @@ impl Parser {
 
 // Lexes and parses everything `Source` provides.
 pub fn parse() -> Ast uses (input: mut Source) {
-    var p = Parser { ast: Ast::new(lex()), at: 0, depth: 0, pending: MemVec::new() }
+    parse_lexed(lex())
+}
+
+// Parses `lexed`. A lexer error in it is passed on without parsing.
+pub fn parse_lexed(_ lexed: own Lexed) -> Ast {
+    var p = Parser {
+        ast: Ast::new(lexed.text, lexed.err),
+        toks: lexed.toks,
+        at: 0,
+        depth: 0,
+        pending: MemVec::new(),
+    }
     if p.ast.err.is_none() {
         match p.program() {
             Result::Ok(items) => {

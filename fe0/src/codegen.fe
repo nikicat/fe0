@@ -150,12 +150,17 @@ const ALL_STUBS: [Stub; 4] = [REVERT_EMPTY, PANIC_ASSERT, PANIC_OVERFLOW, PANIC_
 
 // The deploy code of a program: the initcode, then the runtime code (DESIGN.md §6.5). On error,
 // `err` holds the first error and `code` is empty.
-pub struct Output {
-    pub code: MemVec<u8>,
-    pub err: Option<Diag>,
-    // The checker's warnings.
-    pub warns: MemVec<Diag>,
+pub struct Output { pub code: MemVec<u8>, pub err: Option<Diag> }
+
+impl Output {
+    // Returns the output of a build that failed with `d`.
+    fn failed(_ d: Diag) -> Output {
+        Output { code: MemVec::new(), err: Option::Some(d) }
+    }
 }
+
+// What `compile` returns.
+pub struct Compiled { pub out: Output, pub warns: MemVec<Diag> }
 
 // The body being generated: a FN, INIT or ARM.
 struct Body {
@@ -1142,33 +1147,31 @@ fn bitwise(_ op: Tok) -> Op {
     } else if op == O_SHL { OP_SHL } else { OP_SHR }
 }
 
-// Generates the deploy code of `c`. An error in `c.err` is passed on.
+// Generates the deploy code of `c`.
 pub fn generate(_ c: own Checked) -> Output {
     var g = Gen::new(c)
-    let warns = core::mem::replace(mut g.c.warns, MemVec::new())
-    var out = Output { code: MemVec::new(), err: g.c.err, warns }
-    if out.err.is_some() {
-        return out
-    }
     let the_contract = g.c.the_contract
     if the_contract.is_none() {
-        out.err = Option::Some(diag(G_NO_CONTRACT, SOURCE_START))
-        return out
+        return Output::failed(diag(G_NO_CONTRACT, SOURCE_START))
     }
     g.runtime(the_contract)
     let runtime = g.section()
     g.initcode(the_contract, bytes(runtime.len()))
     let init = g.section()
     if runtime.too_large() || init.too_large() {
-        out.err = Option::Some(diag(G_CODE_TOO_LARGE, g.node(the_contract).pos()))
-        return out
+        return Output::failed(diag(G_CODE_TOO_LARGE, g.node(the_contract).pos()))
     }
-    out.code = init.code
-    out.code.extend_from_slice(runtime.code.as_slice())
-    out
+    var code = init.code
+    code.extend_from_slice(runtime.code.as_slice())
+    Output { code, err: Option::None }
 }
 
 // Compiles the program that `input` holds.
-pub fn compile() -> Output uses (input: mut Source) {
-    generate(check(parse()))
+pub fn compile() -> Compiled uses (input: mut Source) {
+    let checked = check(parse())
+    let out = match checked.err {
+        Option::Some(d) => Output::failed(d),
+        Option::None => generate(checked.program),
+    }
+    Compiled { out, warns: checked.warns }
 }

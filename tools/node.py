@@ -29,8 +29,6 @@ PORT: int = 8645
 URL: str = f"http://127.0.0.1:{PORT}"
 # How long anvil may take to answer after it starts, in seconds.
 START_TIMEOUT: float = 10
-# The gas limit of each transaction: the in-EVM harness's CALL_GAS (fe0/src/difftest.fe) and more.
-TX_GAS: int = 30_000_000
 # An address with no code, which gives the gas of a transaction without execution.
 NO_CODE: ChecksumAddress = Web3.to_checksum_address("0x000000000000000000000000000000000000dead")
 OUT: Path = ROOT / "out/node"
@@ -39,6 +37,10 @@ PROGRAM_ERRORS = (RuntimeError, embed.ScriptError, OSError)
 
 # An amount of gas.
 Gas = NewType("Gas", int)
+# The gas limit of each transaction: the in-EVM harness's CALL_GAS (fe0/src/difftest.fe) and more.
+TX_GAS: Gas = Gas(30_000_000)
+# The gas limit of a block on the node.
+BLOCK_GAS: Gas = Gas(2 * TX_GAS)
 # A storage slot and a word, as the node prints them: 0x and 64 hex digits.
 Slot = NewType("Slot", str)
 StorageWord = NewType("StorageWord", str)
@@ -157,7 +159,7 @@ class Node:
         if self.w3.is_connected():
             raise RuntimeError(f"another process serves port {PORT}")
         self.proc = subprocess.Popen(["anvil", "--port", str(PORT), "--hardfork", HARDFORK,
-                                      "--gas-limit", str(TX_GAS * 2), "--silent"])
+                                      "--gas-limit", str(BLOCK_GAS), "--silent"])
         try:
             self._await_start()
             self.accounts: tuple[ChecksumAddress, ...] = tuple(self.w3.eth.accounts)
@@ -214,13 +216,23 @@ class Node:
         _account does."""
         return payload.encode(lambda index: Word(int(self._account(index), 16)))
 
+    def transact(self, tx: TxParams) -> TxReceipt:
+        """Sends `tx`, from account 0 with TX_GAS unless `tx` sets them, and returns the receipt.
+        Errors with RuntimeError when the transaction fails."""
+        receipt = self._receipt({"from": self.accounts[0], "gas": TX_GAS, **tx})
+        if not receipt["status"]:
+            raise RuntimeError(f"the transaction {receipt['transactionHash'].to_0x_hex()} failed")
+        return receipt
+
     def _send(self, case: Case, tx: TxParams) -> TxReceipt:
         """Sends `tx` with the value of `case` from its sender, and returns the receipt. Errors
         as _account does."""
-        tx_hash = self.w3.eth.send_transaction({**tx, "from": self._account(case.sender),
-                                                "value": Wei(case.payload.value),
-                                                "gas": TX_GAS})
-        return self.w3.eth.wait_for_transaction_receipt(tx_hash)
+        return self._receipt({**tx, "from": self._account(case.sender),
+                              "value": Wei(case.payload.value), "gas": TX_GAS})
+
+    def _receipt(self, tx: TxParams) -> TxReceipt:
+        """Sends `tx` and returns its receipt, whether or not the transaction succeeds."""
+        return self.w3.eth.wait_for_transaction_receipt(self.w3.eth.send_transaction(tx))
 
     def _effects(self, receipt: TxReceipt, output: bytes,
                  account: ChecksumAddress | None) -> Effects:

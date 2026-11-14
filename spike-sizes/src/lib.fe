@@ -45,7 +45,7 @@ pub contract CheckProbe {
     recv ProbeMsg {
         Run { src } -> u256 {
             with (Source = bytes(src)) {
-                check(parse()).node_count() as u256
+                check(parse()).program.node_count() as u256
             }
         }
     }
@@ -55,7 +55,7 @@ pub contract CompileProbe {
     recv ProbeMsg {
         Run { src } -> u256 {
             with (Source = bytes(src)) {
-                compile().code.len() as u256
+                compile().out.code.len() as u256
             }
         }
     }

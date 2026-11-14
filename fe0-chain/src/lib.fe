@@ -1,0 +1,141 @@
+// The compiler on chain: one contract per phase, and Compiler, which calls them in turn
+// (DESIGN.md §8, docs/adr/0014-contract-per-phase.md). Each phase passes its output to the next
+// as words (`fe0::wire`).
+
+use fe0::check::check
+use fe0::codegen::generate
+use fe0::diag::Diag
+use fe0::io::{Source, bytes}
+use fe0::lexer::{Lexed, Text, lex}
+use fe0::parser::parse_lexed
+use fe0::ast::Ast
+use fe0::wire::{Reader, from_words, words}
+use std::abi::{Bytes, DynArray, sol}
+use std::evm::{Address, Call, Create, revert_error}
+
+// The first error that a phase finds in the source. The phase reverts with it, and Compiler
+// passes the revert on. The code is a `DiagCode` as a number, such as 6034 for `C034`.
+#[error]
+pub struct CompileError { pub code: u256, pub offset: u256 }
+
+pub msg LexerMsg {
+    #[selector = sol("lex(bytes)")]
+    Lex { src: Bytes } -> DynArray<u256>,
+}
+
+pub msg ParserMsg {
+    #[selector = sol("parse(bytes,uint256[])")]
+    Parse { src: Bytes, toks: DynArray<u256> } -> DynArray<u256>,
+}
+
+pub msg CheckerMsg {
+    #[selector = sol("check(bytes,uint256[])")]
+    Check { src: Bytes, ast: DynArray<u256> } -> DynArray<u256>,
+}
+
+pub msg BackMsg {
+    #[selector = sol("generate(uint256[])")]
+    Generate { ir: DynArray<u256> } -> Bytes,
+}
+
+pub msg CompilerMsg {
+    // Returns the deploy code of `src`. Errors with CompileError when `src` has an error.
+    #[selector = sol("compile(bytes)")]
+    Compile { src: Bytes } -> Bytes,
+    // Deploys the contract of `src` with the ABI-encoded constructor arguments `args`, and
+    // returns its address. Errors with CompileError when `src` has an error.
+    #[selector = sol("deploy(bytes,bytes)")]
+    Deploy { src: Bytes, args: Bytes } -> Address,
+}
+
+// Reverts with `err` if it holds an error.
+fn fail_on(_ err: Option<Diag>) {
+    match err {
+        Option::Some(d) => {
+            revert_error(
+                CompileError { code: d.code.value() as u256, offset: d.pos().offset() as u256 },
+            )
+        },
+        Option::None => {},
+    }
+}
+
+pub contract Lexer {
+    recv LexerMsg {
+        Lex { src } -> DynArray<u256> {
+            let lexed = with (Source = bytes(src)) {
+                lex()
+            }
+            fail_on(lexed.err)
+            words(lexed.toks)
+        }
+    }
+}
+
+pub contract Parser {
+    recv ParserMsg {
+        Parse { src, toks } -> DynArray<u256> {
+            let ast = parse_lexed(
+                Lexed { text: Text::of(src.span()), toks: from_words(toks), err: Option::None },
+            )
+            fail_on(ast.err)
+            words(ast)
+        }
+    }
+}
+
+pub contract Checker {
+    recv CheckerMsg {
+        Check { src, ast } -> DynArray<u256> {
+            var r = Reader::new(ast)
+            let c = check(Ast::take_with(Text::of(src.span()), mut r))
+            fail_on(c.err)
+            words(c.program)
+        }
+    }
+}
+
+pub contract Back {
+    recv BackMsg {
+        Generate { ir } -> Bytes {
+            let out = generate(from_words(ir))
+            fail_on(out.err)
+            Bytes::from_payload(source: out.code.as_slice())
+        }
+    }
+}
+
+// The addresses of the four phase contracts that Compiler calls in turn.
+struct Phases { lexer: Address, parser: Address, checker: Address, back: Address }
+
+impl Phases {
+    // Returns the deploy code of `src`.
+    fn compile(self, _ src: own Bytes) -> Bytes uses (call: Call) {
+        let toks = self.lexer.static(LexerMsg::Lex { src: src.clone() })
+        let ast = self.parser.static(ParserMsg::Parse { src: src.clone(), toks })
+        let ir = self.checker.static(CheckerMsg::Check { src, ast })
+        self.back.static(BackMsg::Generate { ir })
+    }
+}
+
+pub contract Compiler {
+    phases: Phases,
+
+    init(lexer_at: Address, parser_at: Address, checker_at: Address, back_at: Address)
+    uses (mut phases)
+    {
+        phases = Phases { lexer: lexer_at, parser: parser_at, checker: checker_at, back: back_at }
+    }
+
+    recv CompilerMsg {
+        Compile { src } -> Bytes uses (phases, call: Call) {
+            phases.compile(src)
+        }
+        Deploy { src, args } -> Address uses (phases, call: Call, create: mut Create) {
+            var initcode = MemBuffer::empty()
+            initcode.extend_from(phases.compile(src).span())
+            initcode.extend_from(args.span())
+            create.create_raw(value: Wei::zero(), init_code: initcode.span())
+        }
+    }
+}

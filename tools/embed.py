@@ -769,6 +769,15 @@ def run_batches(batches: list[Batch], fe_test: FeTest) -> list[FailureMessage]:
     return failures
 
 
+def load_rejects() -> list[Reject]:
+    """Returns the reject programs of REJECTS, sorted by path. Exits with the message of the first
+    one that does not load."""
+    try:
+        return [Reject.load(p) for p in sorted(REJECTS.glob("*.fe"))]
+    except ScriptError as e:
+        sys.exit(str(e))
+
+
 class RejectIngot(NamedTuple):
     """The ingot of the reject programs."""
 

@@ -24,6 +24,11 @@ impl DiagCode {
         PHASE_LETTERS.as_bytes()[(self.raw / 1000 - 1) as usize]
     }
 
+    // Returns the code as a number, such as 6034.
+    pub fn value(self) -> u16 {
+        self.raw
+    }
+
     // Returns the number within the phase, such as 34 for 6034. It prints as three digits.
     pub fn number(self) -> u16 {
         self.raw % 1000

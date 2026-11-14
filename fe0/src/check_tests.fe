@@ -3,7 +3,7 @@
 // rejects. A warn or reject case names the diagnostic's code and the byte offset it points at.
 
 use ingot::ast::{TY_BOOL, TY_U256}
-use ingot::check::{Checked, MAX_FIELDS, check}
+use ingot::check::{CheckOutput, MAX_FIELDS, check}
 use ingot::diag::{
     C_DIV_ZERO,
     C_NOT_CONST,
@@ -48,23 +48,27 @@ use ingot::parser::{MAX_DEPTH, parse}
 use ingot::parser_tests::{Body, DEEPEST_BLOCKS, DEEPEST_PARENS, Framed, Nested, framed}
 use std::abi::DynString
 
-fn checked(_ s: own DynString) -> Checked {
+fn checked(_ s: own DynString) -> CheckOutput {
     with (Source = text(s)) {
         check(parse())
     }
 }
 
+// Asserts that the checker finds no error in `s`, and returns what it found.
+fn passes(_ s: own DynString) -> CheckOutput {
+    let out = checked(s)
+    assert!(out.err.is_none())
+    out
+}
+
 // Asserts that the checker accepts `s` without warnings.
 fn accepts(_ s: own DynString) {
-    let c = checked(s)
-    assert!(c.err.is_none())
-    assert!(c.warns.len() == 0)
+    assert!(passes(s).warns.len() == 0)
 }
 
 // Asserts that the checker accepts `s` with one warning, of `code` at byte `pos`.
 fn warns(_ s: own DynString, _ code: DiagCode, _ pos: usize) {
-    let c = checked(s)
-    assert!(c.err.is_none())
+    let c = passes(s)
     assert!(c.warns.len() == 1)
     assert!(c.warns[0].code == code)
     assert!(c.warns[0].pos() == Pos::at(pos))
@@ -667,10 +671,10 @@ fn messages() {
 // The side tables that code generation reads.
 #[test]
 fn side_tables() {
-    let c = checked(
+    let c = passes(
         "const A: u256 = 6 * 7\nfn f(_ p: u256) -> u256 {\n    let x = p + A\n    var y = x\n    y\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut b: bool\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut b) { b = v == A }\n    }\n}\n",
     )
-    assert!(c.err.is_none())
+        .program
     let items = c.ast.items
     let a = c.ast.list_at(items, 0)
     assert!(c.word_of(a) == 42)
@@ -697,10 +701,10 @@ fn side_tables() {
 // Fields narrower than a slot share one, in declaration order from the low end (SPEC §6).
 #[test]
 fn storage_places() {
-    let c = checked(
+    let c = passes(
         "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: Address\n    mut b: bool\n    mut c: Address\n    mut d: u256\n    mut e: bool\n    recv M {\n        Get {} -> u256 uses (d) { d }\n        Set { v } uses (mut d) { d = v }\n    }\n}\n",
     )
-    assert!(c.err.is_none())
+        .program
     let fields = c.ast.node(c.the_contract).list()
     let a = c.storage_place(c.ast.list_at(fields, 0))
     assert!(
@@ -724,10 +728,10 @@ fn storage_places() {
 // of the log data, then its indexed fields (SPEC §6, "Events").
 #[test]
 fn event_words() {
-    let c = checked(
+    let c = passes(
         "#[event]\nstruct Transfer {\n    #[indexed]\n    from: Address,\n    #[indexed]\n    to: Address,\n    value: u256,\n}\n#[event]\nstruct Empty {}\n",
     )
-    assert!(c.err.is_none())
+        .program
     let e = c.ast.list_at(c.ast.items, 0)
     assert!(
         c.topic0(e) == 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,

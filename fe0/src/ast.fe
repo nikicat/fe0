@@ -10,15 +10,16 @@ use ingot::lexer::{
     ABI_ADDRESS,
     ABI_BOOL,
     ABI_UINT256,
-    Lexed,
     Pos,
     SOURCE_START,
     Span,
     Spelling,
     T_EOF,
+    Text,
     Tok,
     Token,
 }
+use ingot::wire::{Reader, Wire, Writer}
 
 // The kind of a node. The NODE_ constants below are its only values.
 pub struct Kind { code: u8 }
@@ -32,6 +33,16 @@ impl core::ops::Eq for Kind {
 }
 
 impl Kind {
+    // Returns the code that carries this kind across a phase boundary (`wire.fe`).
+    pub fn wire(self) -> usize {
+        self.code as usize
+    }
+
+    // Returns the kind whose `wire()` is `w`.
+    pub fn from_wire(_ w: usize) -> Kind {
+        Kind { code: w.downcast_truncate() }
+    }
+
     // Whether nodes of this kind are expressions, which have a value.
     pub fn is_expr(self) -> bool {
         self.code >= NODE_INT.code
@@ -131,6 +142,16 @@ pub struct Ty { code: u8 }
 
 impl Copy for Ty {}
 
+impl Wire for Ty {
+    fn put(self, _ w: mut Writer) {
+        self.wire().put(mut w)
+    }
+
+    fn take(_ r: mut Reader) -> Ty {
+        Ty::from_wire(usize::take(mut r))
+    }
+}
+
 impl core::ops::Eq for Ty {
     fn eq(self, _ other: Ty) -> bool {
         self.code == other.code
@@ -163,6 +184,16 @@ const MAP_KEY_SHIFT: u8 = 2
 const MAP_PART: u8 = 3
 
 impl Ty {
+    // Returns the code that carries this type across a phase boundary (`wire.fe`).
+    pub fn wire(self) -> usize {
+        self.code as usize
+    }
+
+    // Returns the type whose `wire()` is `w`.
+    pub fn from_wire(_ w: usize) -> Ty {
+        Ty { code: w.downcast_truncate() }
+    }
+
     // Whether an expression of this type may stand where `want` is expected.
     // TY_NEVER fits any type, and TY_INT fits TY_U256.
     pub fn fits(self, _ want: Ty) -> bool {
@@ -259,11 +290,43 @@ pub struct Node {
 
 impl Copy for Node {}
 
-// Returns 1 for `true` and 0 for `false`, the value a flag slot holds. The constructors take
-// labeled `bool`s rather than a type per flag, because Fe makes each call spell the label and a
-// flag type costs bytecode (ADR 0013).
-fn flag(_ b: bool) -> usize {
+impl Wire for Node {
+    fn put(self, _ w: mut Writer) {
+        w.lanes(
+            self.kind.wire(),
+            self.pos_off,
+            self.op.wire(),
+            self.ty.wire(),
+        )
+        w.lanes(self.a, self.b, self.c, self.d)
+    }
+
+    fn take(_ r: mut Reader) -> Node {
+        let h = r.lanes()
+        let l = r.lanes()
+        Node::new(
+            Kind::from_wire(h.a()),
+            Pos::at(h.b()),
+            op: Tok::from_wire(h.c()),
+            ty: Ty::from_wire(h.d()),
+            a: l.a(),
+            b: l.b(),
+            c: l.c(),
+            d: l.d(),
+        )
+    }
+}
+
+// Returns 1 for `true` and 0 for `false`, the value a flag slot or wire lane holds. The node
+// constructors take labeled `bool`s rather than a type per flag, because Fe makes each call spell
+// the label and a flag type costs bytecode (ADR 0013).
+pub fn flag(_ b: bool) -> usize {
     if b { 1 } else { 0 }
+}
+
+// Returns the `bool` that `flag` turned into `v`.
+pub fn is_flag(_ v: usize) -> bool {
+    v == 1
 }
 
 impl Node {
@@ -607,7 +670,7 @@ impl Node {
     }
     // Reads back a flag that `flag` wrote into slot `d`.
     fn flag_set(self) -> bool {
-        self.d == 1
+        is_flag(self.d)
     }
     pub fn is_positional(self) -> bool {
         self.flag_set()
@@ -644,6 +707,32 @@ pub struct NodeId { id: usize }
 
 impl Copy for NodeId {}
 
+// An AST crosses without its source text. Ast::take_with gets the text back from its caller.
+// Ast::take gives an AST with no source text.
+impl Wire for Ast {
+    fn put(self, _ w: mut Writer) {
+        self.nodes.put(mut w)
+        self.lists.put(mut w)
+        self.syms.put(mut w)
+        self.words.put(mut w)
+        self.items.put(mut w)
+    }
+
+    fn take(_ r: mut Reader) -> Ast {
+        Ast::take_with(Text::new(), mut r)
+    }
+}
+
+impl Wire for NodeId {
+    fn put(self, _ w: mut Writer) {
+        self.id.put(mut w)
+    }
+
+    fn take(_ r: mut Reader) -> NodeId {
+        NodeId { id: usize::take(mut r) }
+    }
+}
+
 impl core::ops::Eq for NodeId {
     fn eq(self, _ other: NodeId) -> bool {
         self.id == other.id
@@ -668,6 +757,16 @@ pub const NO_NODE: NodeId = NodeId { id: 0 }
 pub struct ListId { id: usize }
 
 impl Copy for ListId {}
+
+impl Wire for ListId {
+    fn put(self, _ w: mut Writer) {
+        self.id.put(mut w)
+    }
+
+    fn take(_ r: mut Reader) -> ListId {
+        ListId { id: usize::take(mut r) }
+    }
+}
 
 pub const EMPTY_LIST: ListId = ListId { id: 0 }
 
@@ -704,7 +803,7 @@ impl WordId {
 // The parsed program. On error, the arrays hold whatever was built before it. This is not a
 // `Result`, because moving an `Ast` through one costs bytecode (ADR 0011).
 pub struct Ast {
-    pub lexed: Lexed,
+    pub text: Text,
     nodes: MemVec<Node>,
     // Each list as its length, then its NodeIds. Typed vectors cost 280 bytes (WORKAROUNDS.md).
     lists: MemVec<usize>,
@@ -720,16 +819,15 @@ pub struct Ast {
 }
 
 impl Ast {
-    // Returns an empty AST over `lexed`, with the sentinels at index 0 and the lexer's error.
-    pub fn new(_ lexed: own Lexed) -> Ast {
+    // Returns an empty AST over `text`, with the sentinels at index 0 and the lexer's error `err`.
+    pub fn new(_ text: own Text, _ err: Option<Diag>) -> Ast {
         var nodes: MemVec<Node> = MemVec::new()
         nodes.push(Node::leaf(NODE_NONE, SOURCE_START))
         var lists: MemVec<usize> = MemVec::new()
         lists.push(0)
         var syms: MemVec<Span> = MemVec::new()
         syms.push(Span { start: SOURCE_START, len: 0 })
-        let err = lexed.err
-        Ast { lexed, nodes, lists, syms, words: MemVec::new(), items: EMPTY_LIST, err }
+        Ast { text, nodes, lists, syms, words: MemVec::new(), items: EMPTY_LIST, err }
     }
 
     pub fn list_len(self, _ l: ListId) -> usize {
@@ -751,6 +849,16 @@ impl Ast {
 
     pub fn node(self, _ i: NodeId) -> Node {
         self.nodes[i.id]
+    }
+
+    // Returns the AST over `text` that `put` wrote to `r`.
+    pub fn take_with(_ text: own Text, _ r: mut Reader) -> Ast {
+        let nodes = Wire::take(mut r)
+        let lists = Wire::take(mut r)
+        let syms = Wire::take(mut r)
+        let words = Wire::take(mut r)
+        let items = ListId::take(mut r)
+        Ast { text, nodes, lists, syms, words, items, err: Option::None }
     }
 
     // Returns the number of nodes, counting the sentinel.
@@ -780,7 +888,7 @@ impl Ast {
     // Adds the value of integer token `t` to `words` and returns its index. Errors as
     // `Text.int_value` does.
     pub fn add_int(mut self, _ t: Token) -> Result<Diag, WordId> {
-        let v = self.lexed.text.int_value(t.span)?
+        let v = self.text.int_value(t.span)?
         Result::Ok(self.add_word(v))
     }
 
@@ -805,7 +913,7 @@ impl Ast {
     pub fn intern(mut self, _ t: Token) -> Sym {
         var i: usize = 1
         while i < self.syms.len() {
-            if self.lexed.text.same(self.syms[i], t.span) {
+            if self.text.same(self.syms[i], t.span) {
                 return Sym { id: i }
             }
             i += 1
@@ -816,11 +924,11 @@ impl Ast {
 
     // Returns the source bytes of name `sym`.
     pub fn name_bytes(self, _ sym: Sym) -> ref MemSlice<u8> {
-        self.lexed.text.span_bytes(self.syms[sym.id])
+        self.text.span_bytes(self.syms[sym.id])
     }
 
     // Whether name `sym` starts with an uppercase letter.
     pub fn starts_upper(self, _ sym: Sym) -> bool {
-        self.lexed.text.starts_upper(self.syms[sym.id])
+        self.text.starts_upper(self.syms[sym.id])
     }
 }

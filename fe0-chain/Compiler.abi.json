@@ -1,0 +1,76 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "lexer_at",
+        "type": "address"
+      },
+      {
+        "name": "parser_at",
+        "type": "address"
+      },
+      {
+        "name": "checker_at",
+        "type": "address"
+      },
+      {
+        "name": "back_at",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "compile",
+    "inputs": [
+      {
+        "name": "src",
+        "type": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "deploy",
+    "inputs": [
+      {
+        "name": "src",
+        "type": "bytes"
+      },
+      {
+        "name": "args",
+        "type": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "error",
+    "name": "CompileError",
+    "inputs": [
+      {
+        "name": "code",
+        "type": "uint256"
+      },
+      {
+        "name": "offset",
+        "type": "uint256"
+      }
+    ]
+  }
+]

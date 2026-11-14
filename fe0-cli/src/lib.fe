@@ -3,7 +3,7 @@
 // (docs/adr/0010-source-effect.md).
 
 use core::text::hex
-use fe0::codegen::{Output, compile}
+use fe0::codegen::{Compiled, compile}
 use fe0::diag::{Diag, DiagCode}
 use fe0::io::{Source, bytes}
 use fe0::lexer::Text
@@ -43,24 +43,24 @@ fn usage() -> i32 uses (stderr: mut Stderr) {
 struct Reporter { text: Text }
 
 impl Reporter {
-    // Prints the warnings of `out` on stderr. Then prints its error on stderr, or its code as
-    // hex on stdout. Returns the exit code.
-    fn report(self, _ out: own Output) -> i32
+    // Prints the warnings of `c` on stderr. Then prints its error on stderr, or its code as hex
+    // on stdout. Returns the exit code.
+    fn report(self, _ c: own Compiled) -> i32
     uses (stdout: mut Stdout, stderr: mut Stderr)
     {
         var i: usize = 0
-        while i < out.warns.len() {
-            self.print_diag(out.warns[i], Severity::Warning)
+        while i < c.warns.len() {
+            self.print_diag(c.warns[i], Severity::Warning)
             i += 1
         }
-        match out.err {
+        match c.out.err {
             Option::Some(d) => {
                 self.print_diag(d, Severity::Error)
                 return REJECTED
             },
             Option::None => {},
         }
-        println!(DeployCode { bytes: out.code })
+        println!(DeployCode { bytes: c.out.code })
         COMPILED
     }
 
