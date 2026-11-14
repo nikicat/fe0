@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Compare the gas that Fe0's output and Fe's output use for the same calls.
 
-Each corpus program is compiled three ways: by Fe0's native CLI, and by Fe at -O 1 and at
--O s. All three builds are deployed on a local anvil node (node.py), and each gets the calls of
-the program's call script (embed.py) and of fegen.DISPATCH. The gas of a call counts only what
-the contract's code spends.
+Each corpus program, and each program that its call script deploys for it to call, is compiled
+three ways: by Fe0's native CLI, and by Fe at -O 1 and at -O s. All three builds are deployed on
+a local anvil node (node.py), and each gets the calls of the program's call script (embed.py)
+and of fegen.DISPATCH. The gas of a call counts only what the contract's code spends.
 
 The report gives, for each program, the gas of all its calls together for each build, and Fe0's
 gas as a ratio of Fe's. With --calls, it also lists each call.
@@ -19,7 +19,7 @@ from typing import NamedTuple
 
 import cli_check
 import node
-from node import Build, Compiled, Gas, Node
+from node import Build, Compiled, Entry, Gas, Node, Session
 
 
 class CallGas(NamedTuple):
@@ -41,19 +41,44 @@ class ProgramGas(NamedTuple):
         return Gas(sum(c.gas[build] for c in self.calls))
 
 
+class Measured(NamedTuple):
+    """What one build's code did on one call."""
+
+    gas: Gas
+    success: bool
+
+
 def measure(n: Node, path: Path) -> ProgramGas:
     """Deploys each build of the program at `path` and sends it the calls of its call script.
     Errors with RuntimeError when a build does not deploy, and as node.Compiled.load does."""
     compiled = Compiled.load(path, Build)
-    addresses = node.addresses(compiled.deploy_main(n))
+    entries = compiled.calls()
+    columns = [_measure_build(n, compiled, b, entries) for b in Build]
     out = []
-    for entry in compiled.calls():
-        runs = {b: n.call(a, entry.case) for b, a in addresses.items()}
-        if len({r.effects.success for r in runs.values()}) > 1:
+    for entry, measured in zip(entries, zip(*columns, strict=True), strict=True):
+        if _disagree(measured):
             print(f"warning: {path.name} {entry.label}: the builds disagree on success",
                   file=sys.stderr)
-        out.append(CallGas(entry.label, {b: n.code_gas(entry.case, r) for b, r in runs.items()}))
+        out.append(CallGas(entry.label, {b: m.gas for b, m in zip(Build, measured, strict=True)}))
     return ProgramGas(compiled.program.path.stem, out)
+
+
+def _measure_build(n: Node, compiled: Compiled, build: Build,
+                   entries: list[Entry]) -> list[Measured]:
+    """Deploys `build` of `compiled` in Node.isolated and returns what its code did on each of
+    `entries`. Errors as Session.deploy_all does."""
+    with n.isolated():
+        s = Session(n, compiled, build)
+        s.deploy_all()
+        # All the calls go first, so that the sends of code_gas do not run between them.
+        runs = [s.call(e.case) for e in entries]
+        return [Measured(n.code_gas(e.case, r, s.book), r.effects.success)
+                for e, r in zip(entries, runs, strict=True)]
+
+
+def _disagree(measured: Iterable[Measured]) -> bool:
+    """Returns whether some builds succeeded on a call and others failed."""
+    return len({m.success for m in measured}) > 1
 
 
 def ratio(a: int, b: int) -> str:

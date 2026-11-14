@@ -1,11 +1,18 @@
 """Deploy and call Fe0's and Fe's builds of a corpus program on a local anvil node.
 
 It sends a program's call script and fegen.DISPATCH to each build, and reports what each
-transaction did and the gas that a call's code spent.
+transaction did and the gas that a call's code spent. When the call script deploys other
+programs for the program to call, each build deploys its own build of them.
+
+Each build runs the whole script from the same state of the node (`Node.isolated`). So both
+builds send the same transactions from the same accounts at the same nonces, and their
+deployments get the same addresses: a word that holds one, such as a map slot hashed from it,
+is the same in both builds.
 """
 import subprocess
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -14,13 +21,14 @@ from typing import Literal, NamedTuple, NewType, Self, cast
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3 import HTTPProvider, Web3
-from web3.types import (CallTrace, DiffModeTrace, TraceConfig, TraceData, TxParams, TxReceipt,
-                        Wei)
+from web3.types import (CallTrace, DiffModeTrace, RPCEndpoint, TraceConfig, TraceData, TxParams,
+                        TxReceipt, Wei)
 
 import cli_check
 import embed
 import gen
-from fegen import DISPATCH, FE, ROOT, AccountIndex, Case, Payload, Word
+from fegen import (DISPATCH, FE, ROOT, THIS, Account, AccountIndex, AddressArg, Case,
+                   DeploymentName, Payload, Word)
 
 # The node's hardfork. Cancun has no calldata floor price (EIP-7623), so the gas of a call less
 # the gas of the same transaction to an account with no code is what the code spent.
@@ -45,6 +53,10 @@ BLOCK_GAS: Gas = Gas(2 * TX_GAS)
 Slot = NewType("Slot", str)
 StorageWord = NewType("StorageWord", str)
 ZERO_WORD: StorageWord = StorageWord("0x" + "0" * 64)
+# A contract's storage, or the slots of it that a transaction changed.
+Storage = dict[Slot, StorageWord]
+# One build's deployments, by name.
+Addresses = dict[DeploymentName, ChecksumAddress]
 
 
 class Build(Enum):
@@ -115,9 +127,10 @@ class Effects(NamedTuple):
     # The return data of a call that succeeds, and the revert data of any transaction that fails.
     output: bytes
     logs: tuple[Log, ...]
-    # The storage slots of the called or created contract that changed, with their new words.
-    # A slot that was cleared maps to the zero word.
-    storage: dict[Slot, StorageWord]
+    # The storage slots that changed, with their new words, of each deployment of the build by
+    # name: the program's own, the callees', and the one that the transaction created. A slot
+    # that was cleared maps to the zero word.
+    storage: dict[DeploymentName, Storage]
 
 
 class Run(NamedTuple):
@@ -147,6 +160,20 @@ class Entry(NamedTuple):
         """Returns the entry of `case`, a line of the call script."""
         return cls(f"line {case.number}", case)
 
+    @classmethod
+    def deployment(cls, case: Case, name: DeploymentName) -> Self:
+        """Returns the entry of `case`, the call script's line that deploys `name`, such as
+        "line 3 (t0)" or "line 1 (main deployment)"."""
+        what = "main deployment" if name == THIS else name
+        return cls(f"line {case.number} ({what})", case)
+
+
+class Outcome(NamedTuple):
+    """What one entry did, by the entry's label."""
+
+    label: str
+    effects: Effects
+
 
 class Node:
     """A running anvil node and its funded accounts. It stops the node on exit."""
@@ -167,6 +194,21 @@ class Node:
             self._stop()
             raise
 
+    @contextmanager
+    def isolated(self) -> Iterator[None]:
+        """Runs the body from the node's current state, and puts that state back after it.
+        Errors with RuntimeError when the node takes no snapshot, or does not go back to it."""
+        reply = self.w3.provider.make_request(RPCEndpoint("evm_snapshot"), [])
+        if "result" not in reply:
+            raise RuntimeError(f"the node takes no snapshot: {reply.get('error')}")
+        snapshot = reply["result"]
+        try:
+            yield
+        finally:
+            reverted = self.w3.provider.make_request(RPCEndpoint("evm_revert"), [snapshot])
+        if reverted.get("result") is not True:
+            raise RuntimeError(f"the node does not revert its snapshot: {reverted.get('error')}")
+
     def _await_start(self) -> None:
         deadline = time.monotonic() + START_TIMEOUT
         while not self.w3.is_connected():
@@ -186,23 +228,27 @@ class Node:
     def __exit__(self, *_: object) -> None:
         self._stop()
 
-    def create(self, initcode: bytes, case: Case) -> Deployment:
-        """Deploys `initcode` with the constructor arguments, value and sender of `case`. Errors
-        as _send does."""
-        receipt = self._send(case, {"data": initcode + self._encode(case.payload)})
+    def create(self, initcode: bytes, case: Case, book: Addresses,
+               name: DeploymentName) -> Deployment:
+        """Deploys `initcode` with the constructor arguments, value and sender of `case`, as
+        the deployment `name` of the build whose other deployments are `book`. Errors as _send
+        and _encode do."""
+        receipt = self._send(case, {"data": initcode + self._encode(case.payload, book)})
         address = receipt["contractAddress"] if receipt["status"] else None
         # A deployment that succeeds outputs its runtime code, which differs between builds.
         output = b"" if address else self._output(receipt)
-        return Deployment(self._effects(receipt, output, address), address)
+        effects = self._effects(receipt, output, {**book, name: address} if address else book)
+        return Deployment(effects, address)
 
-    def call(self, to: ChecksumAddress, case: Case) -> Run:
-        """Sends the payload of `case` to `to`. Errors as _send does."""
-        receipt = self._send(case, {"to": to, "data": self._encode(case.payload)})
-        return Run(self._effects(receipt, self._output(receipt), to), Gas(receipt["gasUsed"]))
+    def call(self, case: Case, book: Addresses) -> Run:
+        """Sends the payload of `case` to its deployment in `book`, a build's deployments.
+        Errors as _send and _encode do."""
+        receipt = self._send(case, {"to": book[case.to], "data": self._encode(case.payload, book)})
+        return Run(self._effects(receipt, self._output(receipt), book), Gas(receipt["gasUsed"]))
 
-    def code_gas(self, case: Case, run: Run) -> Gas:
-        """Returns the gas that the code spent on `run`, a call that sent `case`."""
-        base = self._send(case, {"to": NO_CODE, "data": self._encode(case.payload)})
+    def code_gas(self, case: Case, run: Run, book: Addresses) -> Gas:
+        """Returns the gas that the code spent on `run`, a call that sent `case` with `book`."""
+        base = self._send(case, {"to": NO_CODE, "data": self._encode(case.payload, book)})
         return Gas(run.gas_used - base["gasUsed"])
 
     def _account(self, index: AccountIndex) -> ChecksumAddress:
@@ -211,10 +257,17 @@ class Node:
             raise RuntimeError(f"the node has no account {index}")
         return self.accounts[index]
 
-    def _encode(self, payload: Payload) -> bytes:
-        """Returns the bytes of `payload`, with the address of each account it names. Errors as
-        _account does."""
-        return payload.encode(lambda index: Word(int(self._account(index), 16)))
+    def _encode(self, payload: Payload, book: Addresses) -> bytes:
+        """Returns the bytes of `payload`, with the address of each account and deployment it
+        names. `book` holds the deployments. Errors as _account does, and with RuntimeError when
+        `book` lacks a deployment."""
+        def address(a: AddressArg) -> Word:
+            if isinstance(a, Account):
+                return _word(self._account(a.index))
+            if a.name not in book:
+                raise RuntimeError(f"{a} names no deployment of this build")
+            return _word(book[a.name])
+        return payload.encode(address)
 
     def transact(self, tx: TxParams) -> TxReceipt:
         """Sends `tx`, from account 0 with TX_GAS unless `tx` sets them, and returns the receipt.
@@ -234,11 +287,10 @@ class Node:
         """Sends `tx` and returns its receipt, whether or not the transaction succeeds."""
         return self.w3.eth.wait_for_transaction_receipt(self.w3.eth.send_transaction(tx))
 
-    def _effects(self, receipt: TxReceipt, output: bytes,
-                 account: ChecksumAddress | None) -> Effects:
-        """Returns what the transaction of `receipt` did, with the storage of `account`."""
+    def _effects(self, receipt: TxReceipt, output: bytes, book: Addresses) -> Effects:
+        """Returns what the transaction of `receipt` did, with the storage of `book`."""
         success = receipt["status"] == 1
-        storage = self._storage_diff(receipt, account) if success and account else {}
+        storage = self._storage_diff(receipt, book) if success else {}
         logs = tuple(Log(tuple(e["topics"]), e["data"]) for e in receipt["logs"])
         return Effects(success, output, logs, storage)
 
@@ -248,47 +300,63 @@ class Node:
             receipt["transactionHash"], TraceConfig(tracer="callTracer")))
         return bytes(trace.get("output", b""))
 
-    def _storage_diff(self, receipt: TxReceipt,
-                      account: ChecksumAddress) -> dict[Slot, StorageWord]:
-        """Returns the storage slots of `account` that the transaction of `receipt` changed."""
+    def _storage_diff(self, receipt: TxReceipt, book: Addresses) -> dict[DeploymentName, Storage]:
+        """Returns the storage slots of each deployment of `book` that the transaction of
+        `receipt` changed, leaving out the deployments with none."""
         diff = cast(DiffModeTrace, self.w3.geth.debug.trace_transaction(
             receipt["transactionHash"],
             TraceConfig(tracer="prestateTracer", tracerConfig={"diffMode": True})))
-        pre, post = _storage(diff["pre"], account), _storage(diff["post"], account)
-        return {s: post.get(s, ZERO_WORD) for s in sorted(pre.keys() | post.keys())}
+        out = {}
+        for name, address in book.items():
+            pre, post = _storage(diff["pre"], address), _storage(diff["post"], address)
+            if changed := {s: post.get(s, ZERO_WORD) for s in sorted(pre.keys() | post.keys())}:
+                out[name] = changed
+        return out
 
 
-def _storage(accounts: dict[ChecksumAddress, TraceData],
-             account: ChecksumAddress) -> dict[Slot, StorageWord]:
+def _word(address: ChecksumAddress) -> Word:
+    """Returns `address` as an ABI word."""
+    return Word(int(address, 16))
+
+
+def _storage(accounts: dict[ChecksumAddress, TraceData], account: ChecksumAddress) -> Storage:
     """Returns the storage of `account` in a prestate trace's map of accounts."""
     storage = accounts.get(account, TraceData()).get("storage", {})
     return {Slot(s): StorageWord(w) for s, w in storage.items()}
 
 
+def _load_program(path: Path) -> embed.Program:
+    """Loads the program at `path`, an absolute path. Errors with RuntimeError when the path is
+    outside ROOT, and as embed.Program.load does."""
+    if not path.is_relative_to(ROOT):
+        raise RuntimeError(f"{path} is outside {ROOT}")
+    return embed.Program.load(path)
+
+
 @dataclass(frozen=True)
 class Compiled:
-    """A program with the deployment code of each of its builds, each compiled once."""
+    """A program with the deployment code of each of its builds, each compiled once, and the
+    same for each callee of its call script."""
 
     program: embed.Program
-    initcode: dict[Build, bytes]
+    # The deployment code of each build, by deployment name: THIS for the program, and the
+    # callee's name for each callee.
+    initcode: dict[DeploymentName, dict[Build, bytes]]
 
     @classmethod
     def load(cls, path: Path, builds: Iterable[Build]) -> Self:
-        """Loads the program at `path`, an absolute path under ROOT, and compiles each build.
-        Errors with RuntimeError when the path is outside ROOT or a build does not compile,
-        and as embed.Program.load does."""
-        if not path.is_relative_to(ROOT):
-            raise RuntimeError(f"{path} is outside {ROOT}")
-        program = embed.Program.load(path)
-        return cls(program, {b: b.initcode(program) for b in builds})
+        """Loads the program at `path`, an absolute path under ROOT, and its callees, and
+        compiles each build of each. Errors with RuntimeError when a build does not compile,
+        and as _load_program does."""
+        builds = list(builds)
+        program = _load_program(path)
 
-    def deploy(self, node: Node, case: Case) -> dict[Build, Deployment]:
-        """Deploys each build with `case`."""
-        return {b: node.create(code, case) for b, code in self.initcode.items()}
-
-    def deploy_main(self, node: Node) -> dict[Build, Deployment]:
-        """Deploys each build with the main deployment of the call script."""
-        return self.deploy(node, self.program.diff.cases.main)
+        def each_build(p: embed.Program) -> dict[Build, bytes]:
+            return {b: b.initcode(p) for b in builds}
+        initcode = {THIS: each_build(program)}
+        for c in program.diff.cases.callees:
+            initcode[c.name] = each_build(_load_program(c.program))
+        return cls(program, initcode)
 
     def calls(self) -> list[Entry]:
         """Returns the calls to send to the main deployment: the call script's, then
@@ -297,12 +365,40 @@ class Compiled:
         return script + [Entry(f"dispatch {i}", Case(0, p)) for i, p in enumerate(DISPATCH, 1)]
 
 
-def addresses(mains: dict[Build, Deployment]) -> dict[Build, ChecksumAddress]:
-    """Returns the contract that each build's main deployment created. Errors with RuntimeError
-    when one created none."""
-    out = {}
-    for b, d in mains.items():
-        if d.address is None:
-            raise RuntimeError(f"the {b.label} build's main deployment failed")
-        out[b] = d.address
-    return out
+class Session:
+    """One build's deployments of a compiled program and its callees on a node, by name."""
+
+    def __init__(self, node: Node, compiled: Compiled, build: Build) -> None:
+        self.node = node
+        self.compiled = compiled
+        self.build = build
+        self.book: Addresses = {}
+
+    def deploy(self, case: Case, name: DeploymentName) -> Deployment:
+        """Deploys the build of the program that `name` names with `case`. Errors as
+        Node.create does."""
+        return self.node.create(self.compiled.initcode[name][self.build], case, self.book, name)
+
+    def keep(self, name: DeploymentName, deployment: Deployment) -> None:
+        """Records the contract that `deployment` created as the deployment `name`. Errors with
+        RuntimeError when it created none."""
+        if deployment.address is None:
+            raise RuntimeError(f"the {self.build.label} build's deployment {name} failed")
+        self.book[name] = deployment.address
+
+    def deploy_all(self, record: Callable[[Outcome], object] = lambda _: None) -> None:
+        """Deploys and keeps the callees, then the main deployment, and passes what each
+        deployment did to `record` before it keeps it. Errors as `keep` does, and as
+        Node.create does."""
+        def deploy(name: DeploymentName, case: Case) -> None:
+            d = self.deploy(case, name)
+            record(Outcome(Entry.deployment(case, name).label, d.effects))
+            self.keep(name, d)
+        cases = self.compiled.program.diff.cases
+        for callee in cases.callees:
+            deploy(callee.name, callee.case)
+        deploy(THIS, cases.main)
+
+    def call(self, case: Case) -> Run:
+        """Sends `case` to its deployment. Errors as Node.call does."""
+        return self.node.call(case, self.book)

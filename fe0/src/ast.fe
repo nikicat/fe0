@@ -1,9 +1,9 @@
 // The AST: an arena of nodes that refer to each other by index. ADR 0005 says why.
 //
-// A node is built by one `Node::new_` constructor per kind and read through the accessors after
-// `impl Node`. The comment on each kind below names the accessors that apply to it. A list is
-// read with `Ast.list_len` and `Ast.list_at`. `ty()` is the type written in the source, or
-// TY_NONE when none is.
+// A node is built by its kind's `Node::new_` constructor, which kinds with the same slots share,
+// and read through the accessors after `impl Node`. The comment on each kind below names the
+// accessors that apply to it. A list is read with `Ast.list_len` and `Ast.list_at`. `ty()` is
+// the type written in the source, or TY_NONE when none is.
 
 use ingot::diag::Diag
 use ingot::lexer::{
@@ -135,6 +135,11 @@ pub const NODE_INDEX: Kind = Kind { code: 52 }
 // `log.emit(E { f: e, … })`: name (the effect), event (the event's name), list of ARGs, each
 // labelled with a field of the event.
 pub const NODE_EMIT: Kind = Kind { code: 53 }
+// `a.call(M::V { f: e, … })`: target (the NAME of the address), msg_name (M), variant (V), list
+// of ARGs, each labelled with a field of the variant.
+pub const NODE_MSG_CALL: Kind = Kind { code: 54 }
+// `ctx.address()`: name (the effect).
+pub const NODE_SELF_ADDRESS: Kind = Kind { code: 55 }
 
 // A type. A node's ty() holds one written in the source, or TY_NONE when none is written.
 // The checker also uses TY_UNIT, TY_NEVER and TY_INT.
@@ -173,9 +178,10 @@ pub const TY_INT: Ty = Ty { code: 6 }
 // The codes from TY_CTX on are the types of names that are not values, and is_value relies on
 // it. Give a new value type a code below TY_CTX. The codes from TY_CTX up to MAP_BASE are the
 // effect types, and is_effect relies on it.
-// The types of a contract's effects, `Ctx` and `mut Log`. Only an effect has one.
+// The types of a contract's effects, `Ctx`, `mut Log` and `mut Call`. Only an effect has one.
 pub const TY_CTX: Ty = Ty { code: 7 }
 pub const TY_LOG: Ty = Ty { code: 8 }
+pub const TY_CALL: Ty = Ty { code: 9 }
 // The code of the first map type. Its low four bits are zero, to hold the key and value codes.
 const MAP_BASE: u8 = 16
 // The shift of the key code within a map code.
@@ -278,13 +284,13 @@ pub struct Node {
     pos_off: usize,
     op: Tok,
     ty: Ty,
-    // name, cond, lhs, operand or place
+    // name, cond, lhs, operand, place or target
     a: usize,
-    // value, rhs, word, local, event, use_list, recvs, otherwise or message
+    // value, rhs, word, local, event, msg_name, use_list, recvs, otherwise or message
     b: usize,
     // list
     c: usize,
-    // body, init, key, str_len or a flag
+    // body, init, key, variant, str_len or a flag
     d: usize,
 }
 
@@ -573,8 +579,10 @@ impl Node {
         Node::make(NODE_ASSERT, pos, a: cond.id, b: message.id, c: 0, d: 0)
     }
 
-    pub fn new_caller(_ pos: Pos, effect: Sym) -> Node {
-        Node::make(NODE_CALLER, pos, a: effect.id, b: 0, c: 0, d: 0)
+    // Returns a node of `kind` that reads the effect `effect`. The kind is NODE_CALLER or
+    // NODE_SELF_ADDRESS.
+    pub fn new_ctx_read(_ kind: Kind, _ pos: Pos, effect: Sym) -> Node {
+        Node::make(kind, pos, a: effect.id, b: 0, c: 0, d: 0)
     }
 
     pub fn new_zero_address(_ pos: Pos) -> Node {
@@ -593,6 +601,23 @@ impl Node {
             b: event.id,
             c: args.id,
             d: 0,
+        )
+    }
+
+    pub fn new_msg_call(
+        _ pos: Pos,
+        target: NodeId,
+        msg_name: Sym,
+        variant: Sym,
+        args: ListId,
+    ) -> Node {
+        Node::make(
+            NODE_MSG_CALL,
+            pos,
+            a: target.id,
+            b: msg_name.id,
+            c: args.id,
+            d: variant.id,
         )
     }
 
@@ -623,6 +648,9 @@ impl Node {
     pub fn place(self) -> NodeId {
         NodeId { id: self.a }
     }
+    pub fn target(self) -> NodeId {
+        NodeId { id: self.a }
+    }
 
     pub fn value(self) -> NodeId {
         NodeId { id: self.b }
@@ -637,6 +665,9 @@ impl Node {
         Sym { id: self.b }
     }
     pub fn event(self) -> Sym {
+        Sym { id: self.b }
+    }
+    pub fn msg_name(self) -> Sym {
         Sym { id: self.b }
     }
     pub fn use_list(self) -> ListId {
@@ -664,6 +695,9 @@ impl Node {
     }
     pub fn key(self) -> NodeId {
         NodeId { id: self.d }
+    }
+    pub fn variant(self) -> Sym {
+        Sym { id: self.d }
     }
     pub fn str_len(self) -> usize {
         self.d

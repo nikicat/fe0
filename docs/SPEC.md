@@ -33,7 +33,7 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 | Decimal integer | `[0-9]+(_[0-9]+)*` | The value must fit in 256 bits |
 | Hex integer | `0[xX][0-9a-fA-F]+` | No `_` separators. Must fit in 256 bits |
 | String | `"` … `"` with escapes `\" \\ \n \r \t` | Only allowed as the message of `assert!`, and at most 31 bytes after decoding. Fe accepts longer messages **[✓]**; Fe0 v1 restricts them so `Error(string)` stays one data word |
-| Punctuation | `( ) { } [ ] : , -> # .` | `;` is not a token: Fe 26.6.0 rejects it after a statement, even at the end of a line **[✓]**. `::` appears only in `Address::zero()`, as two `:` with no space between them. Fe reads `::` as one token and rejects `: :` **[✓]** |
+| Punctuation | `( ) { } [ ] : , -> # .` | `;` is not a token: Fe 26.6.0 rejects it after a statement, even at the end of a line **[✓]**. `::` appears only in `Address::zero()` and in the `M::V` of a call (§6, "Calls"), as two `:` with no space between them. Fe reads `::` as one token and rejects `: :` **[✓]** |
 | Operators | `+ - * / % ~ ! ^ & \| && \|\| < > = == !=` | |
 | Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside, and rejects spaced forms. Fe 26.6.0 rejects `x + = 1` too **[✓]** |
 
@@ -96,7 +96,7 @@ rule for every name, which the subset rule allows.
 |---|---|---|
 | `u256` | 0 … 2²⁵⁶−1 | All arithmetic, bitwise and comparison operators (§4) |
 | `bool` | `true`, `false` | `! && \|\| == !=` |
-| `Address` | 160-bit account address | `== !=` only. `ctx.caller()` and `Address::zero()` make one (§6). Other values come from parameters, storage and return values |
+| `Address` | 160-bit account address | `== !=`, and `a.call(…)` (§6, "Calls"). `ctx.caller()`, `ctx.address()` and `Address::zero()` make one (§6). Other values come from parameters, storage and return values |
 
 - A contract field may also be a map, `StorageMap<K, V>` (§6, "Maps").
 - There are no other types: no signed integers or other widths, no tuples, arrays, structs,
@@ -145,7 +145,7 @@ field       = IDENT ":" type ;
 
 contract    = "contract" IDENT [ effects ] "{" { cfield } [ init ] { recv } "}" ;
 effects     = "uses" "(" [ effect { "," effect } [ "," ] ] ")" ;
-effect      = IDENT ":" ( "Ctx" | "mut" "Log" ) ;  (* §6, "The caller" and "Events" *)
+effect      = IDENT ":" ( "Ctx" | "mut" ( "Log" | "Call" ) ) ;  (* §6, "The caller", "Events", "Calls" *)
 cfield      = "mut" IDENT ":" ( type | map ) [ "," ] ;   (* v1: mut only, see §6 *)
 event       = "#" "[" "event" "]" NL [ "pub" ] "struct" IDENT "{" [ efields ] "}" ;
 efields     = efield { "," efield } [ "," ] ;
@@ -186,13 +186,15 @@ unary       = ( "!" | "~" ) unary | primary ;
 args        = arg { "," arg } [ "," ] ;
 arg         = [ IDENT ":" ] expr ;
 primary     = INT | "true" | "false" | IDENT "(" [ args ] ")" | IDENT | "(" expr ")" | block | if
-            | assert | caller | zero | index | emit ;
+            | assert | caller | self_address | zero | index | emit | msg_call ;
 if          = "if" expr block [ "else" ( if | block ) ] ;
 assert      = "assert" "!" "(" expr [ "," STRING ] ")" ;
 caller      = IDENT "." "caller" "(" ")" ;
+self_address = IDENT "." "address" "(" ")" ;   (* §6, "The caller" *)
 zero        = "Address" "::" "zero" "(" ")" ;
 index       = IDENT "[" expr "]" ;
 emit        = IDENT "." "emit" "(" IDENT "{" [ args ] "}" ")" ;   (* §6, "Events" *)
+msg_call    = IDENT "." "call" "(" IDENT "::" IDENT "{" [ args ] "}" ")" ;   (* §6, "Calls" *)
 
 CMPOP       = "==" | "!=" | "<" | ">" | "<=" | ">=" ;
 AUGOP       = "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
@@ -234,11 +236,14 @@ and index
 ### 3.3 Left out of Fe0 (all valid Fe)
 
 - `**`, unary `-` and `+`, `as` casts, ranges, `for` and `match`;
-- method calls other than `ctx.caller()` and `log.emit(…)`, path calls other than
-  `Address::zero()`, field access, generics and traits;
+- method calls other than `ctx.caller()`, `ctx.address()`, `log.emit(…)` and `a.call(…)`, path
+  calls other than `Address::zero()`, field access, generics and traits;
+- the other ways to call a contract: `try_call`, `static`, `call_with_default`, a call with a
+  set gas or value, a call on an address that is not a name, such as `ctx.caller().call(…)`,
+  and a msg value that is not written in the call, such as `let m = M::V { … }`;
 - structs other than events, struct values, `enum`, `use`, `mod`, `impl`, `extern`, `unsafe`,
   `with` and closures;
-- contract effects other than `Ctx` and `Log`, `uses` on a free function, `#[payable]`,
+- contract effects other than `Ctx`, `Log` and `Call`, `uses` on a free function, `#[payable]`,
   fallback arms (`_`);
 - events with fields of other types, such as arrays and strings;
 - maps anywhere but as a contract field's type, maps of maps, tuple keys, key and value types
@@ -308,6 +313,8 @@ Probed **[✓]**:
   `corpus/maps.fe`.
 - In `log.emit(E { … })`, the values are evaluated in the order written, not in the order of
   the event's fields **[✓]**. The probe is the arm `Order` of `corpus/events.fe`.
+- In `a.call(M::V { … })`, `a` is evaluated first, then the values in the order written **[✓]**.
+  The probe is the arm `Order` of `corpus/calls.fe`.
 - `&&` and `||` short-circuit.
 
 **Arithmetic on `u256`** is checked. Probed failure behaviour:
@@ -377,7 +384,7 @@ ABI-encoded string.
    - Arguments must follow the parameter order. Swapped labels are `8-0024` **[✓]**.
    - Recursion is allowed. Fe0 adds no limit beyond EVM gas and stack depth.
 5. **Free functions are pure.** They have no `uses` clause, so they cannot touch storage, read
-   the caller or emit an event (§6).
+   the caller, emit an event or call a contract (§6).
 6. **Return paths.** A function with `-> T` must produce a `T` on every path, either through its
    final expression or through `return`. Otherwise it is an error (`8-0000`, type mismatch)
    **[✓]**.
@@ -461,11 +468,16 @@ grant a storage field.
   deploys the contract. A body that reads it must list `ctx` in its `uses`, as for a storage
   field (`E116`). Fe rejects such a body too, because `ctx` is an undefined name there
   (`8-0012`) **[✓]**.
+- `ctx.address()` is the address of the contract itself, which a pool needs to ask a token for
+  its own balance ([ADR 0020](adr/0020-external-calls.md#update-nov-14)). In `init`, it is the
+  address of the contract being created. It needs `ctx` in the body's `uses` as
+  `ctx.caller()` does, and Fe rejects a body without it the same way (`8-0012`) **[✓]**. Fe
+  accepts `log.address()` on a `Log` effect **[✓]**, and Fe0 rejects it (`T001`).
 - `Address::zero()` is the address 0. It needs no effect, so a free function may use it. It is
   not a constant expression (`C001`). Fe rejects it in a constant too, because `zero` is not a
   `const fn` (`3-0024`) **[✓]**.
 - A `Ctx` effect is not a value. A name that refers to one is an error (`N003`), except before
-  `.caller()`. Assigning to one is an error (`N014`), even when `uses` names it `mut`. Fe
+  `.caller()` and `.address()`. Assigning to one is an error (`N014`), even when `uses` names it `mut`. Fe
   rejects both **[✓]**.
 - A `Ctx` effect takes no storage. The storage fields' slots are the same as without it.
 - A storage field may not take the name of an effect (`N001`). Neither may a local, a parameter
@@ -547,6 +559,58 @@ fields **[✓]**:
   fields logs no data.
 
 The probe is `corpus/events.fe`, which runs on a node (DESIGN.md §10, "On a node").
+
+**Calls** ([ADR 0020](adr/0020-external-calls.md)). A contract calls another contract through a
+`Call` effect, declared `mut`, as in `contract Pool uses (call: mut Call) {`. The call sends a
+variant of a msg that the program declares, often the other contract's msg written out again:
+
+```fe
+msg Erc20 {
+    #[selector = 0xa9059cbb]
+    Transfer { to: Address, amount: u256 } -> bool,
+}
+
+// in a body whose uses has `mut call`:
+let ok = token.call(Erc20::Transfer { to, amount })
+```
+
+- `a.call(M::V { f: e, … })` calls the contract at address `a`, which is a name of type
+  `Address`: a local, a parameter or a field (`T001`). Its value has the variant's return
+  type, and a variant without one gives a call with no value (`T003`). Fe accepts `let x =`
+  such a call **[✓]**.
+- `M` must name a msg (`N002`, `N007`) and `V` one of its variants (`N008`). The values follow
+  the rules of `log.emit` (§6, "Events"): `N010`, `N001`, `N019` and `T001`, which Fe rejects
+  too **[✓]**. The variant is written with braces, even when it has no fields. Fe rejects
+  `M::V` without them when `V` has a return type **[✓]**.
+- A body that calls needs the contract's `Call` effect, whatever its name, granted `mut` in
+  its `uses`: `E116` without the effect and `E018` without `mut`. Fe rejects a body without the
+  effect (`8-0036`) **[✓]**. It accepts `uses (call)` **[✓]**, and Fe0 rejects it for the same
+  reason it rejects `uses (log)`.
+- A contract has at most one `Call` effect (`N001` at the second). Fe rejects a body that
+  grants two (`8-0040`) and accepts a contract that declares two when no body grants both
+  **[✓]**. Fe0 rejects `call: Call` without `mut` (`P002`). Fe rejects it once a body calls (`8-0037`)
+  **[✓]**.
+- A `Call` effect is not a value (`N003`) and has no `caller()` (`T001`). Fe accepts
+  `call.caller()` **[✓]**. Like the other effects, it takes no storage.
+
+The call. Fe0 does what Fe's `Address::call` does, and the probe `corpus/calls.fe` checks each
+point on a node against `corpus/callee.fe` **[✓]**:
+- The calldata is the variant's selector, then the values as ABI words in the order of the
+  variant's fields, as a `recv` arm reads them. A `bool` is the word 0 or 1, and an `Address`
+  its 20 bytes, zero-extended.
+- `CALL` forwards all the gas the EVM allows, which is all but a 64th, and sends no value.
+- When the callee fails, the call reverts with the callee's revert data, unchanged. So a
+  callee's `Panic` or `Error(string)` reaches the caller's caller.
+- When the callee succeeds, a variant with a return type takes the first word of the return
+  data and ignores the rest. Fewer than 32 bytes, a `bool` word other than 0 or 1, or an
+  `Address` word with any of its upper 96 bits set: the call reverts with empty data. A variant
+  without a return type ignores the return data.
+- An address with no code succeeds with no return data. So a call of a variant without a
+  return type to such an address succeeds, and one with a return type reverts with empty
+  data. Fe0, like Fe, does not check the code size first.
+- The callee may call back into the caller before it returns, and sees the storage the caller
+  wrote before the call. Fe0 has no guard against that, as Fe has none
+  ([ADR 0020](adr/0020-external-calls.md), "Consequences").
 
 **Messages and dispatch.**
 - A `recv M` block must have exactly one arm per variant of `M` **[✓]** (the "missing variants"

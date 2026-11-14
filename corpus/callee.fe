@@ -1,0 +1,62 @@
+// The contract that corpus/calls.fe calls (SPEC §6, "Calls"). Its arms return a value, store
+// one, fail in each way that a caller must pass on, or call their caller back.
+msg CalleeMsg {
+    #[selector = 0x11]
+    Echo { a: u256 } -> u256,
+    #[selector = 0x12]
+    Store { a: u256 },
+    #[selector = 0x13]
+    Stored -> u256,
+    #[selector = 0x14]
+    Fail { a: u256 } -> u256,
+    #[selector = 0x15]
+    Overflow { a: u256 } -> u256,
+    #[selector = 0x16]
+    Sub { a: u256, b: u256 } -> u256,
+    #[selector = 0x17]
+    CallBack -> u256,
+}
+
+// The variant of corpus/calls.fe that CallBack calls.
+msg CallerMsg {
+    #[selector = 0x31]
+    Last -> u256,
+}
+
+#[event]
+struct Saved {
+    value: u256,
+}
+
+const MAX: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+contract Callee uses (ctx: Ctx, call: mut Call, log: mut Log) {
+    mut stored: u256,
+
+    recv CalleeMsg {
+        Echo { a } -> u256 {
+            a
+        }
+        Store { a } uses (mut stored, mut log) {
+            stored = a
+            log.emit(Saved { value: a })
+        }
+        Stored {} -> u256 uses (stored) {
+            stored
+        }
+        Fail { a } -> u256 {
+            assert!(a == 0, "callee says no")
+            a
+        }
+        Overflow { a } -> u256 {
+            a + MAX
+        }
+        Sub { a, b } -> u256 {
+            a - b
+        }
+        CallBack {} -> u256 uses (ctx, mut call) {
+            let caller = ctx.caller()
+            caller.call(CallerMsg::Last {}) + 1
+        }
+    }
+}

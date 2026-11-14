@@ -6,21 +6,27 @@ It is also the library behind tools/gen.py, for call scripts and the harness.
 Each program `corpus/X.fe` comes with a call script `corpus/X.calls`, which lists what the test
 of the program deploys and sends. A call script has one entry per line, and `#` starts a comment:
 
+    deploy token.fe as t0 5   a deployment of corpus/token.fe, named t0, which the program may
+                              call. It comes before every other entry
     init 5 true            the main deployment, with these constructor arguments
     deploy 5 2             another deployment, checked only for whether it creates a contract
     Set 5                  a call to the variant `Set`, with argument words
     0x2a 1 2               a call by selector
+    @t0 Transfer @this 5   a call to the deployment t0, whose program has the variant
     raw 0000002a01         calldata given as hex bytes
 
 An argument is an integer, `MAX` (2**256 - 1), `true` or `false`, or such values combined with
 parentheses and the operators + - * // ** << >> & | ^. It is written without spaces, as in
 `2**255` or `MAX-1`, and its value must fit in 256 bits. An argument may also be `accountN`, which
-names the address of node account N (fegen.Account). Any entry but `raw` may end with
+names the address of node account N (fegen.Account), or `@t0`, the address of the deployment
+named t0 (fegen.Named). `@this` names the main deployment, in an entry after it. Any entry but
+`raw` may end with
 `value=N`, the wei sent with it, `extra=N`, a number of bytes appended after the words, and
 `from=N`, the node account that sends it. `from` applies only on a node (tools/node.py), as
 DESIGN.md §10, "On a node", says.
 Without an `init` line, the main deployment has no arguments. Every program also gets the calls
-of `fegen.DISPATCH`.
+of `fegen.DISPATCH`. Some programs run only on a node (tools/node_check.py):
+`fegen.Cases.node_only` says which, and DESIGN.md §10, "On a node", says why.
 
 Each reject program `corpus/reject/X.fe` names the error that Fe0 must give, in a header line:
 
@@ -34,6 +40,7 @@ With --no-run, fe check still runs on every program.
 """
 import argparse
 import ast
+import dataclasses
 import itertools
 import operator
 import os
@@ -44,16 +51,16 @@ import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from pathlib import Path
 from typing import ClassVar, Never, NamedTuple, NewType, Protocol, Self
 
 import fegen
-from fegen import (MAX, ROOT, Account, AccountIndex, Arg, ByteOffset, Call, Case, Cases, Deploy,
-                   DiagCode, DiagWord, DiffTest, ExtraBytes, Failure, FeLine, FeName, FeSource,
-                   Kind, LineCol, PanicCode, Payload, PhaseLetter, RawCall, Selector, TestName, Wei,
-                   Word)
+from fegen import (DEPLOYMENT_NAME, MAX, ROOT, THIS, Account, AccountIndex, Arg, ByteOffset, Call,
+                   Callee, Case, Cases, Deploy, DeploymentName, DiagCode, DiagWord, DiffTest,
+                   ExtraBytes, Failure, FeLine, FeName, FeSource, Kind, LineCol, Named, PanicCode,
+                   Payload, PhaseLetter, RawCall, Selector, TestName, Wei, Word)
 
 CORPUS: Path = ROOT / "corpus"
 REJECTS: Path = CORPUS / "reject"
@@ -84,6 +91,10 @@ _MAX_WORD = "MAX"
 NAMES: dict[str, Word] = {_MAX_WORD: MAX, "true": Word(1), "false": Word(0)}
 # The start of an argument that names a node account by index, as in `account1`.
 _ACCOUNT = "account"
+# The word between a callee's program and its name, as in `deploy token.fe as t0`.
+_AS = "as"
+# The file name of a program, such as token.fe, without a directory.
+ProgramFile = NewType("ProgramFile", str)
 
 
 def word(text: str) -> Word:
@@ -111,12 +122,15 @@ def word(text: str) -> Word:
 
 
 def arg(text: str) -> Arg:
-    """Returns the argument that `text` gives: an account by index, or a word.
+    """Returns the argument that `text` gives: an account by index, a deployment by name, or a
+    word.
 
-    Errors as `word` does when `text` names no account.
+    Errors as `word` does when `text` names no account and no deployment.
     """
     if m := re.fullmatch(rf"{_ACCOUNT}(\d+)", text):
         return Account(AccountIndex(int(m[1])))
+    if (named := Named.parse(text)) is not None:
+        return named
     return word(text)
 
 
@@ -124,11 +138,32 @@ def arg(text: str) -> Arg:
 LINE_COMMENT = re.compile(r"//[^\r\n]*")
 
 
+# A msg item, with its name and its body. Its closing brace starts a line, as `fe fmt` puts it.
+MSG_ITEM = re.compile(r"^(?:pub\s+)?msg\s+(\w+)\s*\{(.*?)^\}", re.M | re.S)
+# A variant's selector and name.
+VARIANT = re.compile(r"#\[selector\s*=\s*(\w+)\]\s*(\w+)")
+# The msg that a recv block receives.
+RECV = re.compile(r"\brecv\s+(\w+)")
+
+
 def selectors(source: FeSource) -> dict[FeName, Selector]:
-    """Returns the selector of each msg variant in `source`, by variant name."""
-    return {FeName(name): Selector(int(sel, 0))
-            for sel, name in re.findall(r"#\[selector\s*=\s*(\w+)\]\s*(\w+)",
-                                        LINE_COMMENT.sub("", source))}
+    """Returns the selector of each variant of the msgs that the contract of `source` receives,
+    by variant name. A msg that the contract only calls, such as another contract's, has the
+    same variant names, so its variants are left out.
+
+    Errors with ScriptError when two received variants have one name.
+    """
+    text = LINE_COMMENT.sub("", source)
+    received = set(RECV.findall(text))
+    out: dict[FeName, Selector] = {}
+    for msg, body in MSG_ITEM.findall(text):
+        if msg not in received:
+            continue
+        for sel, name in VARIANT.findall(body):
+            if name in out:
+                raise ScriptError(f"two received variants are named {name}")
+            out[FeName(name)] = Selector(int(sel, 0))
+    return out
 
 
 class Head(Enum):
@@ -207,12 +242,20 @@ class ScriptLine(ABC):
         """Returns the account that sends the entry."""
         return AccountIndex(0)
 
+    def names(self) -> list[DeploymentName]:
+        """Returns the deployments that the entry's arguments name."""
+        return []
+
+    def target(self) -> DeploymentName:
+        """Returns the deployment that a call goes to. It is THIS for an entry that is no call."""
+        return THIS
+
     def case(self, number: int, sels: Mapping[FeName, Selector]) -> Case:
         """Returns the entry as the case `number`, with `sels` as the selectors by variant name.
 
         Errors as payload does.
         """
-        return Case(number, self.payload(sels), self.sender())
+        return Case(number, self.payload(sels), self.sender(), self.target())
 
     @staticmethod
     def parse(text: str) -> "ScriptLine | None":
@@ -221,15 +264,25 @@ class ScriptLine(ABC):
         Errors when the line is not of the call-script form.
         """
         tokens = text.split("#", 1)[0].split()
-        if not tokens:
-            return None
-        first, args = tokens[0], tokens[1:]
+        return ScriptLine.parse_tokens(tokens) if tokens else None
+
+    @staticmethod
+    def parse_tokens(tokens: Sequence[str]) -> "ScriptLine":
+        """Returns the entry whose tokens are `tokens`, of which there is at least one.
+
+        Errors as parse does.
+        """
+        first, args = tokens[0], list(tokens[1:])
+        if first.startswith(Named.SIGIL):
+            return CallLine.addressed(first, args)
         if first == Head.RAW.value:
             if len(args) > 1 or not re.fullmatch(r"([0-9a-fA-F]{2})*", "".join(args)):
                 raise ScriptError(f"{Head.RAW.value} takes one string of hex bytes")
             return RawLine(bytes.fromhex("".join(args)))
         if first == Head.INIT.value:
             return InitLine(Args.parse(args))
+        if first == Head.DEPLOY.value and _AS in args[:2]:
+            return CalleeLine.of_tokens(args)
         if first == Head.DEPLOY.value:
             return DeployLine(Args.parse(args))
         if re.fullmatch(r"0x[0-9a-fA-F]+|[0-9]+", first):
@@ -244,6 +297,46 @@ class ArgsLine(ScriptLine):
 
     def sender(self) -> AccountIndex:
         return self.args.sender
+
+    def names(self) -> list[DeploymentName]:
+        return [a.name for a in self.args.words if isinstance(a, Named)]
+
+
+@dataclass(frozen=True)
+class CalleeLine(ArgsLine):
+    """A `deploy PROGRAM as NAME` entry: a deployment of another program, which the program under
+    test may call."""
+
+    # The program, in the directory of the program under test.
+    program: ProgramFile
+    name: DeploymentName
+    args: Args = Args()
+
+    @classmethod
+    def of_tokens(cls, tokens: Sequence[str]) -> Self:
+        """Returns the entry whose tokens after `deploy` are `tokens`, which start with the
+        program, `as` and the name.
+
+        Errors when `as` is not the second token, when the name is missing, when the program is
+        no .fe file name or the name is no lowercase identifier, and as Args.parse does.
+        """
+        if len(tokens) < 2 or tokens[1] != _AS:
+            raise ScriptError(f"{Head.DEPLOY.value} takes a program, as in"
+                              f" `{Head.DEPLOY.value} token.fe {_AS} t0`")
+        if len(tokens) < 3:
+            raise ScriptError(f"`{Head.DEPLOY.value} {' '.join(tokens)}` names no deployment")
+        program, _, name, *rest = tokens
+        if not re.fullmatch(r"\w+\.fe", program):
+            raise ScriptError(f"Errors when reading {program!r}: it is not the file name of a program")
+        if not re.fullmatch(DEPLOYMENT_NAME, name):
+            raise ScriptError(f"Errors when reading {name!r}: a name is a lowercase identifier")
+        return cls(ProgramFile(program), DeploymentName(name), Args.parse(rest))
+
+    def render(self) -> str:
+        return " ".join([Head.DEPLOY.value, self.program, _AS, self.name, *self.args.render()])
+
+    def payload(self, sels: Mapping[FeName, Selector]) -> Payload:
+        return self.args.deploy()
 
 
 @dataclass(frozen=True)
@@ -274,14 +367,42 @@ class DeployLine(DeploymentLine):
 
 
 @dataclass(frozen=True)
-class NamedCallLine(ArgsLine):
+class CallLine(ArgsLine):
+    """A call, which goes to the main deployment unless it names another."""
+
+    to: DeploymentName = field(default=THIS, kw_only=True)
+
+    def target(self) -> DeploymentName:
+        return self.to
+
+    def head(self) -> list[str]:
+        """The token that names the deployment, when it is not the main one."""
+        return [] if self.to == THIS else [str(Named(self.to))]
+
+    @staticmethod
+    def addressed(first: str, rest: Sequence[str]) -> "CallLine":
+        """Returns the call whose tokens are `first`, which names its deployment, and `rest`.
+
+        Errors when `first` is no `@name`, or when `rest` is no call by name or selector.
+        """
+        to = Named.parse(first)
+        if to is None:
+            raise ScriptError(f"Errors when reading {first!r}: it names no deployment")
+        call = ScriptLine.parse_tokens(rest) if rest and not rest[0].startswith(Named.SIGIL) else None
+        if not isinstance(call, (NamedCallLine, SelectorCallLine)):
+            raise ScriptError(f"{first} takes a call by name or by selector")
+        return dataclasses.replace(call, to=to.name)
+
+
+@dataclass(frozen=True)
+class NamedCallLine(CallLine):
     """A call to a msg variant by its name."""
 
     name: FeName
     args: Args = Args()
 
     def render(self) -> str:
-        return " ".join([self.name, *self.args.render()])
+        return " ".join([*self.head(), self.name, *self.args.render()])
 
     def payload(self, sels: Mapping[FeName, Selector]) -> Payload:
         if self.name not in sels:
@@ -290,14 +411,14 @@ class NamedCallLine(ArgsLine):
 
 
 @dataclass(frozen=True)
-class SelectorCallLine(ArgsLine):
+class SelectorCallLine(CallLine):
     """A call by selector."""
 
     sel: Selector
     args: Args = Args()
 
     def render(self) -> str:
-        return " ".join([f"{self.sel:#x}", *self.args.render()])
+        return " ".join([*self.head(), f"{self.sel:#x}", *self.args.render()])
 
     def payload(self, sels: Mapping[FeName, Selector]) -> Payload:
         return self.args.call(self.sel)
@@ -324,7 +445,10 @@ def _render_word(w: int) -> str:
 
 
 def _render_arg(a: Arg) -> str:
-    """The argument text of `a`: an account by index, a word as _render_word gives it."""
+    """The argument text of `a`: an account by index, a deployment by name, a word as
+    _render_word gives it."""
+    if isinstance(a, Named):
+        return str(a)
     return f"{_ACCOUNT}{a.index}" if isinstance(a, Account) else _render_word(a)
 
 
@@ -335,8 +459,20 @@ def check_script_line() -> None:
                  NamedCallLine(FeName("Set"), Args((MAX, Word(2**200)), extra=ExtraBytes(1),
                                                    sender=AccountIndex(2))),
                  NamedCallLine(FeName("Give"), Args((Account(AccountIndex(1)), Word(3)))),
+                 CalleeLine(ProgramFile("token.fe"), DeploymentName("t0"), Args((Word(5),), sender=AccountIndex(1))),
+                 InitLine(Args((Named(DeploymentName("t0")), Named(DeploymentName("t_1"))))),
+                 NamedCallLine(FeName("Transfer"), Args((Named(THIS), Word(5))), to=DeploymentName("t0")),
+                 SelectorCallLine(Selector(1), to=DeploymentName("t0")),
                  SelectorCallLine(Selector(0x2a)), RawLine(bytes([0, 0x2a])), RawLine(b"")]:
         assert ScriptLine.parse(line.render()) == line, line
+    t_1 = Named(DeploymentName("t_1"))
+    assert Named.parse(str(t_1)) == t_1 and Named.parse("t_1") is None and Named.parse("@T1") is None
+    for bad in ["@t0 @this Set", "@t0 raw 00", "@t0", "deploy as t0", "deploy token.fe as"]:
+        try:
+            ScriptLine.parse(bad)
+        except ScriptError:
+            continue
+        raise AssertionError(f"{bad!r} parses")
 
 
 def parse_calls(path: Path, sels: Mapping[FeName, Selector]) -> Cases:
@@ -348,12 +484,35 @@ def parse_calls(path: Path, sels: Mapping[FeName, Selector]) -> Cases:
     main = Case(0, Deploy())
     deploys: list[Case] = []
     calls: list[Case] = []
+    callees: list[Callee] = []
+    # The selectors of each deployment's program, by variant name.
+    programs: dict[DeploymentName, Mapping[FeName, Selector]] = {THIS: sels}
+    # Whether an entry other than a callee came before.
+    begun = False
     for n, text in enumerate(path.read_text().splitlines(), start=1):
         try:
             line = ScriptLine.parse(text)
             if line is None:
                 continue
-            case = line.case(n, sels)
+            # The main deployment comes after the callees and the `init` line.
+            known = programs.keys() - ({THIS} if isinstance(line, (CalleeLine, InitLine)) else set())
+            named = [*line.names(), *([line.to] if isinstance(line, CallLine) else [])]
+            if unknown := [m for m in named if m not in known]:
+                raise ScriptError(f"{Named(unknown[0])} names no deployment before it")
+            case = line.case(n, programs[line.target()])
+            match line:
+                case CalleeLine() if begun:
+                    raise ScriptError(f"`{line.render()}` comes after an entry that is no callee")
+                case CalleeLine() if line.name in programs:
+                    raise ScriptError(f"a second deployment named {line.name}")
+                case CalleeLine():
+                    program = path.parent / line.program
+                    if not program.exists():
+                        raise ScriptError(f"there is no {program.relative_to(ROOT)}")
+                    callees.append(Callee(line.name, program, case))
+                    programs[line.name] = selectors(FeSource(program.read_text()))
+                    continue
+            begun = True
             match line:
                 case InitLine() if main.number:
                     raise ScriptError(f"a second {Head.INIT.value} line")
@@ -365,7 +524,7 @@ def parse_calls(path: Path, sels: Mapping[FeName, Selector]) -> Cases:
                     calls.append(case)
         except ScriptError as e:
             raise ScriptError(f"{path.relative_to(ROOT)}:{n}: {e}") from None
-    return Cases(main, deploys, calls)
+    return Cases(main, deploys, calls, callees)
 
 
 # The declaration of a contract, whose name is group 1.
@@ -434,7 +593,11 @@ class Program:
         contracts = CONTRACT.findall(source)
         if len(contracts) != 1:
             raise ScriptError(f"Errors when embedding {path}: it must have one contract")
-        cases = parse_calls(ROOT / script, selectors(source))
+        try:
+            sels = selectors(source)
+        except ScriptError as e:
+            raise ScriptError(f"Errors when embedding {path}: {e}") from None
+        cases = parse_calls(ROOT / script, sels)
         diff = DiffTest(TestName(f"corpus_{path.stem}"), FeName(contracts[0]), source, cases)
         return cls(path, script, diff)
 
@@ -692,13 +855,16 @@ class Corpus(NamedTuple):
     def write(self, out: Path) -> "Written":
         """Replaces the directory `out` with batch ingots of the programs that fe check accepts,
         and one ingot of all the reject programs. Returns them with a message for each failure
-        of fe check."""
+        of fe check. A program that only a node can run (fegen.Cases.node_only) is left to the
+        node check."""
         checked = self.check_official()
         shutil.rmtree(out, ignore_errors=True)
-        batches = [b.write() for b in Batch.split(out, checked.accepted)]
+        here = [p for p in checked.accepted if not p.diff.cases.node_only]
+        batches = [b.write() for b in Batch.split(out, here)]
         reject = RejectIngot(out / "reject", self.rejects).write() if self.rejects else None
-        print(f"{len(checked.accepted)} programs and {len(self.rejects)} reject programs"
-              f" in {out.relative_to(ROOT)}/")
+        node_only = len(checked.accepted) - len(here)
+        print(f"{len(here)} programs and {len(self.rejects)} reject programs"
+              f" in {out.relative_to(ROOT)}/ (left to the node check: {node_only})")
         return Written(batches, reject, checked.failures)
 
     def harness(self, out: Path, fe_test: FeTest | None) -> Never:

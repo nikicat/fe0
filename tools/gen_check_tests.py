@@ -110,6 +110,17 @@ def log_arm(body: str, items: str = EVENT, init: str = "",
 def emit_ok(effect: str = "log", amount: str = "v") -> str:
     """An emit of an EVENT value through the effect `effect`, with the amount `amount`."""
     return f"{effect}.emit(E {{ to: ctx.caller(), amount: {amount} }})"
+# The msg of another contract, which the msg_calls cases call.
+OTHER = "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[selector = 0x12]\n    Put { a: u256 },\n}\n"
+# The fields of the msg_calls cases: FIELD_A, and the address `t` that they call.
+CALL_FIELDS = FIELD_A + "    mut t: Address\n"
+# The effects of the msg_calls cases: the Call effect alone, and with the Ctx effect.
+CALL = "call: mut Call"
+CALL_CTX = CALL + ", ctx: Ctx"
+def call_arm(body: str, init: str = "", effects: str = CALL) -> str:
+    """The contract of set_arm(body) with CALL_FIELDS, the init `init` and the effects
+    `effects`, after OTHER."""
+    return OTHER + set_arm(body, CALL_FIELDS, init, effects)
 groups: dict[TestName, list[Case]] = {
 TestName("types_of_operators"): [
     ok("fn f(_ a: u256, _ b: bool, _ c: Address, _ d: Address) -> bool {\n    a + 1 * 2 / 3 % 4 & 5 | 6 ^ 7 << 8 >> 9 > 0 && !b || c == d && ~a != 0\n}"),
@@ -285,6 +296,36 @@ TestName("events"): [
     ok(log_arm("{ }", event("E", *(indexed(f"a{k}: u256") for k in range(3)), "b: u256"))),
     err(log_arm("{ }", event("E", "b: u256", *(indexed(f"a{k}: bool") for k in range(3)),
                         indexed("|a3: bool"))), "T_TOO_MANY_INDEXED"),
+],
+TestName("msg_calls"): [
+    ok(call_arm("uses (t, mut call) { t.call(O::Put { a: v }) }")),
+    ok(call_arm("uses (mut a, t, mut call) { a = t.call(O::Echo { a: v + 1 }) }")),
+    ok(call_arm("uses (mut call, ctx) {\n            let to = ctx.caller()\n            to.call(O::Put { a: v })\n        }", effects=CALL_CTX)),
+    ok(call_arm("uses (mut a, t, mut call) { a = t.call(O::Echo { a: t.call(O::Echo { a: v }) }) }")),
+    ok(call_arm("uses (t, mut call) { t.call(M::Set { v }) }")),
+    ok(call_arm("{ }", init="    init(to: Address) uses (mut call) { to.call(O::Put { a: 1 }) }\n")),
+    warn(call_arm("uses (|mut call) { }"), "E_UNUSED_USE"),
+    err(call_arm("uses (t, call) { |t.call(O::Put { a: v }) }"), "E_NOT_MUT"),
+    err(call_arm("uses (t) { |t.call(O::Put { a: v }) }"), "E_NOT_IN_USES"),
+    err(call_arm("uses (t) { |t.call(O::Put { a: v }) }", effects="ctx: Ctx"), "E_NOT_IN_USES"),
+    err(call_arm("uses (mut call) { |t.call(O::Put { a: v }) }"), "E_NOT_IN_USES"),
+    err(call_arm("{ }", effects=CALL + ", |c2: mut Call"), "N_DUPLICATE"),
+    err(call_arm("uses (mut call) { |v.call(O::Put { a: v }) }"), "T_MISMATCH"),
+    err(call_arm("uses (mut call) { |call.call(O::Put { a: v }) }"), "N_NOT_A_VALUE"),
+    err(call_arm("uses (mut call) { let x = |call }"), "N_NOT_A_VALUE"),
+    err(call_arm("uses (call) { assert!(|call.caller() == Address::zero()) }"), "T_MISMATCH"),
+    ok(call_arm("uses (mut call, ctx) {\n            let me = ctx.address()\n            me.call(M::Set { v })\n        }", effects=CALL_CTX)),
+    err(call_arm("uses (mut call) { assert!(|ctx.address() == t) }", effects=CALL_CTX), "E_NOT_IN_USES"),
+    err(call_arm("uses (call) { assert!(|call.address() == Address::zero()) }"), "T_MISMATCH"),
+    err(call_arm("uses (t, mut call) { |t.call(P::Put { a: v }) }"), "N_UNKNOWN_NAME"),
+    err(call_arm("uses (t, mut call) { |t.call(f::Put { a: v }) }") + "fn f() {}", "N_NOT_A_MSG"),
+    err(call_arm("uses (t, mut call) { |t.call(O::Get { a: v }) }"), "N_UNKNOWN_VARIANT"),
+    err(call_arm("uses (t, mut call) { |t.call(O::Put {}) }"), "N_MISSING_FIELD"),
+    err(call_arm("uses (t, mut call) { t.call(O::Put { a: v, |a: v }) }"), "N_DUPLICATE"),
+    err(call_arm("uses (t, mut call) { t.call(O::Put { a: v, |b: v }) }"), "N_UNKNOWN_FIELD"),
+    err(call_arm("uses (t, mut call) { t.call(O::Put { a: |true }) }"), "T_MISMATCH"),
+    err(call_arm("uses (t, mut call) { let x = |t.call(O::Put { a: v }) }"), "T_NO_VALUE"),
+    err(call_arm("{ }") + "fn f(_ to: Address) { |to.call(O::Put { a: 1 }) }", "E_NOT_IN_USES"),
 ],
 TestName("selectors"): [
     ok("msg N {\n    #[selector = 0xffffffff]\n    A {},\n    #[selector = 0]\n    B {},\n}"),

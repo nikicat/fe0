@@ -1,0 +1,21 @@
+// expect: T001 18:13
+// fe: accepts
+// In Fe0, only a `Ctx` effect has `caller()` (SPEC §6, "Calls"), although Fe accepts it on a
+// `Call` effect.
+msg Other {
+    #[selector = 0x11]
+    Echo { a: u256 } -> u256,
+    #[selector = 0x12]
+    Store { a: u256 },
+}
+msg M {
+    #[selector = 1]
+    Go { t: Address } -> Address,
+}
+contract C uses (call: mut Call) {
+    recv M {
+        Go { t } -> Address uses (call) {
+            call.caller()
+        }
+    }
+}

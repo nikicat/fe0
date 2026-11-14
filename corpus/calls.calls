@@ -1,0 +1,29 @@
+# Runs only on a node (tools/embed.py), since it deploys corpus/callee.fe.
+deploy callee.fe as callee
+init @callee
+Echo 5
+Echo MAX
+Store 7
+Fail 0
+Fail 1                    # Error("callee says no"), passed on
+Overflow 0
+Overflow 1                # Panic(0x11), passed on
+Order 2 3                 # Sub { a: 7, b: 5 }
+Order 0 11                # Panic(0x12): the value written first runs first
+Order 1 11                # Panic(0x11)
+Order 1 3                 # Sub { a: 7, b: 10 }: the callee's Panic(0x11)
+Nested 1
+Undone 4
+Undone 5                  # the callee's write and log are undone
+Reenter 9
+Last
+NoValue 1                 # no return data
+AsBool 1
+AsBool 2                  # not a bool
+AsAddress 7
+AsAddress 2**160          # not an address
+Ignored 3
+Missing                   # the callee reverts with no data
+ToAccount account1 5      # no return data
+UnitToAccount account1 5
+Twice 3

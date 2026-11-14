@@ -23,18 +23,22 @@ pub const OP_NOT: Op = Op { code: 0x19 }
 pub const OP_SHL: Op = Op { code: 0x1b }
 pub const OP_SHR: Op = Op { code: 0x1c }
 pub const OP_KECCAK256: Op = Op { code: 0x20 }
+pub const OP_ADDRESS: Op = Op { code: 0x30 }
 pub const OP_CALLER: Op = Op { code: 0x33 }
 pub const OP_CALLVALUE: Op = Op { code: 0x34 }
 pub const OP_CALLDATALOAD: Op = Op { code: 0x35 }
 pub const OP_CALLDATASIZE: Op = Op { code: 0x36 }
 pub const OP_CODESIZE: Op = Op { code: 0x38 }
 pub const OP_CODECOPY: Op = Op { code: 0x39 }
+pub const OP_RETURNDATASIZE: Op = Op { code: 0x3d }
+pub const OP_RETURNDATACOPY: Op = Op { code: 0x3e }
 pub const OP_POP: Op = Op { code: 0x50 }
 pub const OP_MLOAD: Op = Op { code: 0x51 }
 pub const OP_MSTORE: Op = Op { code: 0x52 }
 pub const OP_SLOAD: Op = Op { code: 0x54 }
 pub const OP_SSTORE: Op = Op { code: 0x55 }
 pub const OP_JUMP: Op = Op { code: 0x56 }
+pub const OP_GAS: Op = Op { code: 0x5a }
 // Jumps, label targets and pushes are emitted only by the methods of `Asm`, so that every label
 // push gets its fixup. PUSHn is OP_PUSH0 plus n.
 const OP_JUMPI: Op = Op { code: 0x57 }
@@ -47,10 +51,12 @@ pub const OP_DUP3: Op = Op { code: 0x82 }
 pub const OP_DUP4: Op = Op { code: 0x83 }
 pub const OP_SWAP1: Op = Op { code: 0x90 }
 pub const OP_SWAP2: Op = Op { code: 0x91 }
+pub const OP_SWAP5: Op = Op { code: 0x94 }
 // LOGn is OP_LOG0 plus n, for n up to MAX_TOPICS.
 const OP_LOG0: Op = Op { code: 0xa0 }
 // The most topics a log may have, which LOG4 takes.
 pub const MAX_TOPICS: usize = 4
+pub const OP_CALL: Op = Op { code: 0xf1 }
 pub const OP_RETURN: Op = Op { code: 0xf3 }
 pub const OP_REVERT: Op = Op { code: 0xfd }
 

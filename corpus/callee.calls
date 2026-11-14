@@ -1,0 +1,11 @@
+# corpus/calls.fe calls this contract. Alone, it is called by accounts.
+Echo 5
+Store 7
+Stored
+Fail 0
+Fail 1                    # Error("callee says no")
+Overflow 0
+Overflow 1                # Panic(0x11)
+Sub 5 3
+Sub 3 5                   # Panic(0x11)
+CallBack                  # the caller is an account, which returns no data

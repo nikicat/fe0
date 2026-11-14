@@ -141,6 +141,12 @@ Constants are evaluated before any body, in source order (`Checker.program`).
   `Checked.data_words`). Code generation reads only these. The update to
   [ADR 0019](adr/0019-events.md#update-nov-12) says why it hashes with
   `std::evm::crypto::keccak256`.
+- **Calls** (SPEC §6, "Calls"): a call does not name its effect, so the checker finds the
+  contract's one `Call` effect by its type (`Checker.note_call_effect`), and
+  `Checker.use_call_effect` checks the body's grant of it. The address is a NAME node, checked
+  as any name. The values are checked as an emit's are (`Checker.labeled_args`). The call's
+  VARIANT is its `res`, and code generation reads the selector, the field order and the return
+  type from it, so a call adds no side table.
 - **Selectors** (SPEC §6): `Checker.msg_item` checks the selectors of each msg (`T004`,
   `N016`), and `Checker.distinct_received_selectors` checks them across the msgs the contract
   receives (`N016`).
@@ -163,7 +169,7 @@ Opcodes are emitted straight from the AST, with no IR
 | `0x00–0x3f` | Scratch: return value, panic payload head, the key and slot that a map entry's slot is hashed from |
 | `0x40` | **FP**, the current frame pointer |
 | `0x60–0x7f` | Reserved (EVM convention, unused) |
-| `0x80…` | Frames, growing upward. While `log.emit` runs, its data and topics are in the words past the current frame |
+| `0x80…` | Frames, growing upward. While `log.emit` runs, its data and topics are in the words past the current frame. While `a.call(…)` runs, its calldata is there |
 
 **Frames.** Each function has a frame of `2 + params + locals` words at FP:
 - `[FP+0]` saved FP of the caller;
@@ -211,17 +217,18 @@ Each expression leaves exactly one word on the stack (unit-typed ones leave noth
 | `!b` | `ISZERO`. `~a` is `NOT` |
 | `assert!(c)` | `c ISZERO JUMPI panic_01` |
 | `assert!(c, "m")` | `JUMPI` past an inline block that `MSTORE`s `Error(string)` and `REVERT`s |
-| `ctx.caller()`, `Address::zero()` | `CALLER`, `PUSH0` |
+| `ctx.caller()`, `ctx.address()`, `Address::zero()` | `CALLER`, `ADDRESS`, `PUSH0` |
 | `m[k]` | eval k, `PUSH0 MSTORE`, `PUSHn slot PUSH1 0x20 MSTORE`, `PUSH1 0x40 PUSH0 KECCAK256 SLOAD` |
 | `m[k] = v` | eval v, then k's slot as for `m[k]`, then `SSTORE`. Fe evaluates `v` first (SPEC §4) |
 | `m[k] op= v` | eval v, k's slot, then `SWAP1 DUP2 SLOAD SWAP1`, the operator, `SWAP1 SSTORE` |
 | `log.emit(E { … })` | eval each value as written, then `MSTORE` each past the frame at its field's word, `MLOAD` the indexed ones back as topics, then `PUSH topic0`, the data's size and offset, `LOGn` |
+| `a.call(M::V { … })` | eval `a`, then each value as written. `MSTORE` each value past the frame at word 1 plus its field's index, and the selector at word 0, so that its 4 bytes end that word. `CALL` with `GAS`, no value, the calldata from byte 28 and no return buffer, then `ISZERO` → `JUMPI revert_returndata`. With a return type: fewer than 32 bytes of return data → `revert_empty`, then `RETURNDATACOPY` the first word to scratch, `MLOAD` it and check it as an arm checks an argument |
 
 The table sketches each sequence. `Gen.apply` and its neighbours in `fe0/src/codegen.fe` emit the
 exact ones. The differential tests of §13 check their results against Fe, not the instructions.
 
-- **Stubs:** one shared block per panic code (`0x01`, `0x11`, `0x12`), and one that reverts
-  with empty data. Each piece of code holds the ones it jumps to (`Stub` in
+- **Stubs:** one shared block per panic code (`0x01`, `0x11`, `0x12`), one that reverts
+  with empty data, and one that reverts with the return data of the call that failed. Each piece of code holds the ones it jumps to (`Stub` in
   `fe0/src/codegen.fe`). A panic stub stores `0x4e487b71 << 224` at 0 and the code at 4, then
   `REVERT(0, 0x24)`.
 - **Leaving early:** a body can leave while it still has words on the stack, such as the `1`
@@ -317,15 +324,15 @@ differs from the ABI that `fe build` writes.
   | Contract | Runtime bytes | Deploy gas |
   |---|---|---|
   | Lexer | 7,685 | 1.72M |
-  | Parser | 22,072 | 4.82M |
-  | Checker | 21,411 | 4.68M |
-  | Back | 17,049 | 3.74M |
+  | Parser | 22,694 | 4.95M |
+  | Checker | 22,294 | 4.87M |
+  | Back | 17,976 | 3.94M |
   | Compiler | 1,893 | 0.49M |
 
-  - **Deploying all five costs 15.4M gas.**
-  - **Compiling costs up to 14.8M gas, for `corpus/amm.fe`.**
-    - That program is 4,249 bytes of source.
-    - Lexing alone takes 6.2M of that, at about 1,470 gas per byte.
+  - **Deploying all five costs 16.0M gas.**
+  - **Compiling costs up to 31.6M gas, for `corpus/amm.fe`.**
+    - That program is 8,141 bytes of source.
+    - Lexing takes about 1,470 gas per byte of source.
     - The boundaries cost little, compared to the phases themselves.
   - **`deploy` of `counter.fe` costs 2.4M gas.**
   - `tools/chain_check.py` measures all of these and checks the limits.
@@ -424,7 +431,7 @@ live in the `fe0` ingot, so that `fe test` there runs them, and their generator 
 `tools/fegen.py` with `embed.py`.
 
 Path dependencies between ingots work (`spike-deps/user`). Embedding sources as string
-literals is fine too. The largest corpus program is under 2 KB. A one-off probe, which is not
+literals is fine too. The largest corpus program, `corpus/amm.fe`, is about 8 KB. A one-off probe, which is not
 in the repository, passed a 32 KB `DynString` literal to a function. `fe test -O 0` built and
 ran it in about 0.1 s.
 
@@ -438,6 +445,16 @@ runs the same call scripts on a local anvil node instead (`tools/node.py`). It d
 build and Fe's build and sends each entry from the account its `from=N` names. The docstring of
 `node_check.py` lists what the two builds must agree on. `tools/gas_compare.py` runs the same
 way and reports each build's gas.
+
+A call script may first deploy other programs for the program to call (SPEC §6, "Calls"), as
+in `deploy token.fe as t0`, pass the address as `@t0` and call it, as in `@t0 Transfer @this 5`.
+The docstring of `tools/embed.py` gives the format. Such a program runs only on a node, since
+its test inside `fe test` could not deploy the other program. So does a program whose script
+names a deployment such as `@this`, since that test could not resolve its address
+(`fegen.Cases.node_only`). On the node, each build deploys
+its own build of each callee and runs the whole script from the same snapshot of the node
+(`Node.isolated`). So the contracts of both builds get the same addresses, and a storage slot
+hashed from one is the same in both.
 
 **One test per batch.** The root module of each batch ingot holds one test that calls every
 runner of the batch. Its name starts with `embed.BATCH_TEST`. The harness runs only these

@@ -183,9 +183,10 @@ pub struct Checked {
     // contract FIELD, LET and BIND.
     types: MemVec<Ty>,
     // What a name refers to. For NAME: the declaring node (CONST, PARAM, FIELD, LET or BIND).
-    // For INDEX: the map's FIELD. For CALLER: the effect's FIELD. For EMIT: the EVENT. For CALL:
-    // the FN. For RECV: the MSG. For ARM: the VARIANT. For BIND: the variant's FIELD. For an ARG
-    // of an EMIT: the event's FIELD. For USE: the FIELD.
+    // For INDEX: the map's FIELD. For CALLER and SELF_ADDRESS: the effect's FIELD. For EMIT: the EVENT. For CALL:
+    // the FN. For RECV: the MSG. For ARM and MSG_CALL: the VARIANT. For BIND: the variant's
+    // FIELD. For an ARG of an EMIT or a MSG_CALL: the event's or the variant's FIELD. For USE:
+    // the FIELD.
     res: MemVec<NodeId>,
     // One number per node, written and read through the methods below. Its meaning depends
     // on the node's kind, so that the checker keeps one table, not one per meaning.
@@ -327,7 +328,13 @@ struct Val { v: u256, ty: Ty }
 
 impl Copy for Val {}
 
-struct Checker { c: Checked, warns: MemVec<Diag>, body: Body }
+struct Checker {
+    c: Checked,
+    warns: MemVec<Diag>,
+    body: Body,
+    // The contract's `Call` effect, or NO_NODE.
+    call_effect: NodeId,
+}
 
 // The state of checking one FN, INIT or ARM body. `begin` replaces it for each body.
 struct Body {
@@ -499,8 +506,8 @@ impl Checker {
         self.item(sym)
     }
 
-    // The node that declares the name of NAME, CALL, CALLER or INDEX `i`. Errors with
-    // N_UNKNOWN_NAME when nothing declares it.
+    // The node that declares the name of NAME, CALL, CALLER, SELF_ADDRESS or INDEX `i`. Errors
+    // with N_UNKNOWN_NAME when nothing declares it.
     fn resolve(self, _ i: NodeId) -> Result<Diag, NodeId> {
         let d = self.lookup(self.node(i).name())
         if d.is_none() {
@@ -662,6 +669,7 @@ impl Checker {
     }
 
     // Gives each contract field its index and storage place. Fields share the item namespace.
+    // Errors as `note_call_effect` does.
     fn fields(mut self) -> Result<Diag, ()> {
         let l = self.node(self.c.the_contract).list()
         self.unique(l, N_DUPLICATE)?
@@ -676,6 +684,7 @@ impl Checker {
                 return Result::Err(self.at(N_DUPLICATE, f))
             }
             let ty = self.node(f).ty()
+            self.note_call_effect(f, ty)?
             self.set_ty(f, ty)
             self.c.set_field_index(f, FieldIndex { n: k })
             let place = prev.next(ty.storage_bytes())
@@ -688,6 +697,18 @@ impl Checker {
         }
         if k > 0 {
             self.c.places.set(k - 1, prev.ended())
+        }
+        Result::Ok(())
+    }
+
+    // Keeps field `f` of type `ty` as the contract's `Call` effect when it is one. A call does not
+    // name its effect, so a contract has at most one. Errors with N_DUPLICATE at a second one.
+    fn note_call_effect(mut self, _ f: NodeId, _ ty: Ty) -> Result<Diag, ()> {
+        if ty == TY_CALL {
+            if !self.call_effect.is_none() {
+                return Result::Err(self.at(N_DUPLICATE, f))
+            }
+            self.call_effect = f
         }
         Result::Ok(())
     }
@@ -1036,8 +1057,8 @@ impl Checker {
             t = self.block(i)?
         } else if k == NODE_ASSERT {
             let _ = self.want(n.cond(), TY_BOOL)?
-        } else if k == NODE_CALLER {
-            t = self.caller(i)?
+        } else if k == NODE_CALLER || k == NODE_SELF_ADDRESS {
+            t = self.ctx_address(i)?
         } else if k == NODE_ZERO_ADDRESS {
             t = TY_ADDRESS
         } else if k == NODE_INDEX {
@@ -1045,15 +1066,17 @@ impl Checker {
             t = self.entry(i, m)?
         } else if k == NODE_EMIT {
             self.emit(i)?
+        } else if k == NODE_MSG_CALL {
+            t = self.msg_call(i)?
         }
         self.set_ty(i, t)
         Result::Ok(t)
     }
 
-    // Returns the node that declares the name of NAME, CALLER or INDEX `i`, and records it as what
-    // `i` refers to. When that node is a FIELD, also records a read of the contract field.
-    // Errors as `resolve` does, and with E_NOT_IN_USES when the body's `uses` does not grant
-    // the field.
+    // Returns the node that declares the name of node `i`, as `resolve` finds it, and records it
+    // as what `i` refers to. When that node is a FIELD, also records a read of the contract
+    // field. Errors as `resolve` does, and with E_NOT_IN_USES when the body's `uses` does not
+    // grant the field.
     fn read(mut self, _ i: NodeId) -> Result<Diag, NodeId> {
         let d = self.resolve(i)?
         if self.node(d).kind == NODE_FIELD {
@@ -1071,9 +1094,9 @@ impl Checker {
         Result::Ok(self.c.ty(d))
     }
 
-    // Returns the type of CALLER `i`, which is always TY_ADDRESS. Errors as `effect` does, so
-    // `.caller()` needs a `Ctx` effect.
-    fn caller(mut self, _ i: NodeId) -> Result<Diag, Ty> {
+    // Returns the type of CALLER or SELF_ADDRESS `i`, which is always TY_ADDRESS. Errors as
+    // `effect` does, so `.caller()` and `.address()` need a `Ctx` effect.
+    fn ctx_address(mut self, _ i: NodeId) -> Result<Diag, Ty> {
         self.effect(i, TY_CTX)?
         Result::Ok(TY_ADDRESS)
     }
@@ -1100,9 +1123,9 @@ impl Checker {
         Result::Ok(t.map_value())
     }
 
-    // Checks EMIT `i` (SPEC §6, "Events"). Errors as `effect` and `event_args` do, with E_NOT_MUT
-    // when the body may not write the `Log` effect, with N_UNKNOWN_NAME or T_MISMATCH when the
-    // event's name is not an event, and with N_MISSING_FIELD when a field has no value.
+    // Checks EMIT `i` (SPEC §6, "Events"). Errors as `effect` and `labeled_args` do, with
+    // E_NOT_MUT when the body may not write the `Log` effect, and with N_UNKNOWN_NAME or
+    // T_MISMATCH when the event's name is not an event.
     fn emit(mut self, _ i: NodeId) -> Result<Diag, ()> {
         let n = self.node(i)
         let log = self.effect(i, TY_LOG)?
@@ -1115,18 +1138,57 @@ impl Checker {
             return Result::Err(self.at(T_MISMATCH, i))
         }
         self.set_res(i, e)
-        let fields = self.node(e).list()
-        self.event_args(n.list(), fields)?
-        if self.len(n.list()) != self.len(fields) {
-            return Result::Err(self.at(N_MISSING_FIELD, i))
-        }
-        Result::Ok(())
+        self.labeled_args(i, self.node(e).list())
     }
 
-    // Matches each ARG of list `args` to the event FIELD of list `fields` that its label names,
-    // and checks its value against the field's type. Errors with N_UNKNOWN_FIELD or N_DUPLICATE
-    // at a bad argument, and as `want` does.
-    fn event_args(mut self, _ args: ListId, _ fields: ListId) -> Result<Diag, ()> {
+    // Checks MSG_CALL `i` (SPEC §6, "Calls") and returns the variant's return type, or unit when
+    // it has none. Errors as `use_call_effect`, `want`, `called_variant` and `labeled_args` do.
+    fn msg_call(mut self, _ i: NodeId) -> Result<Diag, Ty> {
+        self.use_call_effect(i)?
+        self.want(self.node(i).target(), TY_ADDRESS)?
+        let v = self.called_variant(i)?
+        self.set_res(i, v)
+        self.labeled_args(i, self.node(v).list())?
+        Result::Ok(self.node(v).ty().or_unit())
+    }
+
+    // Checks that the body of MSG_CALL `i` may write the contract's `Call` effect. Errors with
+    // E_NOT_IN_USES when the body's `uses` does not grant it, and with E_NOT_MUT when it grants
+    // it without `mut`.
+    fn use_call_effect(mut self, _ i: NodeId) -> Result<Diag, ()> {
+        let call = self.call_effect
+        if call.is_none() {
+            return Result::Err(self.at(E_NOT_IN_USES, i))
+        }
+        self.access(call, self.body.grant.read, self.at(E_NOT_IN_USES, i))?
+        self.access(call, self.body.grant.write, self.at(E_NOT_MUT, i))
+    }
+
+    // Returns the VARIANT that `M::V` of MSG_CALL `i` names. Errors with N_UNKNOWN_NAME when no
+    // item is named `M`, with N_NOT_A_MSG when `M` is not a msg, and with N_UNKNOWN_VARIANT when
+    // `M` has no variant `V`.
+    fn called_variant(self, _ i: NodeId) -> Result<Diag, NodeId> {
+        let n = self.node(i)
+        let m = self.item(n.msg_name())
+        if m.is_none() {
+            return Result::Err(self.at(N_UNKNOWN_NAME, i))
+        }
+        if self.node(m).kind != NODE_MSG {
+            return Result::Err(self.at(N_NOT_A_MSG, i))
+        }
+        let v = self.find(self.node(m).list(), n.variant())
+        if v.is_none() {
+            return Result::Err(self.at(N_UNKNOWN_VARIANT, i))
+        }
+        Result::Ok(v)
+    }
+
+    // Matches each labeled ARG of EMIT or MSG_CALL `i` to the FIELD of list `fields` that its
+    // label names, and checks its value against the field's type. Errors with N_UNKNOWN_FIELD or
+    // N_DUPLICATE at a bad argument, as `want` does, and with N_MISSING_FIELD when a field has
+    // no value.
+    fn labeled_args(mut self, _ i: NodeId, _ fields: ListId) -> Result<Diag, ()> {
+        let args = self.node(i).list()
         var k: usize = 0
         while k < self.len(args) {
             let a = self.elem(args, k)
@@ -1145,6 +1207,9 @@ impl Checker {
             self.set_res(a, f)
             self.want(value, self.node(f).ty())?
             k += 1
+        }
+        if k != self.len(fields) {
+            return Result::Err(self.at(N_MISSING_FIELD, i))
         }
         Result::Ok(())
     }
@@ -1393,6 +1458,7 @@ pub fn check(_ ast: own Ast) -> CheckOutput {
         },
         warns: MemVec::new(),
         body: Body { locals: MemVec::new(), frame: 0, grant: NO_GRANT, ret: TY_UNIT, loops: 0 },
+        call_effect: NO_NODE,
     }
     if err.is_none() {
         match c.program() {

@@ -1,0 +1,23 @@
+// expect: N007 20:13
+// Only a variant of a msg can be called (SPEC §6, "Calls"), not an event.
+msg Other {
+    #[selector = 0x11]
+    Echo { a: u256 } -> u256,
+    #[selector = 0x12]
+    Store { a: u256 },
+}
+msg M {
+    #[selector = 1]
+    Go { t: Address } -> u256,
+}
+#[event]
+struct Ev {
+    a: u256,
+}
+contract C uses (call: mut Call) {
+    recv M {
+        Go { t } -> u256 uses (mut call) {
+            t.call(Ev::Echo { a: 1 })
+        }
+    }
+}

@@ -3,12 +3,15 @@
 
 DESIGN.md §10, "On a node", says why it exists. It deploys Fe0's build and Fe's build of each
 program of the corpus and of corpus/gen/ (tools/gen.py) on a local anvil node (node.py), and
-sends the program's call script. For each deployment and call, the two builds must agree on:
+sends the program's call script. Each build deploys its own build of the other programs that
+the call script deploys for the program to call. For each deployment and call, the two builds
+must agree on:
 
 - whether it succeeded;
 - the return data of a call, and the revert data of a failure;
 - the logs, by topics and data;
-- the storage slots it changed, and their new words.
+- the storage slots it changed in each contract that the call script named, and their new
+  words.
 
 Fe builds at -O 1 unless -O says otherwise. The exit status is 1 when any program differs.
 
@@ -17,10 +20,12 @@ usage: node_check.py [-O LEVEL] [PROGRAM.fe ...]
 import argparse
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 import cli_check
 import node
-from node import Build, Compiled, Deployment, Effects, Entry, Node
+from fegen import THIS
+from node import Build, Compiled, Effects, Entry, Node, Outcome, Session
 
 # The label of each field of node.Effects, in the fields' order.
 LABELS: tuple[str, ...] = ("success", "return or revert data", "logs", "storage writes")
@@ -38,31 +43,44 @@ def _show(value: object) -> str:
     return text if len(text) <= 400 else text[:397] + "..."
 
 
+class BuildTrace(NamedTuple):
+    """What one build did for each entry of a call script that it ran."""
+
+    outcomes: list[Outcome]
+    # Why the build stopped before the end of the script, or None when it ran to the end.
+    failure: str | None
+
+
+def trace(n: Node, compiled: Compiled, build: Build) -> BuildTrace:
+    """Runs the call script of `compiled` on `build` in Node.isolated, and returns what each
+    deployment and call did. When a deployment that the script needs fails, it stops there.
+    Errors as Node.call does."""
+    out: list[Outcome] = []
+    cases = compiled.program.diff.cases
+    with n.isolated():
+        s = Session(n, compiled, build)
+        try:
+            s.deploy_all(out.append)
+        except RuntimeError as e:
+            return BuildTrace(out, str(e))
+        for case in cases.deploys:
+            out.append(Outcome(Entry.line(case).label, s.deploy(case, THIS).effects))
+        for entry in compiled.calls():
+            out.append(Outcome(entry.label, s.call(entry.case).effects))
+    return BuildTrace(out, None)
+
+
 def check(n: Node, path: Path, reference: Build) -> list[str]:
     """Runs the call script of the program at `path` on Fe0's build and on `reference`, and
     returns a line for each difference. Errors as Node.call and node.Compiled.load do."""
     compiled = Compiled.load(path, (Build.FE0, reference))
     name = compiled.program.path.name
-    out: list[str] = []
-
-    def compare(where: str, effects: dict[Build, Effects]) -> None:
-        out.extend(f"{name} {where}: {d}"
-                   for d in differences(effects[Build.FE0], effects[reference]))
-
-    def compare_deployments(where: str, deployments: dict[Build, Deployment]) -> None:
-        compare(where, {b: d.effects for b, d in deployments.items()})
-
-    mains = compiled.deploy_main(n)
-    compare_deployments(f"{Entry.line(compiled.program.diff.cases.main).label} (main deployment)",
-                        mains)
-    try:
-        addresses = node.addresses(mains)
-    except RuntimeError as e:
-        return [*out, f"{name}: {e}"]
-    for case in compiled.program.diff.cases.deploys:
-        compare_deployments(Entry.line(case).label, compiled.deploy(n, case))
-    for entry in compiled.calls():
-        compare(entry.label, {b: n.call(a, entry.case).effects for b, a in addresses.items()})
+    ours = trace(n, compiled, Build.FE0)
+    theirs = trace(n, compiled, reference)
+    out = [f"{name} {a.label}: {d}" for a, b in zip(ours.outcomes, theirs.outcomes)
+           for d in differences(a.effects, b.effects)]
+    if failure := ours.failure or theirs.failure:
+        out.append(f"{name}: {failure}")
     return out
 
 

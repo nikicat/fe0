@@ -213,6 +213,10 @@ pub const W_EVENT: Spelling = Spelling { packed: 0x6576656e74 }
 pub const W_INDEXED: Spelling = Spelling { packed: 0x696e6465786564 }
 pub const W_LOG: Spelling = Spelling { packed: 0x4c6f67 }
 pub const W_EMIT: Spelling = Spelling { packed: 0x656d6974 }
+pub const W_CALL_EFFECT: Spelling = Spelling { packed: 0x43616c6c }
+pub const W_CALL: Spelling = Spelling { packed: 0x63616c6c }
+// The method `ctx.address()`, spelled as ABI_ADDRESS is.
+pub const W_ADDRESS: Spelling = Spelling { packed: 0x61646472657373 }
 
 // The Solidity names of Fe's value types, which an event's signature spells.
 pub const ABI_UINT256: Spelling = Spelling { packed: 0x75696e74323536 }

@@ -86,7 +86,8 @@ pub const P_RECORD_LITERAL: DiagCode = DiagCode { raw: 2012 }
 // Names
 
 // Two declarations of one name: items and contract fields, or within one list of parameters,
-// variants, fields, binds, arms or `recv` blocks. Also one event field given twice in an emit.
+// variants, fields, binds, arms or `recv` blocks. Also one field given twice in an emit or a call,
+// and a second `Call` effect in the contract.
 pub const N_DUPLICATE: DiagCode = DiagCode { raw: 3001 }
 pub const N_UNKNOWN_NAME: DiagCode = DiagCode { raw: 3002 }
 // A name used as a value when `Ty.is_value` says it is not one.
@@ -99,8 +100,8 @@ pub const N_FORWARD_CONST: DiagCode = DiagCode { raw: 3006 }
 pub const N_NOT_A_MSG: DiagCode = DiagCode { raw: 3007 }
 pub const N_UNKNOWN_VARIANT: DiagCode = DiagCode { raw: 3008 }
 pub const N_MISSING_ARM: DiagCode = DiagCode { raw: 3009 }
-// A bind that names no field of its variant, or an emitted value that names no field of its
-// event.
+// A bind that names no field of its variant, or an emitted or called value that names no field of
+// its event or variant (SPEC §6, "Events" and "Calls").
 pub const N_UNKNOWN_FIELD: DiagCode = DiagCode { raw: 3010 }
 pub const N_MISSING_BIND: DiagCode = DiagCode { raw: 3011 }
 // A missing, extra or wrong argument label (SPEC §5.4).
@@ -115,7 +116,8 @@ pub const N_DUPLICATE_SELECTOR: DiagCode = DiagCode { raw: 3016 }
 pub const N_UPPERCASE_LOCAL: DiagCode = DiagCode { raw: 3017 }
 // A local or parameter named like an item (SPEC §5.2).
 pub const N_SHADOWS_ITEM: DiagCode = DiagCode { raw: 3018 }
-// An emitted event without a value for one of its fields (SPEC §6, "Events").
+// An emitted event or a called variant without a value for one of its fields (SPEC §6, "Events"
+// and "Calls").
 pub const N_MISSING_FIELD: DiagCode = DiagCode { raw: 3019 }
 
 // Types

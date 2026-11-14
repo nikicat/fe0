@@ -1,0 +1,15 @@
+// expect: T001 12:13
+// fe: accepts
+// In Fe0, only a `Ctx` effect has `address()` (SPEC §6, "The caller"), although Fe accepts it
+// on a `Log` effect.
+msg M {
+    #[selector = 1]
+    Me -> Address,
+}
+contract C uses (log: mut Log) {
+    recv M {
+        Me {} -> Address uses (log) {
+            log.address()
+        }
+    }
+}

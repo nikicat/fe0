@@ -56,7 +56,7 @@ const MESSAGES: [Message; 57] = [
     Message { code: N_DUPLICATE_SELECTOR, text: "selector used twice" },
     Message { code: N_UPPERCASE_LOCAL, text: "local name starts uppercase" },
     Message { code: N_SHADOWS_ITEM, text: "name shadows an item" },
-    Message { code: N_MISSING_FIELD, text: "event misses a field" },
+    Message { code: N_MISSING_FIELD, text: "value missing for a field" },
     Message { code: T_MISMATCH, text: "type mismatch" },
     Message { code: T_ARG_COUNT, text: "wrong number of arguments" },
     Message { code: T_NO_VALUE, text: "expression has no value" },

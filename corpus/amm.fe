@@ -1,26 +1,47 @@
-// A constant-product pool of two tokens, shaped like a Uniswap v2 pair. It has no tokens:
-// amounts only change the reserves, and liquidity is only counted in total.
+// A constant-product pair of two tokens, shaped like a Uniswap v2 pair (ADR 0020). A trader or
+// a liquidity provider first transfers tokens to the pair with each token's own Transfer, then
+// calls the pair. The pair learns what it received from its balance of each token, less its
+// reserve. It has no LP token: liquidity is counted per provider and cannot be transferred.
 msg AmmMsg {
     #[selector = 1]
-    Swap { amount_in: u256, zero_for_one: bool } -> u256,
+    Swap { amount0_out: u256, amount1_out: u256, to: Address },
     #[selector = 2]
     Quote { amount_in: u256, zero_for_one: bool } -> u256,
     #[selector = 3]
-    AddLiquidity { amount0: u256, amount1: u256 } -> u256,
+    Mint { to: Address } -> u256,
     #[selector = 4]
-    RemoveLiquidity { liquidity: u256 } -> u256,
+    Burn { amount: u256, to: Address } -> u256,
     #[selector = 5]
-    Reserve0 -> u256,
+    Sync {},
     #[selector = 6]
-    Reserve1 -> u256,
+    Reserve0 -> u256,
     #[selector = 7]
+    Reserve1 -> u256,
+    #[selector = 8]
     Supply -> u256,
+    #[selector = 9]
+    LiquidityOf { who: Address } -> u256,
+}
+
+// The variants of corpus/token.fe that the pair calls, with the selectors of ERC20.
+msg Erc20 {
+    #[selector = 0xa9059cbb]
+    Transfer { to: Address, amount: u256 } -> bool,
+    #[selector = 0x70a08231]
+    BalanceOf { who: Address } -> u256,
+}
+
+// The reserves after each change, as a v2 pair's `Sync` event, with 256-bit reserves.
+#[event]
+struct Synced {
+    reserve0: u256,
+    reserve1: u256,
 }
 
 // The fee is 0.3%: a swap keeps FEE of every FEE_BASE parts of its input.
 const FEE: u256 = 997
 const FEE_BASE: u256 = 1000
-// The liquidity that the first deposit must exceed.
+// The liquidity that the first deposit locks for good, at the address 0.
 const MINIMUM_LIQUIDITY: u256 = 1000
 
 fn sqrt(_ x: u256) -> u256 {
@@ -46,44 +67,56 @@ fn amount_out(_ amount_in: u256, _ reserve_in: u256, _ reserve_out: u256) -> u25
     with_fee * reserve_out / (reserve_in * FEE_BASE + with_fee)
 }
 
-contract Amm {
+// Returns what a balance holds beyond `kept`, the part of the reserve left after a payout.
+fn received(_ balance: u256, _ kept: u256) -> u256 {
+    if balance > kept { balance - kept } else { 0 }
+}
+
+contract Amm uses (ctx: Ctx, call: mut Call, log: mut Log) {
+    mut token0: Address,
+    mut token1: Address,
     mut reserve0: u256,
     mut reserve1: u256,
     mut supply: u256,
+    mut lp: StorageMap<Address, u256>,
+    // Set while Swap, Mint, Burn or Sync runs, so that a token that calls back into the pair
+    // then fails, as a v2 pair's `lock` does.
+    mut locked: bool,
 
-    init(amount0: u256, amount1: u256) uses (mut reserve0, mut reserve1, mut supply) {
-        let liquidity = sqrt(amount0 * amount1)
-        assert!(liquidity > MINIMUM_LIQUIDITY, "too little liquidity")
-        reserve0 = amount0
-        reserve1 = amount1
-        supply = liquidity
+    init(t0: Address, t1: Address) uses (mut token0, mut token1) {
+        assert!(t0 != t1, "same token")
+        token0 = t0
+        token1 = t1
     }
 
     recv AmmMsg {
-        Swap { amount_in, zero_for_one } -> u256 uses (mut reserve0, mut reserve1) {
-            let r_in = if zero_for_one { reserve0 } else { reserve1 }
-            let r_out = if zero_for_one { reserve1 } else { reserve0 }
-            let out = amount_out(amount_in, r_in, r_out)
-            assert!(out > 0, "zero output")
-            let k = reserve0 * reserve1
-            if zero_for_one {
-                reserve0 += amount_in
-                reserve1 -= out
-            } else {
-                reserve1 += amount_in
-                reserve0 -= out
+        // Pays out first, then checks that what the trader sent makes up for it, after the fee.
+        Swap { amount0_out, amount1_out, to } uses (
+            ctx, mut call, mut log, token0, token1, mut reserve0, mut reserve1, mut locked,
+        ) {
+            assert!(!locked, "locked")
+            locked = true
+            assert!(amount0_out > 0 || amount1_out > 0, "zero output")
+            assert!(amount0_out < reserve0 && amount1_out < reserve1, "no liquidity")
+            if amount0_out > 0 {
+                assert!(token0.call(Erc20::Transfer { to, amount: amount0_out }), "transfer failed")
             }
-            // The pair's own check: with the fee taken out of the input, the product of the
-            // reserves did not fall.
-            var adjusted0 = reserve0 * FEE_BASE
-            var adjusted1 = reserve1 * FEE_BASE
-            if zero_for_one {
-                adjusted0 -= amount_in * (FEE_BASE - FEE)
-            } else {
-                adjusted1 -= amount_in * (FEE_BASE - FEE)
+            if amount1_out > 0 {
+                assert!(token1.call(Erc20::Transfer { to, amount: amount1_out }), "transfer failed")
             }
-            assert!(adjusted0 * adjusted1 >= k * FEE_BASE * FEE_BASE, "k")
-            out
+            let me = ctx.address()
+            let balance0 = token0.call(Erc20::BalanceOf { who: me })
+            let balance1 = token1.call(Erc20::BalanceOf { who: me })
+            let in0 = received(balance0, reserve0 - amount0_out)
+            let in1 = received(balance1, reserve1 - amount1_out)
+            assert!(in0 > 0 || in1 > 0, "zero input")
+            let adjusted0 = balance0 * FEE_BASE - in0 * (FEE_BASE - FEE)
+            let adjusted1 = balance1 * FEE_BASE - in1 * (FEE_BASE - FEE)
+            assert!(adjusted0 * adjusted1 >= reserve0 * reserve1 * FEE_BASE * FEE_BASE, "k")
+            reserve0 = balance0
+            reserve1 = balance1
+            log.emit(Synced { reserve0, reserve1 })
+            locked = false
         }
         Quote { amount_in, zero_for_one } -> u256 uses (reserve0, reserve1) {
             if zero_for_one {
@@ -92,23 +125,74 @@ contract Amm {
                 amount_out(amount_in, reserve1, reserve0)
             }
         }
-        AddLiquidity { amount0, amount1 } -> u256 uses (mut reserve0, mut reserve1, mut supply) {
-            let liquidity = min(amount0 * supply / reserve0, amount1 * supply / reserve1)
-            assert!(liquidity > 0, "zero liquidity")
-            reserve0 += amount0
-            reserve1 += amount1
-            supply += liquidity
-            liquidity
+        // Gives `to` liquidity for what the provider sent. The first deposit sets the price.
+        Mint { to } -> u256 uses (
+            ctx, mut call, mut log, token0, token1, mut reserve0, mut reserve1, mut supply,
+            mut lp, mut locked,
+        ) {
+            assert!(!locked, "locked")
+            locked = true
+            let me = ctx.address()
+            let balance0 = token0.call(Erc20::BalanceOf { who: me })
+            let balance1 = token1.call(Erc20::BalanceOf { who: me })
+            let amount0 = received(balance0, reserve0)
+            let amount1 = received(balance1, reserve1)
+            var minted: u256 = 0
+            if supply == 0 {
+                minted = sqrt(amount0 * amount1)
+                assert!(minted > MINIMUM_LIQUIDITY, "too little liquidity")
+                minted -= MINIMUM_LIQUIDITY
+                lp[Address::zero()] = MINIMUM_LIQUIDITY
+                supply = MINIMUM_LIQUIDITY
+            } else {
+                minted = min(amount0 * supply / reserve0, amount1 * supply / reserve1)
+            }
+            assert!(minted > 0, "zero liquidity")
+            lp[to] += minted
+            supply += minted
+            reserve0 = balance0
+            reserve1 = balance1
+            log.emit(Synced { reserve0, reserve1 })
+            locked = false
+            minted
         }
-        RemoveLiquidity { liquidity } -> u256 uses (mut reserve0, mut reserve1, mut supply) {
-            assert!(liquidity < supply, "too much liquidity")
-            let out0 = liquidity * reserve0 / supply
-            let out1 = liquidity * reserve1 / supply
+        // Burns `amount` of the caller's liquidity, and sends `to` its share of each token.
+        // Returns the share of token 0.
+        Burn { amount, to } -> u256 uses (
+            ctx, mut call, mut log, token0, token1, mut reserve0, mut reserve1, mut supply,
+            mut lp, mut locked,
+        ) {
+            assert!(!locked, "locked")
+            locked = true
+            let from = ctx.caller()
+            assert!(amount <= lp[from], "too much liquidity")
+            let me = ctx.address()
+            let balance0 = token0.call(Erc20::BalanceOf { who: me })
+            let balance1 = token1.call(Erc20::BalanceOf { who: me })
+            let out0 = amount * balance0 / supply
+            let out1 = amount * balance1 / supply
             assert!(out0 > 0 && out1 > 0, "zero output")
-            reserve0 -= out0
-            reserve1 -= out1
-            supply -= liquidity
+            lp[from] -= amount
+            supply -= amount
+            assert!(token0.call(Erc20::Transfer { to, amount: out0 }), "transfer failed")
+            assert!(token1.call(Erc20::Transfer { to, amount: out1 }), "transfer failed")
+            reserve0 = balance0 - out0
+            reserve1 = balance1 - out1
+            log.emit(Synced { reserve0, reserve1 })
+            locked = false
             out0
+        }
+        // Sets the reserves to the balances, which takes in tokens sent without a call.
+        Sync {} uses (
+            ctx, mut call, mut log, token0, token1, mut reserve0, mut reserve1, mut locked,
+        ) {
+            assert!(!locked, "locked")
+            locked = true
+            let me = ctx.address()
+            reserve0 = token0.call(Erc20::BalanceOf { who: me })
+            reserve1 = token1.call(Erc20::BalanceOf { who: me })
+            log.emit(Synced { reserve0, reserve1 })
+            locked = false
         }
         Reserve0 {} -> u256 uses (reserve0) {
             reserve0
@@ -118,6 +202,9 @@ contract Amm {
         }
         Supply {} -> u256 uses (supply) {
             supply
+        }
+        LiquidityOf { who } -> u256 uses (lp) {
+            lp[who]
         }
     }
 }

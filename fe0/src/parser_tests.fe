@@ -219,6 +219,8 @@ impl Printer {
             self.put("Ctx")
         } else if t == TY_LOG {
             self.put("mut Log")
+        } else if t == TY_CALL {
+            self.put("mut Call")
         } else if t.is_map() {
             self.put("StorageMap<")
             self.ty(t.map_key())
@@ -449,11 +451,24 @@ impl Printer {
             self.put("(caller ")
             self.sym(n.name())
             self.put(")")
+        } else if k == NODE_SELF_ADDRESS {
+            self.put("(address ")
+            self.sym(n.name())
+            self.put(")")
         } else if k == NODE_EMIT {
             self.put("(emit ")
             self.sym(n.name())
             self.put(" ")
             self.sym(n.event())
+            self.list(n.list())
+            self.put(")")
+        } else if k == NODE_MSG_CALL {
+            self.put("(msg-call ")
+            self.node(n.target())
+            self.put(" ")
+            self.sym(n.msg_name())
+            self.put("::")
+            self.sym(n.variant())
             self.list(n.list())
             self.put(")")
         } else if k == NODE_ZERO_ADDRESS {
@@ -629,13 +644,15 @@ fn unary_and_primaries() {
 
 #[test]
 fn fixed_forms() {
-    // `ctx.caller()` and `Address::zero()` are whole expressions (ADR 0017). Spaces may come
-    // between their tokens, except between the colons.
+    // `ctx.caller()`, `ctx.address()` and `Address::zero()` are whole expressions (ADR 0017,
+    // ADR 0020). Spaces may come between their tokens, except between the colons.
     tail_is(
         "fn f() { ctx.caller() == Address::zero() }",
         "(== (caller ctx) (zero))",
     )
     tail_is("fn f() { ctx . caller ( ) }", "(caller ctx)")
+    tail_is("fn f() { ctx.address() }", "(address ctx)")
+    rejects("fn f() { ctx.address }", P_EXPECTED_TOKEN, 21)
     tail_is("fn f() { Address :: zero() }", "(zero)")
     rejects("fn f() { Address: :zero() }", P_EXPECTED_TOKEN, 18)
     rejects("fn f() { ctx.origin() }", P_EXPECTED_TOKEN, 13)
@@ -736,6 +753,26 @@ fn events() {
     // The event is written as a literal in place.
     rejects("fn f() { log.emit(e) }", P_EXPECTED_TOKEN, 19)
     rejects("fn f() { log.emit(E {}, 1) }", P_EXPECTED_TOKEN, 22)
+}
+
+#[test]
+fn calls() {
+    // A contract may have a `Call` effect, declared `mut` (ADR 0020).
+    item_is(
+        "contract C uses (call: mut Call) {\n}",
+        "(contract C (call:mut Call) ? ())",
+    )
+    // `t.call(M::V { … })` is a whole expression. Its values are read as those of an emit.
+    tail_is(
+        "fn f() { t.call(M::V { a, b: x + 1 }) }",
+        "(msg-call t M::V (a b:(+ x 1)))",
+    )
+    tail_is("fn f() { t . call ( M::V {} ) }", "(msg-call t M::V ())")
+    // The colons of the path touch, the variant takes braces, and nothing follows them.
+    rejects("fn f() { t.call(M: :V {}) }", P_EXPECTED_TOKEN, 19)
+    rejects("fn f() { t.call(M::V) }", P_EXPECTED_TOKEN, 20)
+    rejects("fn f() { t.call(V {}) }", P_EXPECTED_TOKEN, 18)
+    rejects("fn f() { t.call(M::V {}, 1) }", P_EXPECTED_TOKEN, 23)
 }
 
 #[test]
@@ -855,8 +892,9 @@ fn errors() {
     assert!(
         parse_err("msg M { #[slector = 1] A {} }").code == P_EXPECTED_TOKEN,
     )
-    // A contract's effect must have type `Ctx`, or `Log` written with `mut`.
+    // A contract's effect must have type `Ctx`, or `Log` or `Call` written with `mut`.
     rejects("contract C uses (ctx: u256) {}", P_EXPECTED_TOKEN, 22)
+    rejects("contract C uses (call: Call) {}", P_EXPECTED_TOKEN, 23)
     rejects("contract C uses (ctx: mut Ctx) {}", P_EXPECTED_TOKEN, 26)
     rejects("contract C uses (log: Log) {}", P_EXPECTED_TOKEN, 22)
     rejects("contract C uses (ctx) {}", P_EXPECTED_TOKEN, 20)

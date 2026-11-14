@@ -1,0 +1,14 @@
+// expect: E116 11:13
+// A body that reads `ctx.address()` lists `ctx` in its `uses`, as for `ctx.caller()` (SPEC §6,
+// "The caller").
+msg M {
+    #[selector = 1]
+    Me -> Address,
+}
+contract C uses (ctx: Ctx) {
+    recv M {
+        Me {} -> Address {
+            ctx.address()
+        }
+    }
+}

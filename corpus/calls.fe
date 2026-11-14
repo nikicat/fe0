@@ -1,0 +1,159 @@
+// Calls to another contract (SPEC §6, "Calls"). The call script deploys corpus/callee.fe first
+// and passes its address to `init`. The node check compares the return and revert data of each
+// call, the logs, and the storage writes of both contracts.
+msg CallsMsg {
+    #[selector = 1]
+    Echo { a: u256 } -> u256,
+    #[selector = 2]
+    Store { a: u256 },
+    #[selector = 3]
+    Fail { a: u256 } -> u256,
+    #[selector = 4]
+    Overflow { a: u256 } -> u256,
+    #[selector = 5]
+    Order { x: u256, y: u256 } -> u256,
+    #[selector = 6]
+    Nested { a: u256 } -> u256,
+    #[selector = 7]
+    Undone { a: u256 },
+    #[selector = 8]
+    Reenter { a: u256 } -> u256,
+    #[selector = 0x31]
+    Last -> u256,
+    #[selector = 9]
+    NoValue { a: u256 } -> u256,
+    #[selector = 10]
+    AsBool { a: u256 } -> bool,
+    #[selector = 11]
+    AsAddress { a: u256 } -> Address,
+    #[selector = 12]
+    Ignored { a: u256 },
+    #[selector = 13]
+    Missing -> u256,
+    #[selector = 14]
+    ToAccount { to: Address, a: u256 } -> u256,
+    #[selector = 15]
+    UnitToAccount { to: Address, a: u256 },
+    #[selector = 16]
+    Twice { a: u256 } -> u256,
+}
+
+// corpus/callee.fe's msg, as this contract calls it.
+msg CalleeMsg {
+    #[selector = 0x11]
+    Echo { a: u256 } -> u256,
+    #[selector = 0x12]
+    Store { a: u256 },
+    #[selector = 0x14]
+    Fail { a: u256 } -> u256,
+    #[selector = 0x15]
+    Overflow { a: u256 } -> u256,
+    #[selector = 0x16]
+    Sub { a: u256, b: u256 } -> u256,
+    #[selector = 0x17]
+    CallBack -> u256,
+}
+
+// Views of the callee that disagree with it: Store returns no data, and the callee has no
+// variant 0x99, so its dispatcher reverts.
+msg AsValue {
+    #[selector = 0x12]
+    Store { a: u256 } -> u256,
+    #[selector = 0x99]
+    Missing -> u256,
+}
+
+// Echo's word read as another type, or ignored.
+msg AsBool {
+    #[selector = 0x11]
+    Echo { a: u256 } -> bool,
+}
+
+msg AsAddress {
+    #[selector = 0x11]
+    Echo { a: u256 } -> Address,
+}
+
+msg AsUnit {
+    #[selector = 0x11]
+    Echo { a: u256 },
+}
+
+contract Calls uses (call: mut Call) {
+    mut callee: Address,
+    mut last: u256,
+
+    // A call in `init`: the callee stores 100.
+    init(target: Address) uses (mut callee, mut call) {
+        callee = target
+        target.call(CalleeMsg::Store { a: 100 })
+    }
+
+    recv CallsMsg {
+        Echo { a } -> u256 uses (callee, mut call) {
+            callee.call(CalleeMsg::Echo { a })
+        }
+        Store { a } uses (callee, mut call) {
+            callee.call(CalleeMsg::Store { a })
+        }
+        Fail { a } -> u256 uses (callee, mut call) {
+            callee.call(CalleeMsg::Fail { a })
+        }
+        Overflow { a } -> u256 uses (callee, mut call) {
+            callee.call(CalleeMsg::Overflow { a })
+        }
+        // The values run in the order written, and go in the order of the fields.
+        Order { x, y } -> u256 uses (callee, mut call) {
+            callee.call(CalleeMsg::Sub { b: 10 / x, a: 10 - y })
+        }
+        Nested { a } -> u256 uses (callee, mut call) {
+            callee.call(CalleeMsg::Echo { a: callee.call(CalleeMsg::Echo { a: a + 1 }) * 2 })
+        }
+        // The callee stores and logs `a`, then this call fails when `a` is 5 or more, and that
+        // undoes them.
+        Undone { a } uses (callee, mut call) {
+            callee.call(CalleeMsg::Store { a })
+            assert!(a < 5, "undone")
+        }
+        // The callee calls Last while this call runs, and sees the `last` it stored.
+        Reenter { a } -> u256 uses (callee, mut last, mut call) {
+            last = a
+            callee.call(CalleeMsg::CallBack {})
+        }
+        Last {} -> u256 uses (last) {
+            last
+        }
+        NoValue { a } -> u256 uses (callee, mut call) {
+            callee.call(AsValue::Store { a })
+        }
+        AsBool { a } -> bool uses (callee, mut call) {
+            callee.call(AsBool::Echo { a })
+        }
+        AsAddress { a } -> Address uses (callee, mut call) {
+            callee.call(AsAddress::Echo { a })
+        }
+        Ignored { a } uses (callee, mut call) {
+            callee.call(AsUnit::Echo { a })
+        }
+        Missing {} -> u256 uses (callee, mut call) {
+            callee.call(AsValue::Missing {})
+        }
+        // An account has no code, so the call succeeds with no data.
+        ToAccount { to, a } -> u256 uses (mut call) {
+            to.call(CalleeMsg::Echo { a })
+        }
+        UnitToAccount { to, a } uses (mut call) {
+            to.call(CalleeMsg::Store { a })
+        }
+        Twice { a } -> u256 uses (callee, mut call) {
+            let x = callee.call(CalleeMsg::Echo { a })
+            var sum = x
+            var i: u256 = 0
+            while i < 3 {
+                sum += callee.call(CalleeMsg::Echo { a: i })
+                i += 1
+            }
+            sum
+        }
+    }
+}

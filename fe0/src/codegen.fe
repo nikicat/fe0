@@ -102,10 +102,6 @@ impl PanicCode {
     fn word(self) -> u256 {
         self.c
     }
-
-    fn is_none(self) -> bool {
-        self.c == 0
-    }
 }
 
 // The memory layout (DESIGN.md §6.1). The table there says what each region holds.
@@ -126,27 +122,44 @@ const ERROR_SELECTOR: Selector = Selector { v: 0x08c379a0 }
 // The length of a selector, in calldata and in revert data.
 const SELECTOR_BYTES: Size = Size { n: 4 }
 
+// The bytes of a word before a selector that is stored in the word's low bytes.
+const SELECTOR_PAD: Size = Size { n: WORD.n - SELECTOR_BYTES.n }
+
 // The start of calldata, where the selector is.
 const CALLDATA_START: CalldataOff = CalldataOff { o: 0 }
 
 // The number of bits that moves a selector between the top of a word and its low bytes.
-const SELECTOR_SHIFT_BITS: u256 = 224
+const SELECTOR_SHIFT_BITS: u256 = SELECTOR_PAD.n * 8
 
-// A shared block that reverts with Panic code `panic`, or with empty data when `panic` is
-// NO_PANIC.
-struct Stub { index: usize, panic: PanicCode }
+// What a stub reverts with.
+enum StubRevert {
+    Empty,
+    Panic(PanicCode),
+    // The return data of the external call that failed.
+    ReturnData,
+}
+
+impl Copy for StubRevert {}
+
+// A shared block that reverts. `index` is its slot in `Gen.stubs`.
+struct Stub { index: usize, revert: StubRevert }
 
 impl Copy for Stub {}
 
-const NO_PANIC: PanicCode = PanicCode { c: 0 }
-
-const REVERT_EMPTY: Stub = Stub { index: 0, panic: NO_PANIC }
-const PANIC_ASSERT: Stub = Stub { index: 1, panic: PanicCode { c: 0x01 } }
-const PANIC_OVERFLOW: Stub = Stub { index: 2, panic: PanicCode { c: 0x11 } }
-const PANIC_DIV_ZERO: Stub = Stub { index: 3, panic: PanicCode { c: 0x12 } }
+const REVERT_EMPTY: Stub = Stub { index: 0, revert: StubRevert::Empty }
+const PANIC_ASSERT: Stub = Stub { index: 1, revert: StubRevert::Panic(PanicCode { c: 0x01 }) }
+const PANIC_OVERFLOW: Stub = Stub { index: 2, revert: StubRevert::Panic(PanicCode { c: 0x11 }) }
+const PANIC_DIV_ZERO: Stub = Stub { index: 3, revert: StubRevert::Panic(PanicCode { c: 0x12 }) }
+const REVERT_RETURNDATA: Stub = Stub { index: 4, revert: StubRevert::ReturnData }
 
 // Every stub, at its index.
-const ALL_STUBS: [Stub; 4] = [REVERT_EMPTY, PANIC_ASSERT, PANIC_OVERFLOW, PANIC_DIV_ZERO]
+const ALL_STUBS: [Stub; 5] = [
+    REVERT_EMPTY,
+    PANIC_ASSERT,
+    PANIC_OVERFLOW,
+    PANIC_DIV_ZERO,
+    REVERT_RETURNDATA,
+]
 
 // The deploy code of a program: the initcode, then the runtime code (DESIGN.md §6.5). On error,
 // `err` holds the first error and `code` is empty.
@@ -329,13 +342,15 @@ impl Gen {
         let slot = self.stubs[s.index]
         if slot.is_empty() { return }
         self.asm.bind(slot.label())
-        if !s.panic.is_none() {
-            self.selector_at_scratch(PANIC_SELECTOR)
-            self.push(s.panic.word())
-            self.store_at(revert_word(0))
-            self.revert(selector_and_words(1))
-        } else {
-            self.revert(bytes(0))
+        match s.revert {
+            StubRevert::Empty => self.revert(bytes(0)),
+            StubRevert::Panic(code) => {
+                self.selector_at_scratch(PANIC_SELECTOR)
+                self.push(code.word())
+                self.store_at(revert_word(0))
+                self.revert(selector_and_words(1))
+            },
+            StubRevert::ReturnData => self.revert_returndata(),
         }
     }
 
@@ -350,6 +365,17 @@ impl Gen {
     // Reverts with the first `size` bytes at SCRATCH.
     fn revert(mut self, _ size: Size) {
         self.on_scratch(OP_REVERT, size)
+    }
+
+    // Reverts with the return data of the last external call, copied to SCRATCH.
+    fn revert_returndata(mut self) {
+        self.op(OP_RETURNDATASIZE)
+        self.push(0)
+        self.push(SCRATCH.word())
+        self.op(OP_RETURNDATACOPY)
+        self.op(OP_RETURNDATASIZE)
+        self.push(SCRATCH.word())
+        self.op(OP_REVERT)
     }
 
     // Returns the first `size` bytes at SCRATCH.
@@ -721,6 +747,8 @@ impl Gen {
             return self.block(i)
         } else if k == NODE_CALLER {
             self.op(OP_CALLER)
+        } else if k == NODE_SELF_ADDRESS {
+            self.op(OP_ADDRESS)
         } else if k == NODE_ZERO_ADDRESS {
             self.push(0)
         } else if k == NODE_INDEX {
@@ -730,6 +758,8 @@ impl Gen {
         } else if k == NODE_EMIT {
             self.emit(i)
             return LEAVES_NOTHING
+        } else if k == NODE_MSG_CALL {
+            return self.msg_call(i)
         } else {
             // NODE_ASSERT, the only other kind of expression.
             self.assert(i)
@@ -851,16 +881,22 @@ impl Gen {
         self.op(OP_POP)
     }
 
+    // Pushes the value of each field init or argument of `l`, in order.
+    fn values(mut self, _ l: ListId) {
+        var k: usize = 0
+        while k < self.len(l) {
+            self.value(self.node(self.elem(l, k)).value())
+            k += 1
+        }
+    }
+
     // Emits CALL `i`, by the calling convention of DESIGN.md §6.2.
     fn call(mut self, _ i: NodeId) -> Leaves {
         let f = self.c.resolved(i)
         let args = self.node(i).list()
         let params = self.node(f).list()
-        var k: usize = 0
-        while k < self.len(args) {
-            self.value(self.node(self.elem(args, k)).value())
-            k += 1
-        }
+        self.values(args)
+        var k = self.len(args)
         // The callee's frame starts where this body's ends.
         let next = self.body.frame
         while k > 0 {
@@ -1063,16 +1099,11 @@ impl Gen {
     }
 
     // Emits `log.emit(E { … })` as one LOGn (SPEC §6, "Events").
-    // smell: the push and store loops repeat those of `call`. Kept: shared helpers made
-    // CompileProbe 39 to 97 bytes larger (Nov 12). Fix when Fe inlines small methods.
     fn emit(mut self, _ i: NodeId) {
         let e = self.c.resolved(i)
         let args = self.node(i).list()
-        var k: usize = 0
-        while k < self.len(args) {
-            self.value(self.node(self.elem(args, k)).value())
-            k += 1
-        }
+        self.values(args)
+        var k = self.len(args)
         // Store the values only after all of them are evaluated, because a call in a later value
         // uses the memory past the frame.
         while k > 0 {
@@ -1101,7 +1132,79 @@ impl Gen {
 
     // The offset in the frame of word `w` of the log data, which starts where the frame ends.
     fn log_offset(self, _ w: LogWord) -> FrameOff {
-        FrameOff { o: 0 }.past(self.body.frame.plus(words(w.number())))
+        self.past_frame(words(w.number()))
+    }
+
+    // The offset `size` bytes past the end of the current frame.
+    fn past_frame(self, _ size: Size) -> FrameOff {
+        FrameOff { o: 0 }.past(self.body.frame.plus(size))
+    }
+
+    // The offset in the frame of the calldata of an external call, which is past the frame
+    // (DESIGN.md §6.3).
+    fn call_data(self) -> FrameOff {
+        self.past_frame(SELECTOR_PAD)
+    }
+
+    // The offset in the frame of argument `k` of the calldata of an external call.
+    fn call_arg_offset(self, _ k: usize) -> FrameOff {
+        self.call_data().past(selector_and_words(k))
+    }
+
+    // Emits `a.call(M::V { … })` as one CALL (SPEC §6, "Calls"). The calldata layout is in
+    // DESIGN.md §6.3.
+    fn msg_call(mut self, _ i: NodeId) -> Leaves {
+        let n = self.node(i)
+        let v = self.c.resolved(i)
+        let fields = self.node(v).list()
+        let args = n.list()
+        // The order of evaluation is in SPEC §4.
+        self.value(n.target())
+        self.values(args)
+        var k = self.len(args)
+        while k > 0 {
+            k -= 1
+            let f = self.index_of(fields, self.c.resolved(self.elem(args, k)))
+            self.fp_plus(self.call_arg_offset(f))
+            self.op(OP_MSTORE)
+        }
+        self.body.depth -= self.len(args)
+        // The selector goes in the low bytes of the word where the frame ends.
+        self.push(self.c.ast.word_value(v))
+        self.fp_plus(self.past_frame(bytes(0)))
+        self.op(OP_MSTORE)
+        // CALL takes the gas on top, then the address, the value, the calldata's offset and size,
+        // and the offset and size of the return data to copy, which is none.
+        // a -> 0 0 size offset 0 a
+        self.push(0)
+        self.push(selector_and_words(self.len(fields)).word())
+        self.fp_plus(self.call_data())
+        self.push(0)
+        self.push(0)
+        self.op(OP_SWAP5)
+        self.op(OP_GAS)
+        self.op(OP_CALL)
+        self.op(OP_ISZERO)
+        self.asm.jumpi(self.stub(REVERT_RETURNDATA))
+        self.body.depth -= 1
+        let ty = self.c.ty(i)
+        if ty == TY_UNIT {
+            return LEAVES_NOTHING
+        }
+        // Decodes the return value as SPEC §6, "Calls" says.
+        self.push(WORD.word())
+        self.op(OP_RETURNDATASIZE)
+        self.op(OP_LT)
+        self.asm.jumpi(self.stub(REVERT_EMPTY))
+        self.push(WORD.word())
+        self.push(0)
+        self.push(SCRATCH.word())
+        self.op(OP_RETURNDATACOPY)
+        self.push(SCRATCH.word())
+        self.op(OP_MLOAD)
+        self.body.depth += 1
+        self.validate(ty)
+        LEAVES_WORD
     }
 
     // `assert!(c)` reverts with Panic(0x01), and `assert!(c, "m")` with Error("m") (SPEC §4).

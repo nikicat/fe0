@@ -1,24 +1,51 @@
-init 1000*10**18 2000*10**18
-deploy 1 1                       # too little liquidity
-deploy 1                         # too short
-Reserve0
-Reserve1
+# Runs only on a node (tools/embed.py), since it deploys two tokens. Account 0 deploys them, so it
+# holds both supplies. It gives account 1 some of each, and is the first liquidity provider.
+deploy token.fe as t0 10**24
+deploy token.fe as t1 10**24
+init @t0 @t1
+deploy @t0 @t0                   # one token twice
+deploy @t0                       # too short
+@t0 Transfer account1 10**21
+@t1 Transfer account1 10**21
+Swap 1 0 account1                # no liquidity yet
+# The first deposit: 1000 of token 0 and 2000 of token 1.
+@t0 Transfer @this 1000*10**18
+@t1 Transfer @this 2000*10**18
+Mint account0
 Supply
+LiquidityOf account0
+LiquidityOf 0
+Mint account0                    # nothing sent
+# Account 1 swaps 1 token 0 for what Quote says.
 Quote 10**18 true
-Swap 10**18 true
-Swap 10**18 false
-Swap 3*10**18 true
-Swap 2*10**18 false
-Swap 5*10**20 true
-Swap 7*10**19 false
-Quote 1 false
-Swap 1 false
-Swap 0 true                      # zero input
-Swap MAX true                    # overflows
-AddLiquidity 10**18 2*10**18
-AddLiquidity 0 0                 # zero liquidity
-RemoveLiquidity 10**18
-RemoveLiquidity MAX              # too much liquidity
+@t0 Transfer @this 10**18 from=1
+Swap 0 1992013962079806433 account1 from=1   # one more than the quote: k
+Swap 0 1992013962079806432 account1 from=1
+@t1 BalanceOf account1
+Swap 0 1 account1 from=1         # nothing sent
+# And 2 token 1 back for token 0.
+Quote 2*10**18 false
+@t1 Transfer @this 2*10**18 from=1
+Swap 997996008971040990 0 account1 from=1
 Reserve0
 Reserve1
+Swap 0 0 account1                # zero output
+Swap 0 MAX account1              # no liquidity
+# Account 1 adds liquidity, then burns some of it.
+@t0 Transfer @this 10*10**18 from=1
+@t1 Transfer @this 20*10**18 from=1
+Mint account1 from=1
+LiquidityOf account1
+Burn 10**18 account1 from=1
+Burn 10**30 account1 from=1      # too much liquidity
+Burn 1 account1 from=2           # account 2 has none
+@t0 BalanceOf account1
+@t1 BalanceOf account1
+# A transfer without a call, which Sync takes in.
+@t0 Transfer @this 5 from=1
+Reserve0
+Sync
+Reserve0
+@t0 BalanceOf @this
+@t1 BalanceOf @this
 Supply

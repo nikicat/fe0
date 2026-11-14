@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import NamedTuple, NewType, Self
+from typing import ClassVar, NamedTuple, NewType, Self
 
 # The text of a Fe program or module.
 FeSource = NewType("FeSource", str)
@@ -56,10 +56,44 @@ class Account:
     index: AccountIndex
 
 
+# The name of a deployment in a call script, as in `@t0`. THIS names the main deployment.
+DeploymentName = NewType("DeploymentName", str)
+# The form of a DeploymentName: a lowercase identifier.
+DEPLOYMENT_NAME = r"[a-z][a-z0-9_]*"
+# The name of the program's own main deployment, which no other deployment may take.
+THIS: DeploymentName = DeploymentName("this")
+
+
+@dataclass(frozen=True)
+class Named:
+    """The address of a deployment that the call script named, as an argument such as `@t0`.
+
+    Only a node resolves it (tools/node.py), to the address that the same build's deployment
+    created.
+    """
+
+    # The start of the token, before the name.
+    SIGIL: ClassVar[str] = "@"
+
+    name: DeploymentName
+
+    @classmethod
+    def parse(cls, token: str) -> Self | None:
+        """Returns the deployment that `token` names, or None when `token` is no `@name`."""
+        m = re.fullmatch(rf"{re.escape(cls.SIGIL)}({DEPLOYMENT_NAME})", token)
+        return cls(DeploymentName(m[1])) if m else None
+
+    def __str__(self) -> str:
+        """Returns the token, such as `@t0`."""
+        return f"{self.SIGIL}{self.name}"
+
+
+# An argument that names an address. The place that sends it resolves it (AddressWord).
+AddressArg = Account | Named
 # An argument of a deployment or call, which takes one ABI word.
-Arg = Word | Account
-# The address of the node account of an index, as an ABI word.
-AccountWord = Callable[[AccountIndex], Word]
+Arg = Word | AddressArg
+# The address that an AddressArg names, as an ABI word.
+AddressWord = Callable[[AddressArg], Word]
 
 
 class Selector(int):
@@ -161,6 +195,9 @@ class Payload(ABC):
     """Bytes sent to a contract, together with a value in wei. It mirrors `difftest::Payload` in
     fe0/src/difftest.fe."""
 
+    # The arguments that take one ABI word each.
+    words: Sequence[Arg] = ()
+
     def __init__(self, value: Wei) -> None:
         self.value = value
 
@@ -169,8 +206,9 @@ class Payload(ABC):
         """Returns the method calls that append the bytes."""
 
     @abstractmethod
-    def encode(self, address: AccountWord) -> bytes:
-        """Returns the bytes, as the pushes append them, with `address` giving each Account."""
+    def encode(self, address: AddressWord) -> bytes:
+        """Returns the bytes, as the pushes append them, with `address` giving each
+        AddressArg."""
 
     def build(self, var: FeName) -> list[FeLine]:
         """Returns the Fe statements that declare `var` as a `difftest::Payload` and fill it with
@@ -185,7 +223,10 @@ EXTRA_BYTE: int = 0x99
 
 
 def push_arg(a: Arg) -> Push:
-    """Returns the Payload method call that appends the argument `a` as one ABI word."""
+    """Returns the Payload method call that appends the argument `a` as one ABI word. Errors with
+    ValueError when `a` is Named."""
+    if isinstance(a, Named):
+        raise ValueError(f"{a} names a deployment, which only a node makes")
     return Push("push_sender()") if isinstance(a, Account) else Push(f"push_word({a:#x})")
 
 
@@ -195,10 +236,10 @@ def push_words(words: Sequence[Arg], extra: ExtraBytes) -> list[Push]:
     return [*map(push_arg, words)] + [Push(f"push({EXTRA_BYTE:#x})")] * extra
 
 
-def encode_words(words: Sequence[Arg], extra: ExtraBytes, address: AccountWord) -> bytes:
+def encode_words(words: Sequence[Arg], extra: ExtraBytes, address: AddressWord) -> bytes:
     """Returns the ABI `words`, then `extra` bytes of EXTRA_BYTE, as push_words appends them.
-    `address` gives the word of each Account."""
-    resolved = (address(a.index) if isinstance(a, Account) else a for a in words)
+    `address` gives the word of each AddressArg."""
+    resolved = (address(a) if isinstance(a, AddressArg) else a for a in words)
     return b"".join(w.to_bytes(32, "big") for w in resolved) + bytes([EXTRA_BYTE]) * extra
 
 
@@ -213,7 +254,7 @@ class Deploy(Payload):
     def pushes(self) -> list[Push]:
         return push_words(self.words, self.extra)
 
-    def encode(self, address: AccountWord) -> bytes:
+    def encode(self, address: AddressWord) -> bytes:
         return encode_words(self.words, self.extra, address)
 
 
@@ -228,7 +269,7 @@ class Call(Payload):
     def pushes(self) -> list[Push]:
         return [Push(f"push_selector({self.sel:#x})")] + push_words(self.words, self.extra)
 
-    def encode(self, address: AccountWord) -> bytes:
+    def encode(self, address: AddressWord) -> bytes:
         return self.sel.to_bytes(4, "big") + encode_words(self.words, self.extra, address)
 
 
@@ -242,7 +283,7 @@ class RawCall(Payload):
     def pushes(self) -> list[Push]:
         return [Push(f"push({b})") for b in self.data]
 
-    def encode(self, address: AccountWord) -> bytes:
+    def encode(self, address: AddressWord) -> bytes:
         return bytes(self.data)
 
 
@@ -313,11 +354,23 @@ class Case(NamedTuple):
     # The account that sends the case. It applies only on a node (tools/node.py), as DESIGN.md
     # §10, "On a node", says.
     sender: AccountIndex = AccountIndex(0)
+    # The deployment that a call goes to.
+    to: DeploymentName = THIS
 
     @property
     def code(self) -> FeExpr:
         """Returns the Fe expression of this case's `difftest::CaseCode`."""
         return Kind.CASE.case_code(self.number)
+
+
+class Callee(NamedTuple):
+    """A deployment of another program, which the program under test may call."""
+
+    name: DeploymentName
+    # The program, a .fe file beside the program under test.
+    program: Path
+    # Its constructor arguments, value and sender.
+    case: Case
 
 
 class Cases(NamedTuple):
@@ -327,8 +380,19 @@ class Cases(NamedTuple):
     main: Case
     # Other deployments, checked only for whether they create a contract.
     deploys: Sequence[Case]
-    # The calls sent to the main deployment, before those of DISPATCH.
+    # The calls, in script order, before those of DISPATCH. Each goes to the deployment that its
+    # `to` names.
     calls: Sequence[Case]
+    # The deployments of other programs, made first, in order.
+    callees: Sequence[Callee] = ()
+
+    @property
+    def node_only(self) -> bool:
+        """Whether only a node can run the test, since it deploys another program or names a
+        deployment (DESIGN.md §10, "On a node")."""
+        cases = [self.main, *self.deploys, *self.calls]
+        return bool(self.callees) or any(
+            c.to != THIS or any(isinstance(a, Named) for a in c.payload.words) for c in cases)
 
 
 # The wei that the test of one program spends at most on its deployments and calls.

@@ -42,3 +42,30 @@ Fe0 adds this one form:
   LP-token transfers.
 - The differential harness on a node deploys the callees too. A call script needs a way to pass
   one deployment's address to another, such as `deploy as token` and `@token` in arguments.
+
+## Update (Nov 14)
+- SPEC §6, "Calls" states the rules this work settled, and SPEC §4 the order of evaluation.
+  Fe's behaviour was probed on anvil against hand-written contracts that echo their calldata or
+  revert with it, and Fe0's build matched Fe's on all 33 probe calls. `corpus/calls.fe` keeps
+  the probe in the corpus, against `corpus/callee.fe`.
+- **The effect is found by its type.** `a.call(…)` does not name its effect, as in Fe. So
+  Fe0 allows one `Call` effect per contract, and a body must grant it with `mut`. Fe is looser
+  on both (SPEC §6, "Calls"), and the subset rule allows Fe0 to be stricter.
+- **`ctx.address()`.** A pool asks each token for its own balance, as a Uniswap v2 pair does
+  with `balanceOf(address(this))`. `corpus/token.fe` has no allowances, and Fe0's maps take one
+  key, so a pool cannot pull tokens with `transferFrom`. So Fe0 also adds `ctx.address()`, the
+  `ADDRESS` instruction, with the rules of `ctx.caller()`.
+- `corpus/amm.fe` is now a v2-style pair of two `corpus/token.fe` deployments. A trader sends
+  tokens to the pair with the token's own `Transfer`, then calls `Swap`, which pays out first
+  and then checks the balances against the reserves after the fee. `Mint` and `Burn` count
+  liquidity per provider, without an LP token. A `locked` flag guards every arm that calls a
+  token against a token that calls back.
+- **Call scripts** gain `deploy token.fe as t0 ARGS`, `@t0` as an argument and `@t0 Transfer …`
+  for a call to that deployment (`tools/embed.py`). Such a program runs only on a node, where
+  both builds' contracts get the same addresses (DESIGN.md §10, "On a node").
+- **Size, at `-O s`:** Parser goes from 22,072 to 22,694 bytes (+622), Checker from 21,411 to
+  22,294 (+883) and Back from 17,049 to 17,976 (+927). Of the parser's bytes,
+  `ctx.address()` costs 52, since it shares one node constructor with `ctx.caller()`. A first
+  version with its own constructor cost 412. The contracts on Arbitrum One are the build
+  before this change, so a program that calls another contract compiles only after a
+  redeployment.

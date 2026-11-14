@@ -96,9 +96,9 @@ fn reserved_words_are_errors() {
 #[test]
 fn word_spellings_round_trip() {
     let l = lex_text(
-        "selector Ctx caller zero StorageMap event indexed Log emit uint256 bool address",
+        "selector Ctx caller zero StorageMap event indexed Log emit Call call address uint256 bool address",
     )
-    let words: [Spelling; 12] = [
+    let words: [Spelling; 15] = [
         W_SELECTOR,
         W_CTX,
         W_CALLER,
@@ -108,6 +108,9 @@ fn word_spellings_round_trip() {
         W_INDEXED,
         W_LOG,
         W_EMIT,
+        W_CALL_EFFECT,
+        W_CALL,
+        W_ADDRESS,
         ABI_UINT256,
         ABI_BOOL,
         ABI_ADDRESS,

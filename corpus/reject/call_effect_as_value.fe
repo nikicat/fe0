@@ -1,0 +1,20 @@
+// expect: N003 16:21
+// A `Call` effect is not a value (SPEC §6, "Calls").
+msg Other {
+    #[selector = 0x11]
+    Echo { a: u256 } -> u256,
+    #[selector = 0x12]
+    Store { a: u256 },
+}
+msg M {
+    #[selector = 1]
+    Go { t: Address } -> u256,
+}
+contract C uses (call: mut Call) {
+    recv M {
+        Go { t } -> u256 uses (mut call) {
+            let c = call
+            0
+        }
+    }
+}
