@@ -61,3 +61,9 @@ the subset rule's promise of the same behaviour.
   allows" is no longer a gain under the subset rule. It is a known difference, stated in SPEC.
 - Step 1 changes how every local is read, so it needs the whole differential suite and a new
   size measurement of the code generation contract.
+
+## Update (Nov 14)
+Fe0 now packs storage fields as Fe does. That made `voting.fe`, `no_init.fe` and `owner.fe`
+cheaper: they had paid for extra `SSTORE`s. The whole corpus is now 1.75 against `-O 1` and
+1.71 against `-O s`. The other rows of the table hold.
+

@@ -40,9 +40,12 @@ out/            written by the tools, not committed
   chain/        fe0-chain's contracts, built by tools/chain_check.py
 tools/          embed.py, fegen.py (shared by the generators), gen.py (random programs),
                 cli_check.py (the native CLI against the EVM, §10), chain_check.py (the
-                compiler on chain against the CLI, §8), corpus_scan.py,
-                gen_codegen_tests.py and gen_check_tests.py (the unit-test generators),
-                spikes.sh (the spike probes)
+                compiler on chain against the CLI, §8), deploy.py (deploys the compiler on
+                chain and runs its demo), compile_on_chain.py (compiles a program with the
+                deployed compiler), corpus_scan.py, gen_codegen_tests.py and
+                gen_check_tests.py (the unit-test generators), spikes.sh (the spike probes)
+deployments/    the addresses of the deployed compiler, by chain id
+docs/DEMO.md    the demo of the compiler on Arbitrum One
 ```
 
 The `fe0` library is shared by every target. Only the edge ingots know where bytes come from.
