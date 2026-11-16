@@ -360,13 +360,14 @@ impl Printer {
             }
             self.sym(n.name())
         } else if k == NODE_LET {
-            if n.is_var() {
+            let l = n.as_let()
+            if l.is_var() {
                 self.put("(var ")
             } else {
                 self.put("(let ")
             }
-            self.typed(n.name(), n.ty())
-            self.opt(n.value())
+            self.typed(l.name(), l.ty())
+            self.opt(l.value())
             self.put(")")
         } else if k == NODE_WHILE {
             self.put("(while")

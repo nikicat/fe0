@@ -2,8 +2,10 @@
 //
 // A node is built by its kind's `Node::new_` constructor, which kinds with the same slots share,
 // and read through the accessors after `impl Node`. The comment on each kind below names the
-// accessors that apply to it. A list is read with `Ast.list_len` and `Ast.list_at`. `ty()` is
-// the type written in the source, or TY_NONE when none is.
+// accessors that apply to it. A list is read with `Ast.list_len` and `Ast.list_at`.
+//
+// A kind with a typed view, such as LET, is read only through it. The view keeps the flat node
+// storage of ADR 0005 and offers only that kind's accessors (task T4qdcy).
 
 use ingot::diag::Diag
 use ingot::lexer::{
@@ -91,7 +93,7 @@ pub const NODE_STR: Kind = Kind { code: 13 }
 pub const NODE_EVENT: Kind = Kind { code: 14 }
 
 // Statements.
-// let or var: name, ty, value, is_var.
+// let or var. One kind serves both (ADR 0013). Read it through `as_let()`.
 pub const NODE_LET: Kind = Kind { code: 20 }
 // while: cond, body BLOCK.
 pub const NODE_WHILE: Kind = Kind { code: 21 }
@@ -712,14 +714,38 @@ impl Node {
     pub fn is_mut(self) -> bool {
         self.flag_set()
     }
-    pub fn is_var(self) -> bool {
-        self.flag_set()
-    }
     pub fn is_true(self) -> bool {
         self.flag_set()
     }
     pub fn is_indexed(self) -> bool {
         self.flag_set()
+    }
+
+    // The caller must know that the node is a LET. A kind check would cost bytes in every phase
+    // contract (task T4qdcy).
+    pub fn as_let(self) -> LetNode {
+        LetNode { n: self }
+    }
+}
+
+// The typed view of a LET node. It changes neither the node storage nor the wire format, and it
+// cost 0 bytes in Parser, Checker and Back (task T4qdcy).
+pub struct LetNode { n: Node }
+
+impl Copy for LetNode {}
+
+impl LetNode {
+    pub fn name(self) -> Sym {
+        self.n.name()
+    }
+    pub fn ty(self) -> Ty {
+        self.n.ty()
+    }
+    pub fn value(self) -> NodeId {
+        self.n.value()
+    }
+    pub fn is_var(self) -> bool {
+        is_flag(self.n.d)
     }
 }
 

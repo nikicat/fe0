@@ -1048,7 +1048,7 @@ impl Gen {
         let n = self.node(i)
         let k = n.kind
         if k == NODE_LET {
-            self.value(n.value())
+            self.value(n.as_let().value())
             self.store(i)
         } else if k == NODE_WHILE {
             self.while_stmt(i)

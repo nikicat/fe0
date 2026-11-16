@@ -1381,7 +1381,7 @@ impl Checker {
 
     // Checks LET `i` and declares its local.
     fn let_stmt(mut self, _ i: NodeId) -> Result<Diag, ()> {
-        let n = self.node(i)
+        let n = self.node(i).as_let()
         var t = self.value(n.value())?
         if n.ty() != TY_NONE {
             if !t.fits(n.ty()) {
@@ -1421,7 +1421,7 @@ impl Checker {
         }
         if target.kind == NODE_FIELD && t.is_value() {
             self.access(d, self.body.grant.write, self.at(E_NOT_MUT, i))?
-        } else if target.kind != NODE_LET || !target.is_var() {
+        } else if target.kind != NODE_LET || !target.as_let().is_var() {
             // An effect or a whole map is no more assignable than a `let`, even when `uses`
             // names it `mut`.
             return Result::Err(self.at(N_ASSIGN_IMMUTABLE, i))

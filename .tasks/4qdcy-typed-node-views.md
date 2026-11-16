@@ -26,11 +26,14 @@ cost too much bytecode and the reason is written into ADR 0005.
 - One type and one array per kind: a `NodeId` would have to carry its kind, and child lists
   mix kinds. It amounts to rewriting the parser, the checker and code generation.
 
-## Next
-1. Try a view for one kind, `LET` with its `var` flag, and measure the four probes of
-   `spike-sizes/` at `-O s` before and after.
-2. Small wrappers and accessors can cost bytecode under argotorg/fe#1964 (WORKAROUNDS.md
-   says which shapes, and what #1978 fixed on Fe's master). Measure the views again on the
-   first release that has #1978, before deciding against them.
+## State
+- `LetNode` (fe0/src/ast.fe), from `node.as_let()`, is the first view. It replaced
+  `Node.is_var` and cost 0 bytes in Parser, Checker and Back (Fe 26.6.0, -O s, Nov 15).
+- `as_let` does not check the kind. A check would cost bytes in every phase.
 
-Found by the /unsmell run of 2026-11-12 (finding b2-4), while reviewing `Node.flag_set`.
+## Next
+1. A view for each kind whose slot `d` means a flag: USE (`is_mut`), the positional bind
+   (`is_positional`), BOOL (`is_true`) and an event's FIELD (`is_indexed`). Then drop
+   `Node.flag_set`.
+2. Then the kinds whose `d` is a body, an init, a key or a variant. Measure each step with
+   the size report of `tools/chain_check.py`, since a later view may not be free.
