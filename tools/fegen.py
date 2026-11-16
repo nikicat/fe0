@@ -24,7 +24,7 @@ from eth_utils.crypto import keccak
 FeSource = NewType("FeSource", str)
 # One line of Fe code, without its line end.
 FeLine = NewType("FeLine", str)
-# A Fe expression, such as a string literal or a `difftest::Rejected`.
+# A Fe expression, such as a string literal or a `difftest::CompileError`.
 FeExpr = NewType("FeExpr", str)
 # A piece of Fe code that is neither a line nor an expression, such as a type, the statements of
 # a block, or what follows the name of a msg variant.
@@ -342,32 +342,33 @@ def difftest_use(ingot: str) -> FeLine:
 
 # A byte offset into the code of a contract.
 CodeOffset = NewType("CodeOffset", int)
-# The module whose `#[error]` structs a failed differential test reverts with.
-DIFFTEST: Path = FE0 / "src/difftest.fe"
-# The declaration of an error in DIFFTEST, which captures its name and its fields.
+# The modules whose `#[error]` structs a failed differential test reverts with.
+ERROR_MODULES: tuple[Path, ...] = (FE0 / "src/diag.fe", FE0 / "src/difftest.fe")
+# The declaration of an error in ERROR_MODULES, which captures its name and its fields.
 _ERROR_DECL: re.Pattern[str] = re.compile(r"^#\[error\]\npub struct (\w+) \{([^}]*)\}$", re.M)
-# A field of an error in DIFFTEST. Each field is one ABI word.
+# A field of an error in ERROR_MODULES. Each field is one ABI word.
 _ERROR_FIELD: re.Pattern[str] = re.compile(r"\s*pub (\w+): u256\s*")
 # The selector of a Panic, as Fe's own checks revert with it.
 PANIC_SELECTOR: bytes = keccak(text="Panic(uint256)")[:4]
 
 
 class ErrorDecl(NamedTuple):
-    """An error that DIFFTEST declares."""
+    """An error that ERROR_MODULES declare."""
 
     name: FeName
     fields: tuple[FeName, ...]
 
     @classmethod
     def all(cls) -> list[Self]:
-        """Returns the errors that DIFFTEST declares, in order. Errors with ValueError when a
+        """Returns the errors that ERROR_MODULES declare, in order. Errors with ValueError when a
         field is not a u256."""
         decls = []
-        for name, body in _ERROR_DECL.findall(DIFFTEST.read_text()):
-            matches = [_ERROR_FIELD.fullmatch(f) for f in body.split(",") if f.strip()]
-            if not all(matches):
-                raise ValueError(f"{DIFFTEST}: a field of {name} is not `pub <name>: u256`")
-            decls.append(cls(FeName(name), tuple(FeName(m[1]) for m in matches if m)))
+        for module in ERROR_MODULES:
+            for name, body in _ERROR_DECL.findall(module.read_text()):
+                matches = [_ERROR_FIELD.fullmatch(f) for f in body.split(",") if f.strip()]
+                if not all(matches):
+                    raise ValueError(f"{module}: a field of {name} is not `pub <name>: u256`")
+                decls.append(cls(FeName(name), tuple(FeName(m[1]) for m in matches if m)))
         return decls
 
     @property
@@ -379,8 +380,8 @@ class ErrorDecl(NamedTuple):
 @dataclass(frozen=True)
 class Failure:
     """What a failed differential test reports through its revert data, which says what failed
-    and where (DESIGN.md §10). Each subclass but Panicked mirrors the error of DIFFTEST with its
-    name and fields, which `check_errors` checks."""
+    and where (DESIGN.md §10). Each subclass but Panicked mirrors an error of ERROR_MODULES with
+    its name and fields, which `check_errors` checks."""
 
     @classmethod
     def of_words(cls, words: Sequence[int]) -> Failure:
@@ -403,7 +404,7 @@ class Failure:
 
 @cache
 def _errors_by_selector() -> dict[bytes, ErrorDecl]:
-    """Returns the errors of DIFFTEST, by selector."""
+    """Returns the errors of ERROR_MODULES, by selector."""
     return {d.selector: d for d in ErrorDecl.all()}
 
 
@@ -454,7 +455,7 @@ class CodeDiffers(Failure):
 
 
 @dataclass(frozen=True)
-class Rejected(Failure):
+class CompileError(Failure):
     """Fe0 rejected the program, or rejected it with another error or position than the reject
     header names (SPEC.md §8)."""
 
@@ -474,12 +475,12 @@ class Rejected(Failure):
 
 
 def check_errors() -> None:
-    """Checks that each error of DIFFTEST has the name and the fields of a Failure subclass, and
+    """Checks that each error of ERROR_MODULES has the name and the fields of a Failure subclass, and
     each Failure subclass but Panicked has an error."""
     decls = {d.name: d.fields for d in ErrorDecl.all()}
     classes = {name: tuple(f.name for f in fields(c))
                for name, c in _failure_classes().items() if c is not Panicked}
-    assert decls == classes, f"{DIFFTEST} declares {decls}, but fegen.Failure has {classes}"
+    assert decls == classes, f"{ERROR_MODULES} declare {decls}, but fegen.Failure has {classes}"
 
 
 class Case(NamedTuple):
@@ -726,8 +727,8 @@ class Diag:
         return cls(DiagCode.matched(m), LineCol.matched(m).offset(source))
 
     def rejected(self) -> FeExpr:
-        """Returns the Fe expression of the `difftest::Rejected` that holds the error."""
-        return FeExpr(f"difftest::Rejected {{ code: {self.code.value()}, offset: {self.offset} }}")
+        """Returns the Fe expression of the `difftest::CompileError` that holds the error."""
+        return FeExpr(f"difftest::CompileError {{ code: {self.code.value()}, offset: {self.offset} }}")
 
     def describe(self, source: FeSource) -> str:
         """Returns the code, line and column of the error in `source`, such as `E116 12:9`."""
@@ -736,16 +737,16 @@ class Diag:
 
 def check_diag() -> None:
     r"""Checks DiagCode and Diag against the example of fe0/src/diag.fe, the decoding of a
-    Rejected error, and one source with `\r`."""
+    CompileError, and one source with `\r`."""
     e116 = DiagCode(PhaseLetter("E"), 116)
     assert str(e116) == "E116"
     assert DiagCode.of_value(6034) == DiagCode(PhaseLetter("C"), 34)
     assert DiagCode.of_value(e116.value()) == e116
     at9 = Diag(e116, ByteOffset(9))
-    rejected = next(d for d in ErrorDecl.all() if d.name == "Rejected")
+    rejected = next(d for d in ErrorDecl.all() if d.name == "CompileError")
     revert = rejected.selector + abi_encode(["uint256", "uint256"], [e116.value(), 9])
     match Failure.decode(revert):
-        case Rejected() as r:
+        case CompileError() as r:
             assert r.diag == at9
         case other:
             raise AssertionError(f"{revert.hex()} decodes as {other}")

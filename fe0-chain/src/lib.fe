@@ -4,7 +4,7 @@
 
 use fe0::check::check
 use fe0::codegen::generate
-use fe0::diag::Diag
+use fe0::diag::{CompileError, Diag}
 use fe0::io::{Source, bytes}
 use fe0::lexer::{Lexed, Text, lex}
 use fe0::parser::parse_lexed
@@ -12,11 +12,6 @@ use fe0::ast::Ast
 use fe0::wire::{Reader, from_words, words}
 use std::abi::{Bytes, DynArray, sol}
 use std::evm::{Address, Call, Create, revert_error}
-
-// The first error that a phase finds in the source. The phase reverts with it, and Compiler
-// passes the revert on. The code is a `DiagCode` as a number, such as 6034 for `C034`.
-#[error]
-pub struct CompileError { pub code: u256, pub offset: u256 }
 
 pub msg LexerMsg {
     #[selector = sol("lex(bytes)")]
@@ -52,9 +47,7 @@ pub msg CompilerMsg {
 fn fail_on(_ err: Option<Diag>) {
     match err {
         Option::Some(d) => {
-            revert_error(
-                CompileError { code: d.code.value() as u256, offset: d.pos().offset() as u256 },
-            )
+            revert_error(CompileError::of(d))
         },
         Option::None => {},
     }

@@ -2,7 +2,6 @@
 // compiler and check that both builds behave the same. DESIGN.md §10 describes the harness.
 
 use ingot::codegen::{Output, compile}
-use ingot::diag::Diag
 use ingot::io::{Source, text}
 use std::abi::DynString
 use std::evm::{Call, CallOutcome, Create, RawOps, revert_error}
@@ -18,6 +17,9 @@ const CALL_GAS: u256 = 10000000
 // A failed test reverts with one of the errors below, which says what failed. Each error has
 // the name and the u256 fields of a `fegen.Failure` subclass, which `fegen.check_errors` checks
 // (DESIGN.md §10).
+
+// Fe0 rejected a program. It is the error of Fe0 on chain, so that one error has one selector.
+pub use ingot::diag::CompileError
 
 // The builds differ on the case `number` of the call script: only one deployment created a
 // contract, or the calls' success flags or return data differ.
@@ -40,23 +42,6 @@ pub struct Accepted {}
 #[error]
 pub struct CodeDiffers { pub offset: u256 }
 
-// Fe0 rejected a program with the error `code` (`DiagCode.value`) at byte `offset`.
-#[error]
-pub struct Rejected { pub code: u256, pub offset: u256 }
-
-impl core::ops::Eq for Rejected {
-    fn eq(self, _ other: Rejected) -> bool {
-        self.code == other.code && self.offset == other.offset
-    }
-}
-
-impl Rejected {
-    // Returns the error `d`.
-    pub fn of(_ d: Diag) -> Rejected {
-        Rejected { code: d.code.value() as u256, offset: d.pos().offset() as u256 }
-    }
-}
-
 // Checks whether a chain accepts a create input of `initcode_len` bytes, and the runtime code
 // that the create left at `runtime`.
 fn fits_chain(initcode_len: usize, runtime: Address) -> bool uses (evm: Evm) {
@@ -70,18 +55,19 @@ pub fn compiled(_ s: own DynString) -> Output {
     }
 }
 
-// Fe0's deploy code for `s`. Errors with Rejected when Fe0 rejects `s`.
+// Fe0's deploy code for `s`. Errors with CompileError when Fe0 rejects `s`.
 pub fn ours(_ s: own DynString) -> MemVec<u8> {
     let out = compiled(s)
     match out.err {
-        Option::Some(d) => revert_error(Rejected::of(d)),
+        Option::Some(d) => revert_error(CompileError::of(d)),
         Option::None => {},
     }
     out.code
 }
 
 // Checks that Fe0's deploy code for `s` is the code that `hex` spells in lowercase hex, as the
-// native CLI prints it. Otherwise errors with CodeDiffers, or with Rejected when Fe0 rejects `s`.
+// native CLI prints it. Otherwise errors with CodeDiffers, or with CompileError when Fe0 rejects
+// `s`.
 pub fn same_code(_ s: own DynString, _ hex: DynString) {
     let code = ours(s)
     let want = core::text::decode_hex(hex).unwrap()
@@ -97,12 +83,12 @@ pub fn same_code(_ s: own DynString, _ hex: DynString) {
     }
 }
 
-// Checks that Fe0 rejects `s` with the error `expected`. Otherwise errors with the Rejected that
-// Fe0 gave, or with Accepted when Fe0 accepted `s`.
-pub fn rejects(_ s: own DynString, _ expected: Rejected) {
+// Checks that Fe0 rejects `s` with the error `expected`. Otherwise errors with the CompileError
+// that Fe0 gave, or with Accepted when Fe0 accepted `s`.
+pub fn rejects(_ s: own DynString, _ expected: CompileError) {
     match compiled(s).err {
         Option::Some(d) => {
-            let got = Rejected::of(d)
+            let got = CompileError::of(d)
             if got != expected {
                 revert_error(got)
             }

@@ -29,9 +29,7 @@ from typing import NamedTuple, Self
 import web3.contract
 from eth_abi.exceptions import DecodingError
 from eth_typing import ABI, ABIElement, ABIError, ChecksumAddress, HexStr
-from eth_utils.abi import filter_abi_by_type, function_abi_to_4byte_selector, get_abi_input_types
 from hexbytes import HexBytes
-from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import TxParams
 
@@ -39,7 +37,7 @@ import cli_check
 import embed
 import fegen
 from embed import FailureMessage
-from fegen import ROOT, ByteOffset, Diag, DiagCode, FeName, FeSource
+from fegen import ROOT, Diag, FeName, FeSource
 from node import BLOCK_GAS, Gas, Node, corpus
 
 CHAIN: Path = ROOT / "fe0-chain"
@@ -54,8 +52,6 @@ MAX_INITCODE: int = 2 * MAX_RUNTIME
 # The program that check_counter deploys, and the start value it deploys it with.
 COUNTER: Path = embed.CORPUS / "counter.fe"
 START: int = 2
-# The error that Compiler reverts with when it rejects a program.
-COMPILE_ERROR: str = "CompileError"
 
 
 class Contract(StrEnum):
@@ -181,17 +177,13 @@ class Reverted(NamedTuple):
     diag: Diag | None
 
     @classmethod
-    def of(cls, revert: bytes, abi: ABI) -> Self:
-        """Returns the revert with data `revert` from the contract of `abi`, which declares
-        COMPILE_ERROR. Errors as `DiagCode.of_value` does."""
-        error = next(e for e in filter_abi_by_type("error", abi) if e["name"] == COMPILE_ERROR)
-        if not revert.startswith(function_abi_to_4byte_selector(error)):
-            return cls(revert, None)
+    def of(cls, revert: bytes) -> Self:
+        """Returns the revert with data `revert`. Errors as `fegen.CompileError.of_words` does."""
         try:
-            value, offset = Web3().codec.decode(get_abi_input_types(error), revert[4:])
+            failure = fegen.Failure.decode(revert)
         except DecodingError:
             return cls(revert, None)
-        return cls(revert, Diag(DiagCode.of_value(value), ByteOffset(offset)))
+        return cls(revert, failure.diag if isinstance(failure, fegen.CompileError) else None)
 
     def describe(self, source: FeSource) -> str:
         """Returns the error in `source` that the call reverted with, or the revert data when it
@@ -266,7 +258,7 @@ class Chain:
         try:
             code: bytes = call.call(self._tx())
         except ContractLogicError as e:
-            return Reverted.of(bytes(HexBytes(HexStr(str(e.data)))), self.compiler.abi)
+            return Reverted.of(bytes(HexBytes(HexStr(str(e.data)))))
         return Compiled(code, Gas(call.estimate_gas(self._tx())))
 
     def deploy_program(self, source: FeSource, args: bytes) -> Deployed:

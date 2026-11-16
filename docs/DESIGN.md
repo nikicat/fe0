@@ -314,7 +314,7 @@ differs from the ABI that `fe build` writes.
 
 - **Wire format:** each phase returns ABI `uint256[]`, in the format of `fe0/src/wire.fe`. The
   source does not cross. It is each phase's own `bytes` argument, so Back never sees it.
-- **Errors:** see `CompileError` in `fe0-chain/src/lib.fe`. Warnings do not cross (§9).
+- **Errors:** see `CompileError` in `fe0/src/diag.fe`. Warnings do not cross (§9).
 - **Trust:** a phase contract trusts its input and decodes it without checks. Compiler, its
   intended caller, gives each phase the previous phase's output. A direct caller that sends
   malformed words gets a revert or a wrong result, and only for itself: the phases keep no

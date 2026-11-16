@@ -59,7 +59,7 @@ def main() -> None:
     try:
         code: bytes = contract.functions.compile(source.encode()).call()
     except ContractLogicError as e:
-        got = Reverted.of(bytes(HexBytes(HexStr(str(e.data)))), abi)
+        got = Reverted.of(bytes(HexBytes(HexStr(str(e.data)))))
         if got.diag is None:
             sys.exit(f"{args.program}: Compiler reverts with {got.describe(source)}")
         at = LineCol.of(got.diag.offset, source)

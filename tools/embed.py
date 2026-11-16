@@ -58,10 +58,10 @@ from typing import ClassVar, Never, NamedTuple, NewType, Protocol, Self
 
 import fegen
 from fegen import (DEPLOYMENT_NAME, MAX, NO_LINE, ROOT, THIS, Accepted, Account, AccountIndex, Arg,
-                   ByteOffset, Call, CallCase, Callee, Case, CaseDiffers, CaseNumber, Cases, Deploy,
-                   DeploymentName, Diag, DiagCode, DiffTest, ExtraBytes, Failure, FeLine, FeName,
-                   FeSource, LineCol, Named, Panicked, Payload, PhaseLetter, ProbeDiffers, RawCall,
-                   Rejected, Selector, TestName, TooLarge, Wei, Word)
+                   ByteOffset, Call, CallCase, Callee, Case, CaseDiffers, CaseNumber, Cases,
+                   CompileError, Deploy, DeploymentName, Diag, DiagCode, DiffTest, ExtraBytes,
+                   Failure, FeLine, FeName, FeSource, LineCol, Named, Panicked, Payload,
+                   PhaseLetter, ProbeDiffers, RawCall, Selector, TestName, TooLarge, Wei, Word)
 
 CORPUS: Path = ROOT / "corpus"
 REJECTS: Path = CORPUS / "reject"
@@ -665,7 +665,7 @@ class Program:
 
     def explain(self, failure: Failure) -> FailureMessage | None:
         match failure:
-            case Rejected() as r:
+            case CompileError() as r:
                 diag = r.diag.describe(self.diff.source)
                 return FailureMessage(f"{self.path}: Fe0 rejects it with {diag}")
             case ProbeDiffers(index):
@@ -757,7 +757,7 @@ class Reject:
         match failure:
             case Accepted():
                 got = "accepts it"
-            case Rejected() as r:
+            case CompileError() as r:
                 got = "gives " + r.diag.describe(self.source)
             case _:
                 return None

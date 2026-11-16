@@ -52,6 +52,25 @@ impl Diag {
     }
 }
 
+// Fe0 on the EVM reverts with this error when it rejects a source, both in fe0-chain (DESIGN.md
+// §8) and in the differential tests (§10). The code is a `DiagCode` as a number, such as 6034
+// for `C034`. The name must stay, because it is part of the deployed fe0-chain/Compiler.abi.json.
+#[error]
+pub struct CompileError { pub code: u256, pub offset: u256 }
+
+impl core::ops::Eq for CompileError {
+    fn eq(self, _ other: CompileError) -> bool {
+        self.code == other.code && self.offset == other.offset
+    }
+}
+
+impl CompileError {
+    // Returns the error `d`.
+    pub fn of(_ d: Diag) -> CompileError {
+        CompileError { code: d.code.value() as u256, offset: d.pos().offset() as u256 }
+    }
+}
+
 // Lexer
 pub const L_UNEXPECTED_CHAR: DiagCode = DiagCode { raw: 1001 }
 pub const L_UNTERMINATED_STRING: DiagCode = DiagCode { raw: 1002 }
