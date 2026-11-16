@@ -481,61 +481,61 @@ pub fn run_counter() uses (evm: mut Evm) {
     }
     {
         var a = difftest::Payload::new(std::evm::wei(5))
-        let _ = b.deploy(a, difftest::CaseCode::new(0x100000001))
+        let _ = b.deploy(a, case: 1)
     }
     {
         var a = difftest::Payload::new(Wei::zero())
         a.push(0x99)
-        let _ = b.deploy(a, difftest::CaseCode::new(0x100000002))
+        let _ = b.deploy(a, case: 2)
     }
     var a = difftest::Payload::new(Wei::zero())
-    let p = b.deploy_main(a, difftest::CaseCode::new(0x100001000))
+    let p = b.deploy_main(a, case: 4096)
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x6d4ce63c)
-        p.call(d, difftest::CaseCode::new(0x100001001))
+        p.call(d, case: 4097)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xd09de08a)
-        p.call(d, difftest::CaseCode::new(0x100001002))
+        p.call(d, case: 4098)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xd09de08a)
-        p.call(d, difftest::CaseCode::new(0x100001003))
+        p.call(d, case: 4099)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x6d4ce63c)
-        p.call(d, difftest::CaseCode::new(0x100001004))
+        p.call(d, case: 4100)
     }
     {
         var d = difftest::Payload::new(std::evm::wei(1))
         d.push_selector(0xd09de08a)
-        p.call(d, difftest::CaseCode::new(0x100001005))
+        p.call(d, case: 4101)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x6d4ce63c)
         d.push_word(0x5)
-        p.call(d, difftest::CaseCode::new(0x100001006))
+        p.call(d, case: 4102)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
-        p.call(d, difftest::CaseCode::new(0x200000001))
+        p.probe(d, index: 1)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push(0)
         d.push(0)
         d.push(1)
-        p.call(d, difftest::CaseCode::new(0x200000002))
+        p.probe(d, index: 2)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x7777)
-        p.call(d, difftest::CaseCode::new(0x200000003))
+        p.probe(d, index: 3)
     }
 }
 
@@ -552,166 +552,76 @@ pub fn run_ops() uses (evm: mut Evm) {
         theirs: difftest::theirs(CgOps::init_code_offset(), CgOps::init_code_len()),
     }
     var a = difftest::Payload::new(Wei::zero())
-    let p = b.deploy_main(a, difftest::CaseCode::new(0x100001000))
+    let p = b.deploy_main(a, case: 4096)
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x2)
         d.push_word(0x3)
-        p.call(d, difftest::CaseCode::new(0x100001001))
+        p.call(d, case: 4097)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x2)
         d.push_word(0x2)
         d.push_word(0x3)
-        p.call(d, difftest::CaseCode::new(0x100001002))
+        p.call(d, case: 4098)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x2)
         d.push_word(0x3)
         d.push_word(0x2)
-        p.call(d, difftest::CaseCode::new(0x100001003))
+        p.call(d, case: 4099)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x3)
         d.push_word(0x2)
         d.push_word(0x3)
-        p.call(d, difftest::CaseCode::new(0x100001004))
+        p.call(d, case: 4100)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x4)
         d.push_word(0x2)
         d.push_word(0x3)
-        p.call(d, difftest::CaseCode::new(0x100001005))
+        p.call(d, case: 4101)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x5)
         d.push_word(0x2)
         d.push_word(0x3)
-        p.call(d, difftest::CaseCode::new(0x100001006))
+        p.call(d, case: 4102)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x8)
         d.push_word(0x2)
         d.push_word(0x3)
-        p.call(d, difftest::CaseCode::new(0x100001007))
+        p.call(d, case: 4103)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x9)
         d.push_word(0x2)
         d.push_word(0x3)
-        p.call(d, difftest::CaseCode::new(0x100001008))
+        p.call(d, case: 4104)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x9)
         d.push_word(0x3)
         d.push_word(0x2)
-        p.call(d, difftest::CaseCode::new(0x100001009))
+        p.call(d, case: 4105)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x14)
         d.push_word(0x2)
         d.push_word(0x3)
-        p.call(d, difftest::CaseCode::new(0x10000100a))
-    }
-    {
-        var d = difftest::Payload::new(Wei::zero())
-        d.push_selector(0x1)
-        d.push_word(
-            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-        )
-        d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x10000100b))
-    }
-    {
-        var d = difftest::Payload::new(Wei::zero())
-        d.push_selector(0x2)
-        d.push_word(
-            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-        )
-        d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x10000100c))
-    }
-    {
-        var d = difftest::Payload::new(Wei::zero())
-        d.push_selector(0x2)
-        d.push_word(0x1)
-        d.push_word(
-            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-        )
-        p.call(d, difftest::CaseCode::new(0x10000100d))
-    }
-    {
-        var d = difftest::Payload::new(Wei::zero())
-        d.push_selector(0x3)
-        d.push_word(
-            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-        )
-        d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x10000100e))
-    }
-    {
-        var d = difftest::Payload::new(Wei::zero())
-        d.push_selector(0x4)
-        d.push_word(
-            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-        )
-        d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x10000100f))
-    }
-    {
-        var d = difftest::Payload::new(Wei::zero())
-        d.push_selector(0x5)
-        d.push_word(
-            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-        )
-        d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001010))
-    }
-    {
-        var d = difftest::Payload::new(Wei::zero())
-        d.push_selector(0x8)
-        d.push_word(
-            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-        )
-        d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001011))
-    }
-    {
-        var d = difftest::Payload::new(Wei::zero())
-        d.push_selector(0x9)
-        d.push_word(
-            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-        )
-        d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001012))
-    }
-    {
-        var d = difftest::Payload::new(Wei::zero())
-        d.push_selector(0x9)
-        d.push_word(0x1)
-        d.push_word(
-            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-        )
-        p.call(d, difftest::CaseCode::new(0x100001013))
-    }
-    {
-        var d = difftest::Payload::new(Wei::zero())
-        d.push_selector(0x14)
-        d.push_word(
-            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
-        )
-        d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001014))
+        p.call(d, case: 4106)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -719,8 +629,98 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
+        d.push_word(0x1)
+        p.call(d, case: 4107)
+    }
+    {
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+        )
+        d.push_word(0x1)
+        p.call(d, case: 4108)
+    }
+    {
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x2)
+        d.push_word(0x1)
+        d.push_word(
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+        )
+        p.call(d, case: 4109)
+    }
+    {
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x3)
+        d.push_word(
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+        )
+        d.push_word(0x1)
+        p.call(d, case: 4110)
+    }
+    {
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x4)
+        d.push_word(
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+        )
+        d.push_word(0x1)
+        p.call(d, case: 4111)
+    }
+    {
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x5)
+        d.push_word(
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+        )
+        d.push_word(0x1)
+        p.call(d, case: 4112)
+    }
+    {
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x8)
+        d.push_word(
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+        )
+        d.push_word(0x1)
+        p.call(d, case: 4113)
+    }
+    {
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x9)
+        d.push_word(
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+        )
+        d.push_word(0x1)
+        p.call(d, case: 4114)
+    }
+    {
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x9)
+        d.push_word(0x1)
+        d.push_word(
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+        )
+        p.call(d, case: 4115)
+    }
+    {
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x14)
+        d.push_word(
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+        )
+        d.push_word(0x1)
+        p.call(d, case: 4116)
+    }
+    {
+        var d = difftest::Payload::new(Wei::zero())
+        d.push_selector(0x1)
+        d.push_word(
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+        )
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001015))
+        p.call(d, case: 4117)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -729,7 +729,7 @@ pub fn run_ops() uses (evm: mut Evm) {
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001016))
+        p.call(d, case: 4118)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -738,7 +738,7 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
-        p.call(d, difftest::CaseCode::new(0x100001017))
+        p.call(d, case: 4119)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -747,7 +747,7 @@ pub fn run_ops() uses (evm: mut Evm) {
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001018))
+        p.call(d, case: 4120)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -756,7 +756,7 @@ pub fn run_ops() uses (evm: mut Evm) {
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001019))
+        p.call(d, case: 4121)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -765,7 +765,7 @@ pub fn run_ops() uses (evm: mut Evm) {
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x10000101a))
+        p.call(d, case: 4122)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -774,7 +774,7 @@ pub fn run_ops() uses (evm: mut Evm) {
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x10000101b))
+        p.call(d, case: 4123)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -783,7 +783,7 @@ pub fn run_ops() uses (evm: mut Evm) {
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x10000101c))
+        p.call(d, case: 4124)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -792,7 +792,7 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
-        p.call(d, difftest::CaseCode::new(0x10000101d))
+        p.call(d, case: 4125)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -801,7 +801,7 @@ pub fn run_ops() uses (evm: mut Evm) {
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x10000101e))
+        p.call(d, case: 4126)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -810,7 +810,7 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
-        p.call(d, difftest::CaseCode::new(0x10000101f))
+        p.call(d, case: 4127)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -819,7 +819,7 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
-        p.call(d, difftest::CaseCode::new(0x100001020))
+        p.call(d, case: 4128)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -828,7 +828,7 @@ pub fn run_ops() uses (evm: mut Evm) {
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001021))
+        p.call(d, case: 4129)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -837,7 +837,7 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
-        p.call(d, difftest::CaseCode::new(0x100001022))
+        p.call(d, case: 4130)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -846,7 +846,7 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
-        p.call(d, difftest::CaseCode::new(0x100001023))
+        p.call(d, case: 4131)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -855,7 +855,7 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
-        p.call(d, difftest::CaseCode::new(0x100001024))
+        p.call(d, case: 4132)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -864,7 +864,7 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
-        p.call(d, difftest::CaseCode::new(0x100001025))
+        p.call(d, case: 4133)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -873,7 +873,7 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
-        p.call(d, difftest::CaseCode::new(0x100001026))
+        p.call(d, case: 4134)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -882,7 +882,7 @@ pub fn run_ops() uses (evm: mut Evm) {
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001027))
+        p.call(d, case: 4135)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -891,77 +891,77 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
-        p.call(d, difftest::CaseCode::new(0x100001028))
+        p.call(d, case: 4136)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x7)
         d.push_word(0x7)
-        p.call(d, difftest::CaseCode::new(0x100001029))
+        p.call(d, case: 4137)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x2)
         d.push_word(0x7)
         d.push_word(0x7)
-        p.call(d, difftest::CaseCode::new(0x10000102a))
+        p.call(d, case: 4138)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x2)
         d.push_word(0x7)
         d.push_word(0x7)
-        p.call(d, difftest::CaseCode::new(0x10000102b))
+        p.call(d, case: 4139)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x3)
         d.push_word(0x7)
         d.push_word(0x7)
-        p.call(d, difftest::CaseCode::new(0x10000102c))
+        p.call(d, case: 4140)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x4)
         d.push_word(0x7)
         d.push_word(0x7)
-        p.call(d, difftest::CaseCode::new(0x10000102d))
+        p.call(d, case: 4141)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x5)
         d.push_word(0x7)
         d.push_word(0x7)
-        p.call(d, difftest::CaseCode::new(0x10000102e))
+        p.call(d, case: 4142)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x8)
         d.push_word(0x7)
         d.push_word(0x7)
-        p.call(d, difftest::CaseCode::new(0x10000102f))
+        p.call(d, case: 4143)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x9)
         d.push_word(0x7)
         d.push_word(0x7)
-        p.call(d, difftest::CaseCode::new(0x100001030))
+        p.call(d, case: 4144)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x9)
         d.push_word(0x7)
         d.push_word(0x7)
-        p.call(d, difftest::CaseCode::new(0x100001031))
+        p.call(d, case: 4145)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x14)
         d.push_word(0x7)
         d.push_word(0x7)
-        p.call(d, difftest::CaseCode::new(0x100001032))
+        p.call(d, case: 4146)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -970,56 +970,56 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
-        p.call(d, difftest::CaseCode::new(0x100001033))
+        p.call(d, case: 4147)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x3)
         d.push_word(0x100000000000000000000000000000000)
         d.push_word(0x100000000000000000000000000000000)
-        p.call(d, difftest::CaseCode::new(0x100001034))
+        p.call(d, case: 4148)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x3)
         d.push_word(0x80000000000000000000000000000000)
         d.push_word(0x100000000000000000000000000000000)
-        p.call(d, difftest::CaseCode::new(0x100001035))
+        p.call(d, case: 4149)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x4)
         d.push_word(0x7)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001036))
+        p.call(d, case: 4150)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x5)
         d.push_word(0x7)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001037))
+        p.call(d, case: 4151)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x5)
         d.push_word(0x7)
         d.push_word(0x3)
-        p.call(d, difftest::CaseCode::new(0x100001038))
+        p.call(d, case: 4152)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x6)
         d.push_word(0x3)
         d.push_word(0xff)
-        p.call(d, difftest::CaseCode::new(0x100001039))
+        p.call(d, case: 4153)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x6)
         d.push_word(0x1)
         d.push_word(0x100)
-        p.call(d, difftest::CaseCode::new(0x10000103a))
+        p.call(d, case: 4154)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -1028,7 +1028,7 @@ pub fn run_ops() uses (evm: mut Evm) {
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
         d.push_word(0x12c)
-        p.call(d, difftest::CaseCode::new(0x10000103b))
+        p.call(d, case: 4155)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -1037,207 +1037,207 @@ pub fn run_ops() uses (evm: mut Evm) {
             0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
         )
         d.push_word(0x4)
-        p.call(d, difftest::CaseCode::new(0x10000103c))
+        p.call(d, case: 4156)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xa)
         d.push_word(0x0)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x10000103d))
+        p.call(d, case: 4157)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xa)
         d.push_word(0x0)
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x10000103e))
+        p.call(d, case: 4158)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xa)
         d.push_word(0x1)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x10000103f))
+        p.call(d, case: 4159)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xa)
         d.push_word(0x1)
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001040))
+        p.call(d, case: 4160)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xa)
         d.push_word(0x2)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001041))
+        p.call(d, case: 4161)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xa)
         d.push_word(0x0)
         d.push_word(0x2)
-        p.call(d, difftest::CaseCode::new(0x100001042))
+        p.call(d, case: 4162)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xb)
         d.push_word(0x1)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001043))
+        p.call(d, case: 4163)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xb)
         d.push_word(0x0)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001044))
+        p.call(d, case: 4164)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xb)
         d.push_word(0x0)
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001045))
+        p.call(d, case: 4165)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xc)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001046))
+        p.call(d, case: 4166)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xc)
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001047))
+        p.call(d, case: 4167)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xc)
         d.push_word(0x5)
-        p.call(d, difftest::CaseCode::new(0x100001048))
+        p.call(d, case: 4168)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xc)
         d.push_word(0x39)
-        p.call(d, difftest::CaseCode::new(0x100001049))
+        p.call(d, case: 4169)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xc)
         d.push_word(0x3a)
-        p.call(d, difftest::CaseCode::new(0x10000104a))
+        p.call(d, case: 4170)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xd)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x10000104b))
+        p.call(d, case: 4171)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xd)
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x10000104c))
+        p.call(d, case: 4172)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xd)
         d.push_word(0xa)
-        p.call(d, difftest::CaseCode::new(0x10000104d))
+        p.call(d, case: 4173)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xe)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x10000104e))
+        p.call(d, case: 4174)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xe)
         d.push_word(0x5)
-        p.call(d, difftest::CaseCode::new(0x10000104f))
+        p.call(d, case: 4175)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0xf)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001050))
+        p.call(d, case: 4176)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x10)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001051))
+        p.call(d, case: 4177)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x10)
         d.push_word(0x2)
-        p.call(d, difftest::CaseCode::new(0x100001052))
+        p.call(d, case: 4178)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x11)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001053))
+        p.call(d, case: 4179)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x11)
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001054))
+        p.call(d, case: 4180)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x12)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001055))
+        p.call(d, case: 4181)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x12)
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001056))
+        p.call(d, case: 4182)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x13)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001057))
+        p.call(d, case: 4183)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x15)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001058))
+        p.call(d, case: 4184)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x15)
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001059))
+        p.call(d, case: 4185)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x15)
         d.push_word(0x2)
-        p.call(d, difftest::CaseCode::new(0x10000105a))
+        p.call(d, case: 4186)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x15)
         d.push_word(0x3)
-        p.call(d, difftest::CaseCode::new(0x10000105b))
+        p.call(d, case: 4187)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x17)
-        p.call(d, difftest::CaseCode::new(0x10000105c))
+        p.call(d, case: 4188)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -1245,22 +1245,22 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(0x5)
         d.push_word(0x1)
         d.push_word(0xcc)
-        p.call(d, difftest::CaseCode::new(0x10000105d))
+        p.call(d, case: 4189)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x17)
-        p.call(d, difftest::CaseCode::new(0x10000105e))
+        p.call(d, case: 4190)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x18)
-        p.call(d, difftest::CaseCode::new(0x10000105f))
+        p.call(d, case: 4191)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x19)
-        p.call(d, difftest::CaseCode::new(0x100001060))
+        p.call(d, case: 4192)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -1268,7 +1268,7 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(0x6)
         d.push_word(0x2)
         d.push_word(0xcc)
-        p.call(d, difftest::CaseCode::new(0x100001061))
+        p.call(d, case: 4193)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -1276,66 +1276,66 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push_word(0x6)
         d.push_word(0x0)
         d.push_word(0x100000000000000000000000000000000000000cc)
-        p.call(d, difftest::CaseCode::new(0x100001062))
+        p.call(d, case: 4194)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x17)
-        p.call(d, difftest::CaseCode::new(0x100001063))
+        p.call(d, case: 4195)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1b)
         d.push_word(0x1)
         d.push_word(0x2)
-        p.call(d, difftest::CaseCode::new(0x100001064))
+        p.call(d, case: 4196)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x17)
-        p.call(d, difftest::CaseCode::new(0x100001065))
+        p.call(d, case: 4197)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1c)
-        p.call(d, difftest::CaseCode::new(0x100001066))
+        p.call(d, case: 4198)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1c)
-        p.call(d, difftest::CaseCode::new(0x100001067))
+        p.call(d, case: 4199)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x17)
-        p.call(d, difftest::CaseCode::new(0x100001068))
+        p.call(d, case: 4200)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1a)
         d.push_word(0xcc)
         d.push_word(0xcc)
-        p.call(d, difftest::CaseCode::new(0x100001069))
+        p.call(d, case: 4201)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1a)
         d.push_word(0xcc)
         d.push_word(0xdd)
-        p.call(d, difftest::CaseCode::new(0x10000106a))
+        p.call(d, case: 4202)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1a)
         d.push_word(0x10000000000000000000000000000000000000000)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x10000106b))
+        p.call(d, case: 4203)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x10000106c))
+        p.call(d, case: 4204)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
@@ -1345,34 +1345,34 @@ pub fn run_ops() uses (evm: mut Evm) {
         d.push(0x99)
         d.push(0x99)
         d.push(0x99)
-        p.call(d, difftest::CaseCode::new(0x10000106d))
+        p.call(d, case: 4205)
     }
     {
         var d = difftest::Payload::new(std::evm::wei(5))
         d.push_selector(0x17)
-        p.call(d, difftest::CaseCode::new(0x10000106e))
+        p.call(d, case: 4206)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x17)
         d.push(0x99)
-        p.call(d, difftest::CaseCode::new(0x10000106f))
+        p.call(d, case: 4207)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
-        p.call(d, difftest::CaseCode::new(0x200000001))
+        p.probe(d, index: 1)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push(0)
         d.push(0)
         d.push(1)
-        p.call(d, difftest::CaseCode::new(0x200000002))
+        p.probe(d, index: 2)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x7777)
-        p.call(d, difftest::CaseCode::new(0x200000003))
+        p.probe(d, index: 3)
     }
 }
 
@@ -1390,27 +1390,27 @@ pub fn run_init() uses (evm: mut Evm) {
     }
     {
         var a = difftest::Payload::new(Wei::zero())
-        let _ = b.deploy(a, difftest::CaseCode::new(0x100000001))
+        let _ = b.deploy(a, case: 1)
     }
     {
         var a = difftest::Payload::new(Wei::zero())
         a.push_word(0xaa)
         a.push_word(0x1)
-        let _ = b.deploy(a, difftest::CaseCode::new(0x100000002))
+        let _ = b.deploy(a, case: 2)
     }
     {
         var a = difftest::Payload::new(Wei::zero())
         a.push_word(0xaa)
         a.push_word(0x2)
         a.push_word(0xcc)
-        let _ = b.deploy(a, difftest::CaseCode::new(0x100000003))
+        let _ = b.deploy(a, case: 3)
     }
     {
         var a = difftest::Payload::new(Wei::zero())
         a.push_word(0xaa)
         a.push_word(0x1)
         a.push_word(0x1000000000000000000000000000000000000000000000000cc)
-        let _ = b.deploy(a, difftest::CaseCode::new(0x100000004))
+        let _ = b.deploy(a, case: 4)
     }
     {
         var a = difftest::Payload::new(Wei::zero())
@@ -1424,50 +1424,50 @@ pub fn run_init() uses (evm: mut Evm) {
         a.push(0x99)
         a.push(0x99)
         a.push(0x99)
-        let _ = b.deploy(a, difftest::CaseCode::new(0x100000005))
+        let _ = b.deploy(a, case: 5)
     }
     {
         var a = difftest::Payload::new(std::evm::wei(5))
         a.push_word(0xaa)
         a.push_word(0x1)
         a.push_word(0xcc)
-        let _ = b.deploy(a, difftest::CaseCode::new(0x100000006))
+        let _ = b.deploy(a, case: 6)
     }
     var a = difftest::Payload::new(Wei::zero())
     a.push_word(0xaa)
     a.push_word(0x1)
     a.push_word(0xcc)
-    let p = b.deploy_main(a, difftest::CaseCode::new(0x100001000))
+    let p = b.deploy_main(a, case: 4096)
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001001))
+        p.call(d, case: 4097)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x2)
-        p.call(d, difftest::CaseCode::new(0x100001002))
+        p.call(d, case: 4098)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x3)
-        p.call(d, difftest::CaseCode::new(0x100001003))
+        p.call(d, case: 4099)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
-        p.call(d, difftest::CaseCode::new(0x200000001))
+        p.probe(d, index: 1)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push(0)
         d.push(0)
         d.push(1)
-        p.call(d, difftest::CaseCode::new(0x200000002))
+        p.probe(d, index: 2)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x7777)
-        p.call(d, difftest::CaseCode::new(0x200000003))
+        p.probe(d, index: 3)
     }
 }
 
@@ -1484,119 +1484,119 @@ pub fn run_misc() uses (evm: mut Evm) {
         theirs: difftest::theirs(CgMisc::init_code_offset(), CgMisc::init_code_len()),
     }
     var a = difftest::Payload::new(Wei::zero())
-    let p = b.deploy_main(a, difftest::CaseCode::new(0x100001000))
+    let p = b.deploy_main(a, case: 4096)
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001001))
+        p.call(d, case: 4097)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001002))
+        p.call(d, case: 4098)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x6)
-        p.call(d, difftest::CaseCode::new(0x100001003))
+        p.call(d, case: 4099)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x7)
-        p.call(d, difftest::CaseCode::new(0x100001004))
+        p.call(d, case: 4100)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x9)
-        p.call(d, difftest::CaseCode::new(0x100001005))
+        p.call(d, case: 4101)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x2)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001006))
+        p.call(d, case: 4102)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x2)
         d.push_word(0x5)
-        p.call(d, difftest::CaseCode::new(0x100001007))
+        p.call(d, case: 4103)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x2)
         d.push_word(0x96)
-        p.call(d, difftest::CaseCode::new(0x100001008))
+        p.call(d, case: 4104)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x3)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001009))
+        p.call(d, case: 4105)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x3)
         d.push_word(0x12c)
-        p.call(d, difftest::CaseCode::new(0x10000100a))
+        p.call(d, case: 4106)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x4)
         d.push_word(0xaa)
         d.push_word(0xbb)
-        p.call(d, difftest::CaseCode::new(0x10000100b))
+        p.call(d, case: 4107)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x4)
         d.push_word(0xaa)
         d.push_word(0xaa)
-        p.call(d, difftest::CaseCode::new(0x10000100c))
+        p.call(d, case: 4108)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x5)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x10000100d))
+        p.call(d, case: 4109)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x5)
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x10000100e))
+        p.call(d, case: 4110)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x6)
         d.push_word(0x4)
-        p.call(d, difftest::CaseCode::new(0x10000100f))
+        p.call(d, case: 4111)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x7)
-        p.call(d, difftest::CaseCode::new(0x100001010))
+        p.call(d, case: 4112)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
-        p.call(d, difftest::CaseCode::new(0x200000001))
+        p.probe(d, index: 1)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push(0)
         d.push(0)
         d.push(1)
-        p.call(d, difftest::CaseCode::new(0x200000002))
+        p.probe(d, index: 2)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x7777)
-        p.call(d, difftest::CaseCode::new(0x200000003))
+        p.probe(d, index: 3)
     }
 }
 
@@ -1613,58 +1613,58 @@ pub fn run_chain() uses (evm: mut Evm) {
         theirs: difftest::theirs(CgChain::init_code_offset(), CgChain::init_code_len()),
     }
     var a = difftest::Payload::new(Wei::zero())
-    let p = b.deploy_main(a, difftest::CaseCode::new(0x100001000))
+    let p = b.deploy_main(a, case: 4096)
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x0)
-        p.call(d, difftest::CaseCode::new(0x100001001))
+        p.call(d, case: 4097)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001002))
+        p.call(d, case: 4098)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x14)
-        p.call(d, difftest::CaseCode::new(0x100001003))
+        p.call(d, case: 4099)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x27)
-        p.call(d, difftest::CaseCode::new(0x100001004))
+        p.call(d, case: 4100)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x28)
-        p.call(d, difftest::CaseCode::new(0x100001005))
+        p.call(d, case: 4101)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
         d.push_word(0x29)
-        p.call(d, difftest::CaseCode::new(0x100001006))
+        p.call(d, case: 4102)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
-        p.call(d, difftest::CaseCode::new(0x200000001))
+        p.probe(d, index: 1)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push(0)
         d.push(0)
         d.push(1)
-        p.call(d, difftest::CaseCode::new(0x200000002))
+        p.probe(d, index: 2)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x7777)
-        p.call(d, difftest::CaseCode::new(0x200000003))
+        p.probe(d, index: 3)
     }
 }
 
@@ -1681,30 +1681,30 @@ pub fn run_no_recv() uses (evm: mut Evm) {
     {
         var a = difftest::Payload::new(Wei::zero())
         a.push_word(0x5)
-        let _ = b.deploy(a, difftest::CaseCode::new(0x100000001))
+        let _ = b.deploy(a, case: 1)
     }
     var a = difftest::Payload::new(Wei::zero())
-    let p = b.deploy_main(a, difftest::CaseCode::new(0x100001000))
+    let p = b.deploy_main(a, case: 4096)
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x1)
-        p.call(d, difftest::CaseCode::new(0x100001001))
+        p.call(d, case: 4097)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
-        p.call(d, difftest::CaseCode::new(0x200000001))
+        p.probe(d, index: 1)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push(0)
         d.push(0)
         d.push(1)
-        p.call(d, difftest::CaseCode::new(0x200000002))
+        p.probe(d, index: 2)
     }
     {
         var d = difftest::Payload::new(Wei::zero())
         d.push_selector(0x7777)
-        p.call(d, difftest::CaseCode::new(0x200000003))
+        p.probe(d, index: 3)
     }
 }
 

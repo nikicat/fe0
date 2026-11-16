@@ -429,9 +429,11 @@ ingot under `out/difftest/` that holds:
       the runtime code against the EIP-3860 and EIP-170 limits, which the test EVM does not
       enforce (§8a).
 
-A failed test's panic code says what failed and where. `fegen.Kind` lists the kinds of
-failure and their ranges of codes. `embed.py` turns each code back into a message that names
-the line of the call script, the dispatcher probe or Fe0's error.
+A failed test reverts with a typed error for each kind of failure, which says what failed and
+where. The errors are the `#[error]` structs of `fe0/src/difftest.fe`, and `tools/fegen.py`
+decodes them. Each error names itself by its selector, so the two sides keep no range protocol
+in step. `embed.py` turns each error into a message that names the line of the call script, the
+dispatcher probe or Fe0's error.
 
 The codegen tests (`fe0/src/codegen_tests.fe`) are differential tests of the same kind. They
 live in the `fe0` ingot, so that `fe test` there runs them, and their generator shares
@@ -466,11 +468,11 @@ the same in both.
 **One test per batch.** The root module of each batch ingot holds one test that calls every
 runner of the batch. Its name starts with `embed.BATCH_TEST`. The harness runs only these
 tests. It runs the programs' own tests only in a batch whose test fails, to get each program's
-panic code. The WORKAROUNDS.md entry on `fe test` compiling each EVM test alone says why.
+error. The WORKAROUNDS.md entry on `fe test` compiling each EVM test alone says why.
 
 **The reject tests run on the native backend**, for the same reason. A failed native test
 prints its revert data as an EVM test does, so the harness reads each failing reject
-program's panic code from that run.
+program's error from that run.
 
 **A program that the official compiler rejects would fail its whole batch.** So `embed.py`
 first runs `fe check` on each program alone, about 0.2 s each and in parallel, and leaves out

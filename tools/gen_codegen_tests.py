@@ -420,8 +420,8 @@ CHAIN = FeSource(CHAIN_MSG.source + "\ncontract CgChain {\n"
 
 
 # The case number of the main deployment. Smaller numbers name the other deployments, in order
-# from 1, and larger numbers name the calls. In hex, a failed test's panic code then ends in the
-# case: 0x1_0000_1003 is the third call (fegen.Kind).
+# from 1, and larger numbers name the calls. The revert data of a failed test shows the case in
+# hex, where 0x1003 is the third call.
 MAIN_CASE = CaseNumber(0x1000)
 
 

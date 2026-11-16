@@ -11,21 +11,25 @@ import subprocess
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
-from enum import Enum
+from dataclasses import dataclass, fields
+from functools import cache
 from pathlib import Path
 from typing import ClassVar, NamedTuple, NewType, Self
+
+from eth_abi.abi import decode as abi_decode
+from eth_abi.abi import encode as abi_encode
+from eth_utils.crypto import keccak
 
 # The text of a Fe program or module.
 FeSource = NewType("FeSource", str)
 # One line of Fe code, without its line end.
 FeLine = NewType("FeLine", str)
-# A Fe expression, such as a string literal or a `difftest::CaseCode`.
+# A Fe expression, such as a string literal or a `difftest::Rejected`.
 FeExpr = NewType("FeExpr", str)
 # A piece of Fe code that is neither a line nor an expression, such as a type, the statements of
 # a block, or what follows the name of a msg variant.
 FeCode = NewType("FeCode", str)
-# A Fe identifier that names a contract, a function or a local.
+# A Fe identifier that names a contract, a struct, a function or a local.
 FeName = NewType("FeName", str)
 # The name of a Fe test function, as `fe test` reports it.
 TestName = NewType("TestName", str)
@@ -40,10 +44,10 @@ Word = NewType("Word", int)
 AccountIndex = NewType("AccountIndex", int)
 # A number of EXTRA_BYTE bytes that a deployment or call appends after its ABI words.
 ExtraBytes = NewType("ExtraBytes", int)
-# The code of a Panic that a test fails with (`Kind` says what it names).
+# The code of a Panic, with which Fe's own checks fail a test, such as 0x11 for an overflow.
 PanicCode = NewType("PanicCode", int)
-# A case is numbered by its line in the call script, so that a failed test's panic code names
-# that line (DESIGN.md §10).
+# A case is numbered by its line in the call script, so that a failed test's error names that
+# line (DESIGN.md §10).
 CaseNumber = NewType("CaseNumber", int)
 NO_LINE = CaseNumber(0)
 
@@ -299,7 +303,7 @@ class RawCall(Payload):
         return bytes(self.data)
 
 
-# A failed test's panic code names the dispatcher probe by this index (DESIGN.md §10).
+# A failed test's error names the dispatcher probe by this index (DESIGN.md §10).
 ProbeIndex = NewType("ProbeIndex", int)
 
 
@@ -311,11 +315,6 @@ class Probe:
 
     index: ProbeIndex
     payload: Payload
-
-    @property
-    def code(self) -> FeExpr:
-        """Returns the Fe expression of this call's `difftest::CaseCode`."""
-        return Kind.PROBE.case_code(self.index)
 
 
 # A selector that DISPATCH sends as an unknown one.
@@ -333,56 +332,75 @@ def difftest_use(ingot: str) -> FeLine:
     return FeLine(f"use {ingot}::difftest")
 
 
-class Kind(Enum):
-    """What the panic code of a failed differential test names.
-
-    Each value is the first code of its range, in increasing order. Fe's own panic codes are
-    below 0x100. The codes are a protocol with the panic-code constants of fe0/src/difftest.fe,
-    which takes case codes as `CaseCode`. Change both sides together.
-    """
-
-    PANIC = 0
-    CASE = 1 << 32
-    PROBE = 2 << 32
-    SIZE = 3 << 32
-    ACCEPTED = 4 << 32
-    CODE_DIFFERS = 5 << 32
-    DIAG = 1 << 40
-
-    def case_code(self, past_start: int) -> FeExpr:
-        """Returns the Fe expression of the `difftest::CaseCode` that is `past_start` past the
-        start of this range."""
-        return FeExpr(f"difftest::CaseCode::new({self.value + past_start:#x})")
-
-
 # A byte offset into the code of a contract.
 CodeOffset = NewType("CodeOffset", int)
+# The module whose `#[error]` structs a failed differential test reverts with.
+DIFFTEST: Path = FE0 / "src/difftest.fe"
+# The declaration of an error in DIFFTEST, which captures its name and its fields.
+_ERROR_DECL: re.Pattern[str] = re.compile(r"^#\[error\]\npub struct (\w+) \{([^}]*)\}$", re.M)
+# A field of an error in DIFFTEST. Each field is one ABI word.
+_ERROR_FIELD: re.Pattern[str] = re.compile(r"\s*pub (\w+): u256\s*")
+# The selector of a Panic, as Fe's own checks revert with it.
+PANIC_SELECTOR: bytes = keccak(text="Panic(uint256)")[:4]
 
 
+class ErrorDecl(NamedTuple):
+    """An error that DIFFTEST declares."""
+
+    name: FeName
+    fields: tuple[FeName, ...]
+
+    @classmethod
+    def all(cls) -> list[Self]:
+        """Returns the errors that DIFFTEST declares, in order. Errors with ValueError when a
+        field is not a u256."""
+        decls = []
+        for name, body in _ERROR_DECL.findall(DIFFTEST.read_text()):
+            matches = [_ERROR_FIELD.fullmatch(f) for f in body.split(",") if f.strip()]
+            if not all(matches):
+                raise ValueError(f"{DIFFTEST}: a field of {name} is not `pub <name>: u256`")
+            decls.append(cls(FeName(name), tuple(FeName(m[1]) for m in matches if m)))
+        return decls
+
+    @property
+    def selector(self) -> bytes:
+        """Returns the error's selector, as Solidity and Fe compute it."""
+        return keccak(text=f"{self.name}({','.join(['uint256'] * len(self.fields))})")[:4]
+
+
+@dataclass(frozen=True)
 class Failure:
-    """What a failed differential test reports through its panic code, which says what failed and
-    where (DESIGN.md §10)."""
+    """What a failed differential test reports through its revert data, which says what failed
+    and where (DESIGN.md §10). Each subclass but Panicked mirrors the error of DIFFTEST with its
+    name and fields, which `check_errors` checks."""
+
+    @classmethod
+    def of_words(cls, words: Sequence[int]) -> Failure:
+        """Returns the failure of this class whose fields, in order, are `words`."""
+        return cls(*words)
 
     @staticmethod
-    def decode(code: PanicCode) -> Failure:
-        """Returns what the panic code `code` names."""
-        kind = next(k for k in reversed(Kind) if k.value <= code)
-        past_start = code - kind.value
-        match kind:
-            case Kind.PANIC:
-                return Panicked(code)
-            case Kind.CASE:
-                return CaseDiffers(CaseNumber(past_start))
-            case Kind.PROBE:
-                return ProbeDiffers(ProbeIndex(past_start))
-            case Kind.SIZE:
-                return TooLarge(CaseNumber(past_start))
-            case Kind.ACCEPTED:
-                return Accepted()
-            case Kind.CODE_DIFFERS:
-                return CodeDiffers(CodeOffset(past_start))
-            case Kind.DIAG:
-                return Rejected(DiagWord.unpack(code))
+    def decode(revert: bytes) -> Failure | None:
+        """Returns the failure that the revert data `revert` names, or None when it names none.
+        Errors as `of_words` does when the data does not fit the error's fields."""
+        if revert[:4] == PANIC_SELECTOR:
+            return Panicked(PanicCode(int.from_bytes(revert[4:])))
+        decl = _errors_by_selector().get(revert[:4])
+        if decl is None:
+            return None
+        words: tuple[int, ...] = abi_decode(["uint256"] * len(decl.fields), revert[4:])
+        return _failure_classes()[decl.name].of_words(words)
+
+
+@cache
+def _errors_by_selector() -> dict[bytes, ErrorDecl]:
+    """Returns the errors of DIFFTEST, by selector."""
+    return {d.selector: d for d in ErrorDecl.all()}
+
+
+def _failure_classes() -> dict[str, type[Failure]]:
+    """Returns the subclasses of Failure, by name."""
+    return {c.__name__: c for c in Failure.__subclasses__()}
 
 
 @dataclass(frozen=True)
@@ -431,7 +449,28 @@ class Rejected(Failure):
     """Fe0 rejected the program, or rejected it with another error or position than the reject
     header names (SPEC.md §8)."""
 
-    word: DiagWord
+    code: DiagCode
+    offset: ByteOffset
+
+    @classmethod
+    def of_words(cls, words: Sequence[int]) -> Failure:
+        """Returns the failure whose words are the value of the code (`DiagCode.value`) and the
+        offset. Errors as `DiagCode.of_value` does."""
+        value, offset = words
+        return cls(DiagCode.of_value(value), ByteOffset(offset))
+
+    @property
+    def diag(self) -> Diag:
+        return Diag(self.code, self.offset)
+
+
+def check_errors() -> None:
+    """Checks that each error of DIFFTEST has the name and the fields of a Failure subclass, and
+    each Failure subclass but Panicked has an error."""
+    decls = {d.name: d.fields for d in ErrorDecl.all()}
+    classes = {name: tuple(f.name for f in fields(c))
+               for name, c in _failure_classes().items() if c is not Panicked}
+    assert decls == classes, f"{DIFFTEST} declares {decls}, but fegen.Failure has {classes}"
 
 
 class Case(NamedTuple):
@@ -443,11 +482,6 @@ class Case(NamedTuple):
     # The account that sends the case. It applies only on a node (tools/node.py), as DESIGN.md
     # §10, "On a node", says.
     sender: AccountIndex = AccountIndex(0)
-
-    @property
-    def code(self) -> FeExpr:
-        """Returns the Fe expression of this case's `difftest::CaseCode`."""
-        return Kind.CASE.case_code(self.number)
 
 
 class CallCase(NamedTuple):
@@ -514,7 +548,7 @@ def evm_test(name: TestName, balance: Wei, statements: list[FeLine]) -> list[FeL
 class DiffTest:
     """A test that compares Fe0's build of a program with the official build.
 
-    The test fails with the panic code (`Kind`) of the first case whose builds differ.
+    The test fails with the error (`Failure`) of the first case whose builds differ.
     """
 
     # The test function's name.
@@ -544,29 +578,30 @@ class DiffTest:
                FeLine(f"    let b = difftest::Builds {{ ours: {ours}, theirs: {theirs} }}")]
         a = FeName("a")
         for d in self.cases.deploys:
-            out += block(d.payload.build(a) + [FeLine(f"let _ = b.deploy({a}, {d.code})")])
-        m = self.cases.main.payload
-        out += indent(m.build(a))
-        out.append(FeLine(f"    let p = b.deploy_main({a}, {self.cases.main.code})"))
+            out += block(d.payload.build(a) + [FeLine(f"let _ = b.deploy({a}, case: {d.number})")])
+        main = self.cases.main
+        out += indent(main.payload.build(a))
+        out.append(FeLine(f"    let p = b.deploy_main({a}, case: {main.number})"))
         for c in self.cases.calls:
-            out += call(c.case.payload, c.case.code)
+            out += call(c.case.payload, FeName("call"), FeCode(f"case: {c.case.number}"))
         for probe in DISPATCH:
-            out += call(probe.payload, probe.code)
+            out += call(probe.payload, FeName("probe"), FeCode(f"index: {probe.index}"))
         test = evm_test(self.test, BALANCE, [FeLine(f"{self.runner}()")])
         return out + [FeLine("}"), FeLine("")] + test
 
 
-def call(payload: Payload, case: FeExpr) -> list[FeLine]:
-    """Returns the block of a runner that sends `payload` to the main deployment and
-    fails with the case code `case`, a Fe expression, when the builds differ."""
+def call(payload: Payload, method: FeName, which: FeCode) -> list[FeLine]:
+    """Returns the block of a runner that sends `payload` to the main deployment with the
+    `difftest::Deployed` method `method`. `which` is the method's labelled argument that names
+    the case or the probe, such as `case: 3`."""
     d = FeName("d")
-    return block(payload.build(d) + [FeLine(f"p.call({d}, {case})")])
+    return block(payload.build(d) + [FeLine(f"p.{method}({d}, {which})")])
 
 
-def reject_test(test: TestName, source: FeSource, expected: "DiagWord") -> list[FeLine]:
+def reject_test(test: TestName, source: FeSource, expected: "Diag") -> list[FeLine]:
     """Returns the lines of a test function that checks that Fe0 rejects `source` with the
-    DiagWord `expected`."""
-    check = f"difftest::rejects({lit(source)}, difftest::DiagWord::new({expected.pack():#x}))"
+    error `expected`."""
+    check = f"difftest::rejects({lit(source)}, {expected.rejected()})"
     return [FeLine(""), FeLine("#[test]"), FeLine(f"fn {test}() {{"), FeLine(f"    {check}"),
             FeLine("}")]
 
@@ -652,15 +687,18 @@ class DiagCode(NamedTuple):
             raise ValueError(f"the error code {value} names no phase")
         return cls(PhaseLetter(PHASE_LETTERS[phase - 1]), value % 1000)
 
+    def value(self) -> int:
+        """Returns the value of the code, the inverse of `of_value`."""
+        return (PHASE_LETTERS.index(self.letter) + 1) * 1000 + self.number
+
     def __str__(self) -> str:
         """Returns the code as CODE spells it, such as `E116`."""
         return f"{self.letter}{self.number:03}"
 
 
 @dataclass(frozen=True)
-class DiagWord:
-    """An error of Fe0 as one panic code. `DiagWord` in fe0/src/difftest.fe packs the same
-    layout, and its test `diag_word_layout` checks the example of `check_diag_word`."""
+class Diag:
+    """An error of Fe0, as `Diag` in fe0/src/diag.fe holds it."""
 
     code: DiagCode
     # Where the error points.
@@ -675,30 +713,30 @@ class DiagWord:
         """
         return cls(DiagCode.matched(m), LineCol.matched(m).offset(source))
 
-    @classmethod
-    def unpack(cls, word: PanicCode) -> Self:
-        """Returns the error that the diag word `word` holds."""
-        code = DiagCode(PhaseLetter(chr(word >> 40)), word >> 24 & 0xffff)
-        return cls(code, ByteOffset(word & 0xffffff))
-
-    def pack(self) -> PanicCode:
-        """Returns the diag word, as `difftest::DiagWord::of` packs it."""
-        return PanicCode(ord(self.code.letter) << 40 | self.code.number << 24 | self.offset)
+    def rejected(self) -> FeExpr:
+        """Returns the Fe expression of the `difftest::Rejected` that holds the error."""
+        return FeExpr(f"difftest::Rejected {{ code: {self.code.value()}, offset: {self.offset} }}")
 
     def describe(self, source: FeSource) -> str:
         """Returns the code, line and column of the error in `source`, such as `E116 12:9`."""
         return f"{self.code} {LineCol.of(self.offset, source)}"
 
 
-def check_diag_word() -> None:
-    r"""Checks DiagCode and DiagWord against the examples of fe0/src/diag.fe and
-    `difftest::DiagWord`, and one source with `\r`."""
+def check_diag() -> None:
+    r"""Checks DiagCode and Diag against the example of fe0/src/diag.fe, the decoding of a
+    Rejected error, and one source with `\r`."""
     e116 = DiagCode(PhaseLetter("E"), 116)
     assert str(e116) == "E116"
     assert DiagCode.of_value(6034) == DiagCode(PhaseLetter("C"), 34)
-    at9 = DiagWord(e116, ByteOffset(9))
-    assert at9.pack() == 0x45_0074_000009 and DiagWord.unpack(at9.pack()) == at9
-    assert Failure.decode(at9.pack()) == Rejected(at9)
+    assert DiagCode.of_value(e116.value()) == e116
+    at9 = Diag(e116, ByteOffset(9))
+    rejected = next(d for d in ErrorDecl.all() if d.name == "Rejected")
+    revert = rejected.selector + abi_encode(["uint256", "uint256"], [e116.value(), 9])
+    match Failure.decode(revert):
+        case Rejected() as r:
+            assert r.diag == at9
+        case other:
+            raise AssertionError(f"{revert.hex()} decodes as {other}")
     source = FeSource("a\r\nx\ryz")
     assert LineCol(3, 2).offset(source) == 6 and LineCol.of(ByteOffset(6), source) == LineCol(3, 2)
-    assert DiagWord(e116, ByteOffset(6)).describe(source) == "E116 3:2"
+    assert Diag(e116, ByteOffset(6)).describe(source) == "E116 3:2"

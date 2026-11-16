@@ -59,8 +59,8 @@ from typing import ClassVar, Never, NamedTuple, NewType, Protocol, Self
 import fegen
 from fegen import (DEPLOYMENT_NAME, MAX, NO_LINE, ROOT, THIS, Accepted, Account, AccountIndex, Arg,
                    ByteOffset, Call, CallCase, Callee, Case, CaseDiffers, CaseNumber, Cases, Deploy,
-                   DeploymentName, DiagCode, DiagWord, DiffTest, ExtraBytes, Failure, FeLine, FeName,
-                   FeSource, LineCol, Named, PanicCode, Payload, PhaseLetter, ProbeDiffers, RawCall,
+                   DeploymentName, Diag, DiagCode, DiffTest, ExtraBytes, Failure, FeLine, FeName,
+                   FeSource, LineCol, Named, Panicked, Payload, PhaseLetter, ProbeDiffers, RawCall,
                    Rejected, Selector, TestName, TooLarge, Wei, Word)
 
 CORPUS: Path = ROOT / "corpus"
@@ -596,9 +596,9 @@ class Tested(Protocol):
         """The name of the program's test."""
         ...
 
-    def explain(self, code: PanicCode) -> FailureMessage | None:
-        """Returns what the failure Panic(`code`) of the program's test means, or None for a code
-        that it does not explain. `report` then gives the code itself."""
+    def explain(self, failure: Failure) -> FailureMessage | None:
+        """Returns what `failure` of the program's test means, or None for a failure that it does
+        not explain. `report` then gives the failure itself."""
         ...
 
 
@@ -663,10 +663,10 @@ class Program:
         top = fegen.source([FeLine(head), fegen.difftest_use("fe0"), FeLine("")])
         return FeSource(top + self.diff.source + fegen.source([FeLine(""), *self.diff.lines()]))
 
-    def explain(self, code: PanicCode) -> FailureMessage | None:
-        match Failure.decode(code):
-            case Rejected(word):
-                diag = word.describe(self.diff.source)
+    def explain(self, failure: Failure) -> FailureMessage | None:
+        match failure:
+            case Rejected() as r:
+                diag = r.diag.describe(self.diff.source)
                 return FailureMessage(f"{self.path}: Fe0 rejects it with {diag}")
             case ProbeDiffers(index):
                 return FailureMessage(f"{self.path}: dispatcher probe {index} of fegen.DISPATCH:"
@@ -696,7 +696,7 @@ class Reject:
     # corpus/reject/X.fe, relative to ROOT.
     path: Path
     source: FeSource
-    expected: DiagWord
+    expected: Diag
     # Whether the header says `// fe: accepts`, so that the official compiler accepts it.
     fe_accepts: bool
 
@@ -723,7 +723,7 @@ class Reject:
         if not m:
             raise ScriptError("it has no `// expect: X000 line:col` header")
         try:
-            expected = DiagWord.matched(m, source)
+            expected = Diag.matched(m, source)
         except ValueError:
             raise ScriptError(f"the header names line {LineCol.matched(m).line}, past the end") from None
         return cls(path, source, expected, FE_ACCEPTS in lines)
@@ -751,12 +751,12 @@ class Reject:
                                   " `// fe: accepts` if Fe0 rejects it on purpose")
         return None
 
-    def explain(self, code: PanicCode) -> FailureMessage | None:
-        match Failure.decode(code):
+    def explain(self, failure: Failure) -> FailureMessage | None:
+        match failure:
             case Accepted():
                 got = "accepts it"
-            case Rejected(word):
-                got = "gives " + word.describe(self.source)
+            case Rejected() as r:
+                got = "gives " + r.diag.describe(self.source)
             case _:
                 return None
         expected = self.expected.describe(self.source)
@@ -807,7 +807,7 @@ def fe_rejection(path: Path) -> str | None:
 _RESULT = r"^{}\s+\[[^\]]*\]\s+(?:\w+\s+)?(\w+)"
 _PASSED = re.compile(_RESULT.format("PASS") + "$", re.M)
 _FAILED = re.compile(_RESULT.format("FAIL"))
-_PANICKED = re.compile(_RESULT.format("FAIL") + r"\n\s+(?:\w+\s+)?Test reverted: 0x4e487b71([0-9a-f]{64})$",
+_REVERTED = re.compile(_RESULT.format("FAIL") + r"\n\s+(?:\w+\s+)?Test reverted: 0x((?:[0-9a-f]{2})*)$",
                        re.M)
 
 
@@ -815,16 +815,17 @@ class TestRun(NamedTuple):
     """What `fe test` reports."""
 
     passed: set[TestName]
-    # The panic code of each test that failed with one, by test name.
-    panics: dict[TestName, PanicCode]
+    # The failure of each test whose revert data names one, by test name.
+    failures: dict[TestName, Failure]
     output: str
 
     @classmethod
     def parse(cls, output: str) -> Self:
         """Returns what the output of `fe test` reports."""
-        panics = {TestName(name): PanicCode(int(code, 16))
-                  for name, code in _PANICKED.findall(output)}
-        return cls({TestName(name) for name in _PASSED.findall(output)}, panics, output)
+        decoded = {TestName(name): Failure.decode(bytes.fromhex(data))
+                   for name, data in _REVERTED.findall(output)}
+        failures = {name: f for name, f in decoded.items() if f is not None}
+        return cls({TestName(name) for name in _PASSED.findall(output)}, failures, output)
 
     def why(self, test: TestName) -> str:
         """Returns a sentence that quotes what the output says about the failure of `test`: the
@@ -865,18 +866,26 @@ class FeTest(NamedTuple):
         return TestRun.parse(r.stdout + r.stderr)
 
 
+def unexplained(path: Path, failure: Failure) -> FailureMessage:
+    """Returns the message of `failure` of the test of the program `path`, which the program does
+    not explain."""
+    match failure:
+        case Panicked(code):
+            return FailureMessage(f"{path}: the test panicked with Panic({code:#04x})")
+    return FailureMessage(f"{path}: the test failed with {failure}")
+
+
 def report(tests: Mapping[TestName, Tested], run: TestRun) -> list[FailureMessage]:
     """Returns a message for each test that did not pass in `run`.
 
     `tests` maps each test name to its program. Stops at the first test that failed without a
-    panic code.
+    Failure.
     """
     failures: list[FailureMessage] = []
     for name in sorted(tests):
-        if name in run.panics:
-            code = run.panics[name]
-            failures.append(tests[name].explain(code) or FailureMessage(
-                f"{tests[name].path}: the test panicked with Panic({code:#04x})"))
+        if name in run.failures:
+            failure = run.failures[name]
+            failures.append(tests[name].explain(failure) or unexplained(tests[name].path, failure))
         elif name not in run.passed:
             failures.append(FailureMessage(f"{name} did not pass, and {run.why(name)}"))
             break
@@ -1055,12 +1064,13 @@ def check_header() -> None:
     r"""Checks that both header lines end at `\r\n` and at a lone `\r`, as fe0 counts lines."""
     source = FeSource("// expect: E116 3:2\r\n// fe: accepts\rx\ryz")
     r = Reject.parse(Path("x.fe"), source)
-    assert r.expected == DiagWord(DiagCode(PhaseLetter("E"), 116), ByteOffset(37)) and r.fe_accepts
+    assert r.expected == Diag(DiagCode(PhaseLetter("E"), 116), ByteOffset(37)) and r.fe_accepts
     assert r.expected.describe(source) == "E116 3:2"
 
 
 def main() -> None:
-    fegen.check_diag_word()
+    fegen.check_diag()
+    fegen.check_errors()
     check_header()
     check_script_line()
     ap = parser(__doc__)

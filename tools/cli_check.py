@@ -29,8 +29,7 @@ import embed
 import fegen
 import gen
 from embed import FailureMessage
-from fegen import (ROOT, CodeDiffers, DiagWord, Failure, FeLine, FeName, FeSource, PanicCode, Rejected,
-                   TestName, Wei)
+from fegen import ROOT, CodeDiffers, Diag, Failure, FeLine, FeName, FeSource, Rejected, TestName, Wei
 
 CLI: Path = ROOT / "fe0-cli"
 # The executable that `fe build` writes. It is named after the ingot.
@@ -82,14 +81,14 @@ class CliProgram:
         lines += fegen.evm_test(self.test, Wei(0), [FeLine(f"{self.runner}()")])
         return fegen.source(lines)
 
-    def explain(self, code: PanicCode) -> FailureMessage | None:
-        match Failure.decode(code):
+    def explain(self, failure: Failure) -> FailureMessage | None:
+        match failure:
             case CodeDiffers(offset):
                 return FailureMessage(f"{self.path}: the CLI's code differs from Fe0's on the EVM"
                                       f" at byte {offset}")
-            case Rejected(word):
+            case Rejected() as r:
                 return FailureMessage(f"{self.path}: the CLI accepts it, but Fe0 on the EVM rejects"
-                                      f" it with {word.describe(self.source)}")
+                                      f" it with {r.diag.describe(self.source)}")
         return None
 
 
@@ -126,17 +125,17 @@ class Run(NamedTuple):
         A run that `compiled` always has hex."""
         return CliProgram(self.path, self.source, bytes.fromhex(self.stdout))
 
-    def error(self) -> DiagWord | None:
+    def error(self) -> Diag | None:
         """Returns the error that the CLI rejected the program with, or None when it did not exit
         with 1 or did not end stderr with an error.
 
-        Errors as `DiagWord.matched` does.
+        Errors as `Diag.matched` does.
         """
         lines = self.stderr.splitlines()
         m = ERROR_LINE.fullmatch(lines[-1]) if lines else None
         if self.exit_code != ExitCode.REJECTED or not m:
             return None
-        return DiagWord.matched(m, self.source)
+        return Diag.matched(m, self.source)
 
     def said(self) -> str:
         """Returns the exit code of the CLI, the start of its stdout and its stderr, to quote in a

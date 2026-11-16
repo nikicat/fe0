@@ -39,7 +39,7 @@ import cli_check
 import embed
 import fegen
 from embed import FailureMessage
-from fegen import ROOT, ByteOffset, DiagCode, DiagWord, FeName, FeSource
+from fegen import ROOT, ByteOffset, Diag, DiagCode, FeName, FeSource
 from node import BLOCK_GAS, Gas, Node, corpus
 
 CHAIN: Path = ROOT / "fe0-chain"
@@ -178,7 +178,7 @@ class Reverted(NamedTuple):
 
     revert: bytes
     # The error that the revert data holds, or None when it is not a CompileError.
-    word: DiagWord | None
+    diag: Diag | None
 
     @classmethod
     def of(cls, revert: bytes, abi: ABI) -> Self:
@@ -191,12 +191,12 @@ class Reverted(NamedTuple):
             value, offset = Web3().codec.decode(get_abi_input_types(error), revert[4:])
         except DecodingError:
             return cls(revert, None)
-        return cls(revert, DiagWord(DiagCode.of_value(value), ByteOffset(offset)))
+        return cls(revert, Diag(DiagCode.of_value(value), ByteOffset(offset)))
 
     def describe(self, source: FeSource) -> str:
         """Returns the error in `source` that the call reverted with, or the revert data when it
         is not a CompileError."""
-        return self.word.describe(source) if self.word else f"revert data {self.revert.hex()}"
+        return self.diag.describe(source) if self.diag else f"revert data {self.revert.hex()}"
 
 
 # What one `compile(bytes)` call returned.
@@ -304,7 +304,7 @@ class Chain:
         match self.compile(r.source):
             case Compiled():
                 return [FailureMessage(f"{r.path}: Compiler accepts it")]
-            case Reverted() as got if got.word != r.expected:
+            case Reverted() as got if got.diag != r.expected:
                 return [FailureMessage(f"{r.path}: Compiler gives {got.describe(r.source)},"
                                        f" expected {r.expected.describe(r.source)}")]
             case Reverted():

@@ -60,11 +60,11 @@ def main() -> None:
         code: bytes = contract.functions.compile(source.encode()).call()
     except ContractLogicError as e:
         got = Reverted.of(bytes(HexBytes(HexStr(str(e.data)))), abi)
-        if got.word is None:
+        if got.diag is None:
             sys.exit(f"{args.program}: Compiler reverts with {got.describe(source)}")
-        at = LineCol.of(got.word.offset, source)
-        text = messages().get(got.word.code, "")
-        print(f"{args.program}:{at}: {got.word.code} {text}", file=sys.stderr)
+        at = LineCol.of(got.diag.offset, source)
+        text = messages().get(got.diag.code, "")
+        print(f"{args.program}:{at}: {got.diag.code} {text}", file=sys.stderr)
         sys.exit(ExitCode.REJECTED)
     print(code.hex())
 

@@ -10,10 +10,11 @@ use ingot::diag::{
     L_UNSUPPORTED_LITERAL,
     L_UNTERMINATED_STRING,
 }
-use ingot::difftest::DiagWord
+use ingot::difftest::Rejected
 use ingot::io::{Source, text}
 use ingot::lexer::*
 use std::abi::DynString
+use std::evm::revert_error
 
 fn lexed(_ s: own DynString) -> Lexed {
     with (Source = text(s)) {
@@ -286,12 +287,12 @@ fn doc_comments_are_tokens() {
     )
 }
 
-// Returns the value in `r`. Fails with Panic(`DiagWord::of(d)`) when `r` holds the error `d`.
+// Returns the value in `r`. Errors with `Rejected::of(d)` when `r` holds the error `d`.
 // Core's `unwrap` cannot do this, because `Diag` is not revert data.
 fn made(_ r: own Result<Diag, u256>) -> u256 {
     match r {
         Result::Ok(v) => v,
-        Result::Err(d) => DiagWord::of(d).fail(),
+        Result::Err(d) => revert_error(Rejected::of(d)),
     }
 }
 
