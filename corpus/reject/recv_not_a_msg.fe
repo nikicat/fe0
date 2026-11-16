@@ -1,0 +1,9 @@
+// expect: N007 8:5
+// A `recv` block names a msg, not an event.
+#[event]
+struct Ev {
+    a: u256,
+}
+contract C {
+    recv Ev {}
+}

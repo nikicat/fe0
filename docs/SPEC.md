@@ -613,6 +613,7 @@ point on a node against `corpus/callee.fe` **[✓]**:
   ([ADR 0020](adr/0020-external-calls.md), "Consequences").
 
 **Messages and dispatch.**
+- In `recv M`, `M` must name a msg (`N002`, `N007`) **[✓]**.
 - A `recv M` block must have exactly one arm per variant of `M` **[✓]** (the "missing variants"
   error).
 - Arm bindings name the variant's fields: `Set { a: x }` binds field `a` to the local `x`, and

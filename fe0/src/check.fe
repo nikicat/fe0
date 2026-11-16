@@ -485,6 +485,22 @@ impl Checker {
         self.find(self.c.ast.items, sym)
     }
 
+    // Returns the item named `sym`, which node `i` uses as a `kind`. Errors at `i` with
+    // N_UNKNOWN_NAME when no item is named `sym`, and with `wrong` when it is of another kind.
+    fn item_of(self, _ sym: Sym, _ kind: Kind, _ i: NodeId, _ wrong: DiagCode) -> Result<
+        Diag,
+        NodeId,
+    > {
+        let d = self.item(sym)
+        if d.is_none() {
+            return Result::Err(self.at(N_UNKNOWN_NAME, i))
+        }
+        if self.node(d).kind != kind {
+            return Result::Err(self.at(wrong, i))
+        }
+        Result::Ok(d)
+    }
+
     fn local(self, _ sym: Sym) -> NodeId {
         var k = self.body.locals.len()
         while k > 0 {
@@ -734,6 +750,8 @@ impl Checker {
         } else if k == NODE_BOOL {
             v = Val { v: bit(n.is_true()), ty: TY_BOOL }
         } else if k == NODE_NAME {
+            // This is item_of written out. Calling item_of here made Checker 79 bytes larger
+            // (Fe 26.6.0, -O s, Nov 15).
             let d = self.item(n.name())
             if d.is_none() {
                 return Result::Err(self.at(N_UNKNOWN_NAME, i))
@@ -952,14 +970,12 @@ impl Checker {
         self.node(self.c.resolved(r)).list()
     }
 
-    // Checks RECV `r` and each of its arms against the msg it names. Errors with N_MISSING_ARM
-    // when a variant has no arm.
+    // Checks RECV `r` and each of its arms against the msg it names. Errors as `item_of` does,
+    // with N_NOT_A_MSG when the name is not a msg, and with N_MISSING_ARM when a variant has no
+    // arm.
     fn recv(mut self, _ r: NodeId) -> Result<Diag, ()> {
         let n = self.node(r)
-        let m = self.item(n.name())
-        if m.is_none() || self.node(m).kind != NODE_MSG {
-            return Result::Err(self.at(N_NOT_A_MSG, r))
-        }
+        let m = self.item_of(n.name(), NODE_MSG, r, N_NOT_A_MSG)?
         self.set_res(r, m)
         let variants = self.node(m).list()
         self.unique(n.list(), N_DUPLICATE)?
@@ -1123,20 +1139,14 @@ impl Checker {
         Result::Ok(t.map_value())
     }
 
-    // Checks EMIT `i` (SPEC §6, "Events"). Errors as `effect` and `labeled_args` do, with
-    // E_NOT_MUT when the body may not write the `Log` effect, and with N_UNKNOWN_NAME or
-    // T_MISMATCH when the event's name is not an event.
+    // Checks EMIT `i` (SPEC §6, "Events"). Errors as `effect`, `item_of` and `labeled_args` do,
+    // with E_NOT_MUT when the body may not write the `Log` effect, and with T_MISMATCH when the
+    // event's name is not an event.
     fn emit(mut self, _ i: NodeId) -> Result<Diag, ()> {
         let n = self.node(i)
         let log = self.effect(i, TY_LOG)?
         self.access(log, self.body.grant.write, self.at(E_NOT_MUT, i))?
-        let e = self.item(n.event())
-        if e.is_none() {
-            return Result::Err(self.at(N_UNKNOWN_NAME, i))
-        }
-        if self.node(e).kind != NODE_EVENT {
-            return Result::Err(self.at(T_MISMATCH, i))
-        }
+        let e = self.item_of(n.event(), NODE_EVENT, i, T_MISMATCH)?
         self.set_res(i, e)
         self.labeled_args(i, self.node(e).list())
     }
@@ -1164,18 +1174,11 @@ impl Checker {
         self.access(call, self.body.grant.write, self.at(E_NOT_MUT, i))
     }
 
-    // Returns the VARIANT that `M::V` of MSG_CALL `i` names. Errors with N_UNKNOWN_NAME when no
-    // item is named `M`, with N_NOT_A_MSG when `M` is not a msg, and with N_UNKNOWN_VARIANT when
-    // `M` has no variant `V`.
+    // Returns the VARIANT that `M::V` of MSG_CALL `i` names. Errors as `item_of` does, with
+    // N_NOT_A_MSG when `M` is not a msg, and with N_UNKNOWN_VARIANT when `M` has no variant `V`.
     fn called_variant(self, _ i: NodeId) -> Result<Diag, NodeId> {
         let n = self.node(i)
-        let m = self.item(n.msg_name())
-        if m.is_none() {
-            return Result::Err(self.at(N_UNKNOWN_NAME, i))
-        }
-        if self.node(m).kind != NODE_MSG {
-            return Result::Err(self.at(N_NOT_A_MSG, i))
-        }
+        let m = self.item_of(n.msg_name(), NODE_MSG, i, N_NOT_A_MSG)?
         let v = self.find(self.node(m).list(), n.variant())
         if v.is_none() {
             return Result::Err(self.at(N_UNKNOWN_VARIANT, i))

@@ -1,0 +1,5 @@
+// expect: N002 4:5
+// A `recv` block names a msg, and no item has this name.
+contract C {
+    recv Nope {}
+}
