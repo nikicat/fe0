@@ -431,9 +431,9 @@ ingot under `out/difftest/` that holds:
 
 A failed test reverts with a typed error for each kind of failure, which says what failed and
 where. The errors are the `#[error]` structs of `fe0/src/difftest.fe`, and `tools/fegen.py`
-decodes them. Each error names itself by its selector, so the two sides keep no range protocol
-in step. `embed.py` turns each error into a message that names the line of the call script, the
-dispatcher probe or Fe0's error.
+decodes them. Each error names itself by its selector. Both sides spell each error's name and
+fields, and `fegen.check_errors` checks that they agree. `embed.py` turns each error into a
+message that names the line of the call script, the dispatcher probe or Fe0's error.
 
 The codegen tests (`fe0/src/codegen_tests.fe`) are differential tests of the same kind. They
 live in the `fe0` ingot, so that `fe test` there runs them, and their generator shares

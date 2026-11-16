@@ -46,14 +46,18 @@ AccountIndex = NewType("AccountIndex", int)
 ExtraBytes = NewType("ExtraBytes", int)
 # The code of a Panic, with which Fe's own checks fail a test, such as 0x11 for an overflow.
 PanicCode = NewType("PanicCode", int)
-# A case is numbered by its line in the call script, so that a failed test's error names that
-# line (DESIGN.md §10).
+# A failed test's error names its case by this number (DESIGN.md §10). A call script numbers a
+# case by its line, and the codegen tests number theirs around MAIN_CASE.
 CaseNumber = NewType("CaseNumber", int)
+# The main deployment of a call script without an `init` line, which no line names (the
+# call-script format in the docstring of tools/embed.py).
 NO_LINE = CaseNumber(0)
 
 
-def script_place(number: CaseNumber, line: Callable[[CaseNumber], str]) -> str:
-    return "main deployment (no init line)" if number == NO_LINE else line(number)
+def script_place(number: CaseNumber) -> str:
+    """Returns the place of the case `number` in its call script, which a failure's report names
+    (DESIGN.md §10)."""
+    return "main deployment (no init line)" if number == NO_LINE else f"line {number}"
 
 
 @dataclass(frozen=True)
@@ -316,6 +320,10 @@ class Probe:
     index: ProbeIndex
     payload: Payload
 
+    @property
+    def arg(self) -> FeCode:
+        return FeCode(f"index: {self.index}")
+
 
 # A selector that DISPATCH sends as an unknown one.
 PROBE_SELECTOR: Selector = Selector(0x7777)
@@ -382,7 +390,8 @@ class Failure:
     @staticmethod
     def decode(revert: bytes) -> Failure | None:
         """Returns the failure that the revert data `revert` names, or None when it names none.
-        Errors as `of_words` does when the data does not fit the error's fields."""
+        Errors with eth_abi's DecodingError when the data is shorter than the error's fields, and
+        as `of_words` does."""
         if revert[:4] == PANIC_SELECTOR:
             return Panicked(PanicCode(int.from_bytes(revert[4:])))
         decl = _errors_by_selector().get(revert[:4])
@@ -483,6 +492,10 @@ class Case(NamedTuple):
     # §10, "On a node", says.
     sender: AccountIndex = AccountIndex(0)
 
+    @property
+    def arg(self) -> FeCode:
+        return FeCode(f"case: {self.number}")
+
 
 class CallCase(NamedTuple):
     """A call may go to another deployment of the script, but only on a node. A test inside
@@ -578,24 +591,23 @@ class DiffTest:
                FeLine(f"    let b = difftest::Builds {{ ours: {ours}, theirs: {theirs} }}")]
         a = FeName("a")
         for d in self.cases.deploys:
-            out += block(d.payload.build(a) + [FeLine(f"let _ = b.deploy({a}, case: {d.number})")])
+            out += block(d.payload.build(a) + [FeLine(f"let _ = b.deploy({a}, {d.arg})")])
         main = self.cases.main
         out += indent(main.payload.build(a))
-        out.append(FeLine(f"    let p = b.deploy_main({a}, case: {main.number})"))
+        out.append(FeLine(f"    let p = b.deploy_main({a}, {main.arg})"))
         for c in self.cases.calls:
-            out += call(c.case.payload, FeName("call"), FeCode(f"case: {c.case.number}"))
+            out += call(FeName("call"), c.case)
         for probe in DISPATCH:
-            out += call(probe.payload, FeName("probe"), FeCode(f"index: {probe.index}"))
+            out += call(FeName("probe"), probe)
         test = evm_test(self.test, BALANCE, [FeLine(f"{self.runner}()")])
         return out + [FeLine("}"), FeLine("")] + test
 
 
-def call(payload: Payload, method: FeName, which: FeCode) -> list[FeLine]:
-    """Returns the block of a runner that sends `payload` to the main deployment with the
-    `difftest::Deployed` method `method`. `which` is the method's labelled argument that names
-    the case or the probe, such as `case: 3`."""
+def call(method: FeName, sent: Case | Probe) -> list[FeLine]:
+    """Returns the block of a runner that sends `sent` to the main deployment with the
+    `difftest::Deployed` method `method`."""
     d = FeName("d")
-    return block(payload.build(d) + [FeLine(f"p.{method}({d}, {which})")])
+    return block(sent.payload.build(d) + [FeLine(f"p.{method}({d}, {sent.arg})")])
 
 
 def reject_test(test: TestName, source: FeSource, expected: "Diag") -> list[FeLine]:

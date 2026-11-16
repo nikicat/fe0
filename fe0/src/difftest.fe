@@ -15,8 +15,9 @@ const MAX_INITCODE: usize = 49152
 // The gas for each call. Both builds get the same, so that only their code can differ.
 const CALL_GAS: u256 = 10000000
 
-// A failed test reverts with one of the errors below, which says what failed. tools/fegen.py
-// reads these declarations and decodes the revert data by their selectors (DESIGN.md §10).
+// A failed test reverts with one of the errors below, which says what failed. Each error has
+// the name and the u256 fields of a `fegen.Failure` subclass, which `fegen.check_errors` checks
+// (DESIGN.md §10).
 
 // The builds differ on the case `number` of the call script: only one deployment created a
 // contract, or the calls' success flags or return data differ.

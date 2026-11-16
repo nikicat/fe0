@@ -1,9 +1,7 @@
 """Deploy and call Fe0's and Fe's builds of a corpus program on a local anvil node.
 
 The differential harness on a node, step 0 of ADR 0016. It exists because inside `fe test` every
-call comes from one sender and logs are not visible. Each build runs the whole call script from
-the same snapshot of the node, so that both builds get the same addresses (DESIGN.md §10,
-"On a node").
+call comes from one sender and logs are not visible.
 """
 import subprocess
 import time
@@ -23,8 +21,8 @@ from web3.types import (CallTrace, DiffModeTrace, RPCEndpoint, TraceConfig, Trac
 import cli_check
 import embed
 import gen
-from fegen import (DISPATCH, FE, ROOT, THIS, Account, AccountIndex, AddressArg, CallCase, Case,
-                   DeploymentName, Payload, Probe, ProbeIndex, Word, script_place)
+from fegen import (DISPATCH, FE, NO_LINE, ROOT, THIS, Account, AccountIndex, AddressArg, CallCase,
+                   Case, DeploymentName, Payload, Probe, ProbeIndex, Word, script_place)
 
 # The node's hardfork. Cancun has no calldata floor price (EIP-7623), so the gas of a call less
 # the gas of the same transaction to an account with no code is what the code spent.
@@ -151,12 +149,14 @@ Label = NewType("Label", str)
 
 
 def line_label(case: Case) -> Label:
-    return Label(script_place(case.number, lambda n: f"line {n}"))
+    return Label(script_place(case.number))
 
 
 def deployment_label(case: Case, name: DeploymentName) -> Label:
+    if case.number == NO_LINE:
+        return line_label(case)
     what = "main deployment" if name == THIS else name
-    return Label(script_place(case.number, lambda _: f"{line_label(case)} ({what})"))
+    return Label(f"{line_label(case)} ({what})")
 
 
 def dispatch_label(index: ProbeIndex) -> Label:

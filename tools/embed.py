@@ -681,7 +681,9 @@ class Program:
 
     def where(self, number: CaseNumber) -> str:
         """Returns where the case `number` comes from in the call script, for a report."""
-        return f"{self.calls_path}:{fegen.script_place(number, str)}"
+        if number == NO_LINE:
+            return f"{self.calls_path}: {fegen.script_place(number)}"
+        return f"{self.calls_path}:{number}"
 
 
 # The header lines of a reject program, which the module doc describes.

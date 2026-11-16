@@ -242,8 +242,6 @@ struct Gen {
     c: Checked,
     // The piece of code being generated: the runtime code, then the initcode.
     asm: Asm,
-    // Each piece of code gets its own copy of what it calls (DESIGN.md §6.2), so `section`
-    // starts new Refs.
     refs: Refs,
     body: Body,
     loops: MemVec<Loop>,
