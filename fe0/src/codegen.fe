@@ -141,7 +141,23 @@ enum StubRevert {
 
 impl Copy for StubRevert {}
 
-// A shared block that reverts. `index` is its slot in `Gen.stubs`.
+// The three places of the memory layout that take argument words. A call's parameters go in
+// the callee's frame. An event's data and an external call's calldata go past the current
+// frame (DESIGN.md §6.1 to §6.3).
+enum ArgDest {
+    // The parameters of a function, in the callee's frame. The size is where that frame starts
+    // in this one.
+    Params(ListId, Size),
+    // The words of the log data, past the frame. Each argument is a field init of an event.
+    LogWords,
+    // The calldata of an external call, past the frame. Each argument is a field init of the
+    // variant whose fields are the list.
+    CallArgs(ListId),
+}
+
+impl Copy for ArgDest {}
+
+// A shared block that reverts. `index` is its slot in `Refs.stubs`.
 struct Stub { index: usize, revert: StubRevert }
 
 impl Copy for Stub {}
@@ -205,16 +221,30 @@ impl Copy for Leaves {}
 const LEAVES_WORD: Leaves = Leaves { word: true }
 const LEAVES_NOTHING: Leaves = Leaves { word: false }
 
+// The initcode and the runtime code each hold their own copy of the functions and stubs they
+// jump to (DESIGN.md §6.2, §6.3, "Stubs").
+struct Refs {
+    // The label of each FN that the code calls, by node. Every other node's slot is empty.
+    fn_labels: MemVec<LabelSlot>,
+    // The FNs that the code calls and does not hold yet.
+    todo: MemVec<NodeId>,
+    // The label of each Stub that the code uses, by index. The others' slots are empty.
+    stubs: MemVec<LabelSlot>,
+}
+
+impl Refs {
+    fn new(_ nodes: usize) -> Refs {
+        Refs { fn_labels: no_labels(nodes), todo: MemVec::new(), stubs: no_labels(ALL_STUBS.len()) }
+    }
+}
+
 struct Gen {
     c: Checked,
     // The piece of code being generated: the runtime code, then the initcode.
     asm: Asm,
-    // The label of each FN that `asm` calls, by node. Every other node's slot is empty.
-    fn_labels: MemVec<LabelSlot>,
-    // The FNs that `asm` calls and does not hold yet.
-    todo: MemVec<NodeId>,
-    // The label of each Stub that `asm` uses, by index. The others' slots are empty.
-    stubs: MemVec<LabelSlot>,
+    // Each piece of code gets its own copy of what it calls (DESIGN.md §6.2), so `section`
+    // starts new Refs.
+    refs: Refs,
     body: Body,
     loops: MemVec<Loop>,
 }
@@ -274,9 +304,7 @@ impl Gen {
         Gen {
             c,
             asm: Asm::new(),
-            fn_labels: no_labels(nodes),
-            todo: MemVec::new(),
-            stubs: no_labels(ALL_STUBS.len()),
+            refs: Refs::new(nodes),
             body: Body {
                 kind: NODE_NONE,
                 ret: TY_UNIT,
@@ -296,6 +324,7 @@ impl Gen {
         self.c.ast.list_len(l)
     }
 
+    // The walks over a list are index loops (docs/WORKAROUNDS.md).
     fn elem(self, _ l: ListId, _ k: usize) -> NodeId {
         self.c.ast.list_at(l, k)
     }
@@ -316,8 +345,7 @@ impl Gen {
 
     // Starts a new piece of code and returns the finished one before it.
     fn section(mut self) -> Asm {
-        self.fn_labels = no_labels(self.fn_labels.len())
-        self.stubs = no_labels(ALL_STUBS.len())
+        self.refs = Refs::new(self.c.ast.node_count())
         var done = core::mem::replace(mut self.asm, Asm::new())
         done.finish()
         done
@@ -325,10 +353,16 @@ impl Gen {
 
     // The label of `s` in the current piece of code. `stubs_end` emits the stub.
     fn stub(mut self, _ s: Stub) -> Label {
-        if self.stubs[s.index].is_empty() {
-            self.stubs.set(s.index, self.asm.label().slot())
+        if self.refs.stubs[s.index].is_empty() {
+            self.refs.stubs.set(s.index, self.asm.label().slot())
         }
-        self.stubs[s.index].label()
+        self.refs.stubs[s.index].label()
+    }
+
+    // Jumps to the stub `s` when the word on top of the stack is not zero.
+    fn jumpi_to(mut self, _ s: Stub) {
+        let l = self.stub(s)
+        self.asm.jumpi(l)
     }
 
     // Emits each stub that the code jumps to.
@@ -339,7 +373,7 @@ impl Gen {
     }
 
     fn emit_stub(mut self, _ s: Stub) {
-        let slot = self.stubs[s.index]
+        let slot = self.refs.stubs[s.index]
         if slot.is_empty() { return }
         self.asm.bind(slot.label())
         match s.revert {
@@ -392,19 +426,19 @@ impl Gen {
 
     // The label of FN `f` in the current piece of code. `functions` emits the FN.
     fn fn_label(mut self, _ f: NodeId) -> Label {
-        if self.fn_labels[f.index()].is_empty() {
-            self.fn_labels.set(f.index(), self.asm.label().slot())
-            self.todo.push(f)
+        if self.refs.fn_labels[f.index()].is_empty() {
+            self.refs.fn_labels.set(f.index(), self.asm.label().slot())
+            self.refs.todo.push(f)
         }
-        self.fn_labels[f.index()].label()
+        self.refs.fn_labels[f.index()].label()
     }
 
     // Emits each FN that the code calls, and each FN that those call.
     fn functions(mut self) {
-        while self.todo.len() > 0 {
-            let f = self.todo.pop().unwrap()
+        while self.refs.todo.len() > 0 {
+            let f = self.refs.todo.pop().unwrap()
             let n = self.node(f)
-            self.asm.bind(self.fn_labels[f.index()].label())
+            self.asm.bind(self.refs.fn_labels[f.index()].label())
             self.begin(f)
             self.body_end(n.body())
         }
@@ -560,13 +594,13 @@ impl Gen {
         } else {
             return
         }
-        self.asm.jumpi(self.stub(REVERT_EMPTY))
+        self.jumpi_to(REVERT_EMPTY)
     }
 
     // Reverts with empty data when the call carries value.
     fn non_payable(mut self) {
         self.op(OP_CALLVALUE)
-        self.asm.jumpi(self.stub(REVERT_EMPTY))
+        self.jumpi_to(REVERT_EMPTY)
     }
 
     // Reverts with empty data unless calldata holds at least `size` bytes.
@@ -574,7 +608,7 @@ impl Gen {
         self.push(size.word())
         self.op(OP_CALLDATASIZE)
         self.op(OP_LT)
-        self.asm.jumpi(self.stub(REVERT_EMPTY))
+        self.jumpi_to(REVERT_EMPTY)
     }
 
     // The runtime code: the dispatcher (DESIGN.md §6.4), the arms and what they call.
@@ -701,7 +735,7 @@ impl Gen {
         self.op(OP_ADD)
         self.op(OP_CODESIZE)
         self.op(OP_LT)
-        self.asm.jumpi(self.stub(REVERT_EMPTY))
+        self.jumpi_to(REVERT_EMPTY)
         self.push(args.word())
         self.push(rt.word())
         self.asm.push_label(end)
@@ -824,12 +858,12 @@ impl Gen {
             self.op(OP_DUP1)
             self.op(OP_SWAP2)
             self.op(OP_GT)
-            self.asm.jumpi(self.stub(PANIC_OVERFLOW))
+            self.jumpi_to(PANIC_OVERFLOW)
         } else if op == O_MINUS {
             self.op(OP_DUP2)
             self.op(OP_DUP2)
             self.op(OP_GT)
-            self.asm.jumpi(self.stub(PANIC_OVERFLOW))
+            self.jumpi_to(PANIC_OVERFLOW)
             self.op(OP_SWAP1)
             self.op(OP_SUB)
         } else if op == O_STAR {
@@ -837,7 +871,7 @@ impl Gen {
         } else if op == O_SLASH || op == O_PERCENT {
             self.op(OP_DUP1)
             self.op(OP_ISZERO)
-            self.asm.jumpi(self.stub(PANIC_DIV_ZERO))
+            self.jumpi_to(PANIC_DIV_ZERO)
             self.op(OP_SWAP1)
             self.op(if op == O_SLASH { OP_DIV } else { OP_MOD })
         } else if op == O_LT {
@@ -875,7 +909,7 @@ impl Gen {
         self.op(OP_ISZERO)
         self.op(OP_OR)
         self.op(OP_ISZERO)
-        self.asm.jumpi(self.stub(PANIC_OVERFLOW))
+        self.jumpi_to(PANIC_OVERFLOW)
         self.op(OP_SWAP2)
         self.op(OP_POP)
         self.op(OP_POP)
@@ -890,21 +924,38 @@ impl Gen {
         }
     }
 
+    // The values are evaluated in the order written, not in field order (SPEC.md §4). A call in a
+    // later value puts its frame past the current one, where these values go (DESIGN.md §6.1,
+    // §6.2). So no value is stored until all of them are evaluated.
+    fn store_args(mut self, _ args: ListId, _ dest: ArgDest) {
+        self.values(args)
+        var k = self.len(args)
+        while k > 0 {
+            k -= 1
+            self.fp_plus(self.dest_offset(dest, self.elem(args, k), k))
+            self.op(OP_MSTORE)
+        }
+        self.body.depth -= self.len(args)
+    }
+
+    fn dest_offset(self, _ dest: ArgDest, _ a: NodeId, _ k: usize) -> FrameOff {
+        match dest {
+            ArgDest::Params(params, next) => self.local_offset(self.elem(params, k)).past(next),
+            ArgDest::LogWords => self.log_offset(self.c.log_word(self.c.resolved(a))),
+            ArgDest::CallArgs(fields) => self.call_arg_offset(
+                self.index_of(fields, self.c.resolved(a)),
+            ),
+        }
+    }
+
     // Emits CALL `i`, by the calling convention of DESIGN.md §6.2.
     fn call(mut self, _ i: NodeId) -> Leaves {
         let f = self.c.resolved(i)
         let args = self.node(i).list()
         let params = self.node(f).list()
-        self.values(args)
-        var k = self.len(args)
         // The callee's frame starts where this body's ends.
         let next = self.body.frame
-        while k > 0 {
-            k -= 1
-            self.fp_plus(self.local_offset(self.elem(params, k)).past(next))
-            self.op(OP_MSTORE)
-        }
-        self.body.depth -= self.len(args)
+        self.store_args(args, ArgDest::Params(params, next))
         let back = self.asm.label()
         self.asm.push_label(back)
         self.fp_plus(RET_ADDR.past(next))
@@ -1102,18 +1153,7 @@ impl Gen {
     fn emit(mut self, _ i: NodeId) {
         let e = self.c.resolved(i)
         let args = self.node(i).list()
-        self.values(args)
-        var k = self.len(args)
-        // Store the values only after all of them are evaluated, because a call in a later value
-        // uses the memory past the frame.
-        while k > 0 {
-            k -= 1
-            self.fp_plus(
-                self.log_offset(self.c.log_word(self.c.resolved(self.elem(args, k)))),
-            )
-            self.op(OP_MSTORE)
-        }
-        self.body.depth -= self.len(args)
+        self.store_args(args, ArgDest::LogWords)
         // LOGn takes the offset on top, then the size, topic 0, topic 1 and the later topics.
         // So the last indexed field is pushed first.
         let data = self.c.data_words(e)
@@ -1153,6 +1193,10 @@ impl Gen {
 
     // Emits `a.call(M::V { … })` as one CALL (SPEC §6, "Calls"). The calldata layout is in
     // DESIGN.md §6.3.
+    //
+    // It stays one function. Moving the decoding of the return word into its own function made
+    // Back 20 bytes larger. Moving the CALL as well made it 48 bytes larger (Fe 26.6.0, -O s,
+    // Nov 14).
     fn msg_call(mut self, _ i: NodeId) -> Leaves {
         let n = self.node(i)
         let v = self.c.resolved(i)
@@ -1160,15 +1204,7 @@ impl Gen {
         let args = n.list()
         // The order of evaluation is in SPEC §4.
         self.value(n.target())
-        self.values(args)
-        var k = self.len(args)
-        while k > 0 {
-            k -= 1
-            let f = self.index_of(fields, self.c.resolved(self.elem(args, k)))
-            self.fp_plus(self.call_arg_offset(f))
-            self.op(OP_MSTORE)
-        }
-        self.body.depth -= self.len(args)
+        self.store_args(args, ArgDest::CallArgs(fields))
         // The selector goes in the low bytes of the word where the frame ends.
         self.push(self.c.ast.word_value(v))
         self.fp_plus(self.past_frame(bytes(0)))
@@ -1185,7 +1221,7 @@ impl Gen {
         self.op(OP_GAS)
         self.op(OP_CALL)
         self.op(OP_ISZERO)
-        self.asm.jumpi(self.stub(REVERT_RETURNDATA))
+        self.jumpi_to(REVERT_RETURNDATA)
         self.body.depth -= 1
         let ty = self.c.ty(i)
         if ty == TY_UNIT {
@@ -1195,7 +1231,7 @@ impl Gen {
         self.push(WORD.word())
         self.op(OP_RETURNDATASIZE)
         self.op(OP_LT)
-        self.asm.jumpi(self.stub(REVERT_EMPTY))
+        self.jumpi_to(REVERT_EMPTY)
         self.push(WORD.word())
         self.push(0)
         self.push(SCRATCH.word())

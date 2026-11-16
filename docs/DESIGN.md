@@ -320,23 +320,29 @@ differs from the ABI that `fe build` writes.
   malformed words gets a revert or a wrong result, and only for itself: the phases keep no
   state, so the call changes nothing on chain. Checks would cost bytes in Parser and Checker,
   which sit near the limit.
-- **Measured on Fe 26.6.0 at `-O s` (Nov 14):**
+- **Measured on Fe 26.6.0 at `-O s` (Nov 16):**
 
   | Contract | Runtime bytes | Deploy gas |
   |---|---|---|
-  | Lexer | 7,685 | 1.72M |
+  | Lexer | 6,031 | 1.34M |
   | Parser | 22,694 | 4.95M |
-  | Checker | 22,294 | 4.87M |
-  | Back | 17,976 | 3.94M |
+  | Checker | 22,395 | 4.89M |
+  | Back | 17,619 | 3.86M |
   | Compiler | 1,893 | 0.49M |
 
-  - **Deploying all five costs 16.0M gas.**
-  - **Compiling costs up to 31.6M gas, for `corpus/amm.fe`.**
+  - **Deploying all five costs 15.5M gas.**
+  - **Compiling costs up to 29.7M gas, for `corpus/amm.fe`.**
     - That program is 8,141 bytes of source.
-    - Lexing takes about 1,470 gas per byte of source.
-    - The boundaries cost little, compared to the phases themselves.
-  - **`deploy` of `counter.fe` costs 2.4M gas.**
-  - `tools/chain_check.py` measures all of these and checks the limits.
+    - Lexing takes about 1,280 gas per byte of source.
+      This figure was measured once, by hand.
+      An `eth_estimateGas` of the Lexer's `lex(bytes)` on `corpus/amm.fe` gave the total.
+      The gas of the same transaction to an account with no code was taken off it.
+    - No tool measures the cost of the boundaries.
+      We expect it to be small next to the phases themselves, but this is an estimate.
+  - **`deploy` of `counter.fe` costs 2.2M gas.**
+  - `tools/chain_check.py` measures the runtime bytes and the deploy gas of each contract.
+    It also measures the largest compile gas and the deploy gas of `counter.fe`.
+    It checks the limits.
 
 ## 8a. Measured limits of the host (official Fe on the EVM)
 

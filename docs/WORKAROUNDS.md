@@ -88,6 +88,22 @@ master removes nothing before we move to a release that has it.
     values". It is on Fe's master, not in 26.6.0. It covers the constant-argument shape. The
     other three may remain.
 
+- **A range `for` costs bytecode at `-O s` when its body makes calls.** A loop such as
+  `for k in 0..self.len(l)`, whose body calls methods that are not inlined, compiles to more
+  code than a `while` loop over the same index. Writing six of the list walks in Back as range
+  loops made Back 344 bytes larger (Fe 26.6.0, -O s, Nov 14). In a loop whose body makes no
+  calls, `-O s` removes the difference.
+  - **Probe (Nov 16):** a loop that only adds numbers is 125 bytes either way at `-O s` (at
+    `-O 0` the range loop is 1,768 bytes and the `while` loop 1,663). A loop on `mut self` whose
+    body calls a method is 516 bytes as a `while` loop and 533 as a range loop at `-O s`.
+  - **Where it bites:** the walks over a list or a table in fe0 whose bodies make calls, such
+    as those in `check.fe`, `codegen.fe` and `lexer.fe`.
+  - **Upstream:** we have not reported it.
+  - **Workaround:** fe0 walks lists with an index `while` loop (`var k = 0`, then
+    `while k < n { …; k += 1 }`).
+  - **Remove when:** a release we use builds the six range loops in Back to no more bytes
+    than the index loops. Re-measure Back before undoing it.
+
 - **Native builds and native tests refuse AArch64 Linux.** `fe build --backend native -e
   executable` stops with "native executable and library output currently require an x86-64
   Linux or AArch64 macOS host", and `fe test --backend native` stops the same way. 26.6.0
