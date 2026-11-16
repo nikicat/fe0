@@ -36,4 +36,7 @@ Each phase is its own contract, and a `Compiler` contract calls them in turn
   means empty (`fe0/src/asm.fe`).
 - If a phase outgrows 24 KB, the cheapest cut found so far is keyword matching: `word<N>` is
   instantiated once per keyword length, and `keyword` plus `is_reserved` are among the largest
-  functions in the IR.
+  functions in the IR. Update, Nov 15: keyword matching no longer uses `word<N>`. The lexer
+  looks up one packed word per identifier in tables (DESIGN.md §2), and one-byte punctuation
+  in a byte table. The punctuation table alone cut 364 bytes. Together they cut the Lexer
+  contract's runtime code from 7,685 to 6,031 bytes on Fe 26.6.0 at `-O s` (DESIGN.md §8).

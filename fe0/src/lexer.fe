@@ -45,6 +45,10 @@ impl Tok {
         Tok { code: w.downcast_truncate() }
     }
 
+    fn after(self, _ k: usize) -> Tok {
+        Tok { code: self.code + k.downcast_truncate() }
+    }
+
     // Returns the assignment form of this operator, such as A_PLUS for O_PLUS.
     const fn assign_form(self) -> Tok {
         Tok { code: self.code + ASSIGN_OFFSET }
@@ -100,6 +104,23 @@ pub const T_TYPE: Tok = Tok { code: 6 }
 pub const T_U256: Tok = Tok { code: 7 }
 pub const T_BOOL: Tok = Tok { code: 8 }
 pub const T_ADDRESS: Tok = Tok { code: 9 }
+// The names of the types Fe0 supports, matched as packed words like the keywords (ADR 0014,
+// update of Nov 15). Entry k spells `T_U256.after(k)`.
+const TYPE_NAMES: [Spelling; 3] = [
+    // u256
+    Spelling { packed: 0x75323536 },
+    // bool
+    Spelling { packed: 0x626f6f6c },
+    // Address
+    Spelling { packed: 0x41646472657373 },
+]
+// The spellings of `usize`, `isize` and `String`. Fe has these type names besides the sized
+// integers such as `u8`.
+const W_USIZE: Spelling = Spelling { packed: 0x7573697a65 }
+const W_ISIZE: Spelling = Spelling { packed: 0x6973697a65 }
+const W_STRING: Spelling = Spelling { packed: 0x537472696e67 }
+// The spelling of `_`.
+const W_UNDERSCORE: Spelling = Spelling { packed: 0x5f }
 
 // Fe0 keywords and reserved words: SPEC.md §1.
 pub const K_FN: Tok = Tok { code: 10 }
@@ -124,6 +145,106 @@ pub const K_FALSE: Tok = Tok { code: 28 }
 pub const K_ASSERT: Tok = Tok { code: 29 }
 pub const K_STRUCT: Tok = Tok { code: 31 }
 
+// The lexer finds a keyword by one packed word per identifier in this table (ADR 0014, update
+// of Nov 15). Entry k spells `K_FN.after(k)`. Code 30 is T_DOC, so its entry is 0, which no
+// identifier packs to.
+const KEYWORDS: [Spelling; 22] = [
+    // fn
+    Spelling { packed: 0x666e },
+    // let
+    Spelling { packed: 0x6c6574 },
+    // var
+    Spelling { packed: 0x766172 },
+    // if
+    Spelling { packed: 0x6966 },
+    // else
+    Spelling { packed: 0x656c7365 },
+    // while
+    Spelling { packed: 0x7768696c65 },
+    // return
+    Spelling { packed: 0x72657475726e },
+    // break
+    Spelling { packed: 0x627265616b },
+    // continue
+    Spelling { packed: 0x636f6e74696e7565 },
+    // msg
+    Spelling { packed: 0x6d7367 },
+    // contract
+    Spelling { packed: 0x636f6e7472616374 },
+    // init
+    Spelling { packed: 0x696e6974 },
+    // recv
+    Spelling { packed: 0x72656376 },
+    // uses
+    Spelling { packed: 0x75736573 },
+    // mut
+    Spelling { packed: 0x6d7574 },
+    // const
+    Spelling { packed: 0x636f6e7374 },
+    // pub
+    Spelling { packed: 0x707562 },
+    // true
+    Spelling { packed: 0x74727565 },
+    // false
+    Spelling { packed: 0x66616c7365 },
+    // assert
+    Spelling { packed: 0x617373657274 },
+    Spelling { packed: 0 },
+    // struct
+    Spelling { packed: 0x737472756374 },
+]
+
+// Fe0 rejects every keyword of Fe's lexer as a name, and `with` as well (SPEC.md §1, "Reserved
+// words"). These are the ones that have no token of their own.
+const RESERVED: [Spelling; 23] = [
+    // as
+    Spelling { packed: 0x6173 },
+    // mod
+    Spelling { packed: 0x6d6f64 },
+    // static_assert
+    Spelling { packed: 0x7374617469635f617373657274 },
+    // match
+    Spelling { packed: 0x6d61746368 },
+    // for
+    Spelling { packed: 0x666f72 },
+    // loop
+    Spelling { packed: 0x6c6f6f70 },
+    // in
+    Spelling { packed: 0x696e },
+    // where
+    Spelling { packed: 0x7768657265 },
+    // yield
+    Spelling { packed: 0x7969656c64 },
+    // self
+    Spelling { packed: 0x73656c66 },
+    // Self
+    Spelling { packed: 0x53656c66 },
+    // enum
+    Spelling { packed: 0x656e756d },
+    // trait
+    Spelling { packed: 0x7472616974 },
+    // impl
+    Spelling { packed: 0x696d706c },
+    // type
+    Spelling { packed: 0x74797065 },
+    // ref
+    Spelling { packed: 0x726566 },
+    // own
+    Spelling { packed: 0x6f776e },
+    // use
+    Spelling { packed: 0x757365 },
+    // extern
+    Spelling { packed: 0x65787465726e },
+    // unsafe
+    Spelling { packed: 0x756e73616665 },
+    // ingot
+    Spelling { packed: 0x696e676f74 },
+    // super
+    Spelling { packed: 0x7375706572 },
+    // with
+    Spelling { packed: 0x77697468 },
+]
+
 // A doc comment: `///` up to the end of the line (SPEC.md §1).
 pub const T_DOC: Tok = Tok { code: 30 }
 
@@ -139,6 +260,17 @@ pub const P_COMMA: Tok = Tok { code: 47 }
 pub const P_ARROW: Tok = Tok { code: 48 }
 pub const P_HASH: Tok = Tok { code: 49 }
 pub const P_DOT: Tok = Tok { code: 50 }
+
+// One-byte punctuation is found in this table, which made Lexer smaller (ADR 0014, update of
+// Nov 15). Entry k is the byte of `P_LPAREN.after(k)`.
+// P_ARROW is `->`, so its entry is `_`. `Lexer.token` reads `_` as an identifier before it calls
+// `punct`, and no entry is 0, so a NUL byte matches none.
+const PUNCT: [u8; 11] = [b'(', b')', b'{', b'}', b'[', b']', b':', b',', b'_', b'#', b'.']
+// The bytes of the operators that `=` may follow to make their assignment form. Entry k is the
+// byte of `O_PLUS.after(k)` when that operator is one of them, and `_` when it is not, as in
+// PUNCT. `punct` scans this table in the same loop as PUNCT. Two loops, the second over a table
+// of only `+ * % ^`, made Lexer 67 bytes larger (Fe 26.6.0, -O s, Nov 15).
+const ASSIGNABLE: [u8; 11] = [b'+', b'_', b'*', b'_', b'%', b'_', b'_', b'^', b'_', b'_', b'_']
 
 // Operators.
 pub const O_PLUS: Tok = Tok { code: 60 }
@@ -200,6 +332,29 @@ impl Spelling {
                 out.push(b.downcast_truncate())
             }
         }
+    }
+
+    fn keyword(self) -> Tok {
+        let k = self.index_in(KEYWORDS)
+        if k < KEYWORDS.len() {
+            return K_FN.after(k)
+        }
+        T_IDENT
+    }
+
+    fn is_reserved(self) -> bool {
+        self.index_in(RESERVED) < RESERVED.len()
+    }
+
+    fn index_in<const N: usize>(self, _ table: [Spelling; N]) -> usize {
+        var k: usize = 0
+        while k < N {
+            if table[k] == self {
+                return k
+            }
+            k += 1
+        }
+        N
     }
 }
 
@@ -358,11 +513,6 @@ impl Text {
         self.byte(s.start.plus(k).off)
     }
 
-    // Whether span `s` spells `w`.
-    pub fn spells<const N: usize>(self, _ s: Span, _ w: String<N>) -> bool {
-        s.len == N && self.holds(s, w.as_bytes())
-    }
-
     // Returns the bytes of span `s` packed into one Spelling, such as W_CTX for `Ctx`.
     pub fn packed(self, _ s: Span) -> Spelling {
         var v: u256 = 0
@@ -397,10 +547,9 @@ impl Text {
         a.len == b.len && self.holds(a, self.span_bytes(b))
     }
 
-    // Whether span `s` holds the first `s.len` bytes of `b`.
-    fn holds<B: core::ops::Index<usize, Output = u8>>(self, _ s: Span, _ b: B) -> bool
-    uses B::E
-    {
+    // Whether span `s` holds the first `s.len` bytes of `b`. Comparing the two spans as slices
+    // made compiling corpus/amm.fe on chain cost 938K more gas (Fe 26.6.0, -O s, Nov 16).
+    fn holds(self, _ s: Span, _ b: MemSlice<u8>) -> bool {
         var k: usize = 0
         while k < s.len {
             if !self.span_byte(s, k).is(b[k]) {
@@ -634,129 +783,26 @@ impl Lexer {
         false
     }
 
-    // Whether the token read so far is `w`.
-    fn word<const N: usize>(self, _ w: String<N>) -> bool {
-        self.text.spells(self.span(), w)
-    }
-
     // Returns the span of the token read so far.
     fn span(self) -> Span {
         Span { start: self.start, len: self.text.end().since(self.start) }
     }
 
-    // Returns the keyword kind of the token read so far, or T_IDENT.
-    fn keyword(self) -> Tok {
-        if self.word("fn") {
-            return K_FN
+    // Returns the kind of the type name that the token read so far spells, or T_IDENT when it
+    // spells none (SPEC.md §1). `w` is the spelling of that token. This was a method of Spelling,
+    // with the `is_sized_int_name` check in `ident`, and that made Lexer 67 bytes larger (Fe
+    // 26.6.0, -O s, Nov 15).
+    fn type_kind(self, _ w: Spelling) -> Tok {
+        let k = w.index_in(TYPE_NAMES)
+        if k < TYPE_NAMES.len() {
+            return T_U256.after(k)
         }
-        if self.word("let") {
-            return K_LET
-        }
-        if self.word("var") {
-            return K_VAR
-        }
-        if self.word("if") {
-            return K_IF
-        }
-        if self.word("else") {
-            return K_ELSE
-        }
-        if self.word("while") {
-            return K_WHILE
-        }
-        if self.word("return") {
-            return K_RETURN
-        }
-        if self.word("break") {
-            return K_BREAK
-        }
-        if self.word("continue") {
-            return K_CONTINUE
-        }
-        if self.word("msg") {
-            return K_MSG
-        }
-        if self.word("contract") {
-            return K_CONTRACT
-        }
-        if self.word("init") {
-            return K_INIT
-        }
-        if self.word("recv") {
-            return K_RECV
-        }
-        if self.word("uses") {
-            return K_USES
-        }
-        if self.word("mut") {
-            return K_MUT
-        }
-        if self.word("const") {
-            return K_CONST
-        }
-        if self.word("pub") {
-            return K_PUB
-        }
-        if self.word("true") {
-            return K_TRUE
-        }
-        if self.word("false") {
-            return K_FALSE
-        }
-        if self.word("assert") {
-            return K_ASSERT
-        }
-        if self.word("struct") {
-            return K_STRUCT
-        }
-        T_IDENT
-    }
-
-    // Whether the token read so far is a reserved word that Fe0 has no token for.
-    fn is_reserved(self) -> bool {
-        self.word("as")
-            || self.word("mod")
-            || self.word("static_assert")
-            || self.word("match")
-            || self.word("for")
-            || self.word("loop")
-            || self.word("in")
-            || self.word("where")
-            || self.word("yield")
-            || self.word("self")
-            || self.word("Self")
-            || self.word("enum")
-            || self.word("trait")
-            || self.word("impl")
-            || self.word("type")
-            || self.word("ref")
-            || self.word("own")
-            || self.word("use")
-            || self.word("extern")
-            || self.word("unsafe")
-            || self.word("ingot")
-            || self.word("super")
-            || self.word("with")
-    }
-
-    // Kind of the token read so far when it is a type name, or T_IDENT when it is not (SPEC.md
-    // §1).
-    // ponytail: a chain of fixed spellings. A table of (spelling, Tok) pairs scanned by one loop
-    // cost 647 more bytes in LexProbe and 610 more in CompileProbe at -O s (task bhv52).
-    fn type_kind(self) -> Tok {
-        if self.word("u256") {
-            return T_U256
-        }
-        if self.word("bool") {
-            return T_BOOL
-        }
-        if self.word("Address") {
-            return T_ADDRESS
-        }
+        // Putting these three in TYPE_NAMES, as T_TYPE, made Lexer 168 bytes larger (Fe 26.6.0,
+        // -O s, Nov 14).
         if self.text.is_sized_int_name(self.span())
-            || self.word("usize")
-            || self.word("isize")
-            || self.word("String") {
+            || w == W_USIZE
+            || w == W_ISIZE
+            || w == W_STRING {
             return T_TYPE
         }
         T_IDENT
@@ -881,67 +927,36 @@ impl Lexer {
         while self.peeked.is_ident_start() || self.peeked.is_digit() {
             self.bump()
         }
-        if self.word("_") {
+        let w = self.text.packed(self.span())
+        if w == W_UNDERSCORE {
             return Result::Ok(self.tok(T_UNDERSCORE))
         }
-        if self.is_reserved() {
+        if w.is_reserved() {
             return self.err(L_RESERVED_WORD)
         }
-        let ty = self.type_kind()
+        let ty = self.type_kind(w)
         if ty != T_IDENT {
             return Result::Ok(self.tok(ty))
         }
-        Result::Ok(self.tok(self.keyword()))
+        Result::Ok(self.tok(w.keyword()))
     }
 
     // Kind of the punctuation or operator at the peeked byte, or none if no token starts with it.
     fn punct(mut self) -> Option<Tok> uses (input: mut Source) {
         let c = self.peeked
         self.bump()
-        if c.is(b'(') {
-            return Option::Some(P_LPAREN)
-        }
-        if c.is(b')') {
-            return Option::Some(P_RPAREN)
-        }
-        if c.is(b'{') {
-            return Option::Some(P_LBRACE)
-        }
-        if c.is(b'}') {
-            return Option::Some(P_RBRACE)
-        }
-        if c.is(b'[') {
-            return Option::Some(P_LBRACKET)
-        }
-        if c.is(b']') {
-            return Option::Some(P_RBRACKET)
-        }
-        if c.is(b':') {
-            return Option::Some(P_COLON)
-        }
-        if c.is(b',') {
-            return Option::Some(P_COMMA)
-        }
-        if c.is(b'#') {
-            return Option::Some(P_HASH)
-        }
-        if c.is(b'.') {
-            return Option::Some(P_DOT)
+        var k: usize = 0
+        while k < PUNCT.len() {
+            if c.is(PUNCT[k]) {
+                return Option::Some(P_LPAREN.after(k))
+            }
+            if c.is(ASSIGNABLE[k]) {
+                return Option::Some(self.op_or_assign(O_PLUS.after(k)))
+            }
+            k += 1
         }
         if c.is(b'~') {
             return Option::Some(O_TILDE)
-        }
-        if c.is(b'+') {
-            return Option::Some(self.op_or_assign(O_PLUS))
-        }
-        if c.is(b'*') {
-            return Option::Some(self.op_or_assign(O_STAR))
-        }
-        if c.is(b'%') {
-            return Option::Some(self.op_or_assign(O_PERCENT))
-        }
-        if c.is(b'^') {
-            return Option::Some(self.op_or_assign(O_CARET))
         }
         if c.is(b'-') {
             if self.eat(b'>') {

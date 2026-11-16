@@ -61,7 +61,8 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
 - **Integer literals:** the lexer checks only their syntax. The parser computes each value once,
   with `Text.int_value`, when it stores it in the AST. It reports `L004` there if the value
   needs more than 256 bits, so the first error in source order wins.
-- **Keywords:** compared against `String<N>` constants (`s.as_bytes()[i]`).
+- **Keywords:** the lexer packs the bytes of each identifier into one word (`Text.packed`). It
+  looks that word up in tables of packed spellings in `fe0/src/lexer.fe`.
 - **Newline tokens** are kept, except where the innermost open bracket is `(` (SPEC §3.4).
   `Lexer.open` tracks the open brackets. Where a newline is kept, the parser decides whether
   it ends a statement. Where it is dropped, the lexer checks that the line ends with `(`, `,`

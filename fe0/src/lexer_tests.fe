@@ -83,12 +83,38 @@ fn keywords_and_idents() {
     )
 }
 
+fn expect_reserved(_ s: own DynString) {
+    assert!(lex_err(s).code == L_RESERVED_WORD)
+}
+
+// Each word in `RESERVED` is an error. The test spells the words in plain text.
 #[test]
 fn reserved_words_are_errors() {
-    assert!(lex_err("let for = 1").code == L_RESERVED_WORD)
-    assert!(lex_err("let loop = 1").code == L_RESERVED_WORD)
+    expect_reserved("as")
+    expect_reserved("mod")
+    expect_reserved("static_assert")
+    expect_reserved("match")
+    expect_reserved("for")
+    expect_reserved("loop")
+    expect_reserved("in")
+    expect_reserved("where")
+    expect_reserved("yield")
+    expect_reserved("self")
+    expect_reserved("Self")
+    expect_reserved("enum")
+    expect_reserved("trait")
+    expect_reserved("impl")
+    expect_reserved("type")
+    expect_reserved("ref")
+    expect_reserved("own")
+    expect_reserved("use")
+    expect_reserved("extern")
+    expect_reserved("unsafe")
+    expect_reserved("ingot")
+    expect_reserved("super")
+    expect_reserved("with")
+    expect_reserved("let for = 1")
     assert!(lex_err("let x = with").pos() == Pos::at(8))
-    assert!(lex_err("enum").code == L_RESERVED_WORD)
 }
 
 // Each fixed spelling is what `Text.packed` makes of its word, and `push_bytes` gives the word
@@ -331,6 +357,8 @@ fn bad_characters() {
     assert!(lex_err("a ").code == L_UNEXPECTED_CHAR)
     assert!(lex_err("x ? y").code == L_UNEXPECTED_CHAR)
     assert!(lex_err("a @ b").code == L_UNEXPECTED_CHAR)
+    // A raw NUL byte (0), which no table of `punct` may match.
+    assert!(lex_err("a   b").code == L_UNEXPECTED_CHAR)
     // `;` is not a token in Fe0 (SPEC §1).
     assert!(lex_err("g();").code == L_UNEXPECTED_CHAR)
 }
