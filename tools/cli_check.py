@@ -29,7 +29,8 @@ import embed
 import fegen
 import gen
 from embed import FailureMessage
-from fegen import ROOT, DiagWord, Failure, FeLine, FeName, FeSource, Kind, PanicCode, TestName, Wei
+from fegen import (ROOT, CodeDiffers, DiagWord, Failure, FeLine, FeName, FeSource, PanicCode, Rejected,
+                   TestName, Wei)
 
 CLI: Path = ROOT / "fe0-cli"
 # The executable that `fe build` writes. It is named after the ingot.
@@ -82,14 +83,13 @@ class CliProgram:
         return fegen.source(lines)
 
     def explain(self, code: PanicCode) -> FailureMessage | None:
-        f = Failure.decode(code)
-        match f.kind:
-            case Kind.CODE_DIFFERS:
+        match Failure.decode(code):
+            case CodeDiffers(offset):
                 return FailureMessage(f"{self.path}: the CLI's code differs from Fe0's on the EVM"
-                                      f" at byte {f.number}")
-            case Kind.DIAG:
+                                      f" at byte {offset}")
+            case Rejected(word):
                 return FailureMessage(f"{self.path}: the CLI accepts it, but Fe0 on the EVM rejects"
-                                      f" it with {DiagWord.unpack(code).describe(self.source)}")
+                                      f" it with {word.describe(self.source)}")
         return None
 
 

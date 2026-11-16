@@ -42,6 +42,14 @@ AccountIndex = NewType("AccountIndex", int)
 ExtraBytes = NewType("ExtraBytes", int)
 # The code of a Panic that a test fails with (`Kind` says what it names).
 PanicCode = NewType("PanicCode", int)
+# A case is numbered by its line in the call script, so that a failed test's panic code names
+# that line (DESIGN.md §10).
+CaseNumber = NewType("CaseNumber", int)
+NO_LINE = CaseNumber(0)
+
+
+def script_place(number: CaseNumber, line: Callable[[CaseNumber], str]) -> str:
+    return "main deployment (no init line)" if number == NO_LINE else line(number)
 
 
 @dataclass(frozen=True)
@@ -210,6 +218,10 @@ class Payload(ABC):
         """Returns the bytes, as the pushes append them, with `address` giving each
         AddressArg."""
 
+    @property
+    def named(self) -> list[DeploymentName]:
+        return [a.name for a in self.words if isinstance(a, Named)]
+
     def build(self, var: FeName) -> list[FeLine]:
         """Returns the Fe statements that declare `var` as a `difftest::Payload` and fill it with
         the bytes."""
@@ -287,10 +299,30 @@ class RawCall(Payload):
         return bytes(self.data)
 
 
+# A failed test's panic code names the dispatcher probe by this index (DESIGN.md §10).
+ProbeIndex = NewType("ProbeIndex", int)
+
+
+@dataclass(frozen=True)
+class Probe:
+    """A call that only the dispatcher answers. Fe0's dispatcher must revert with empty data where
+    Fe's does, so every program's test sends these calls (ADR 0002; SPEC.md §6, dispatcher steps
+    1 and 3)."""
+
+    index: ProbeIndex
+    payload: Payload
+
+    @property
+    def code(self) -> FeExpr:
+        """Returns the Fe expression of this call's `difftest::CaseCode`."""
+        return Kind.PROBE.case_code(self.index)
+
+
 # A selector that DISPATCH sends as an unknown one.
 PROBE_SELECTOR: Selector = Selector(0x7777)
 # Calls that reach the dispatcher's empty reverts: no selector, a short one, and an unknown one.
-DISPATCH: list[Payload] = [RawCall(), RawCall(0, 0, 1), Call(PROBE_SELECTOR)]
+DISPATCH: list[Probe] = [Probe(ProbeIndex(k), p) for k, p in
+                         enumerate([RawCall(), RawCall(0, 0, 1), Call(PROBE_SELECTOR)], start=1)]
 
 
 def difftest_use(ingot: str) -> FeLine:
@@ -309,58 +341,125 @@ class Kind(Enum):
     which takes case codes as `CaseCode`. Change both sides together.
     """
 
-    # A panic of the test itself, such as Panic(0x11) for an overflow.
     PANIC = 0
-    # A deployment or call: the code is this value plus its `Case.number`.
     CASE = 1 << 32
-    # A call of DISPATCH: the code is this value plus its index there, from 1.
     PROBE = 2 << 32
-    # A deployment whose Fe0 code is larger than a chain accepts. The code is its CASE code
-    # plus difftest's TOO_LARGE, which is SIZE less CASE.
     SIZE = 3 << 32
-    # A reject program that Fe0 accepts. The code is difftest's ACCEPTED.
     ACCEPTED = 4 << 32
-    # A program whose code from the native CLI differs from Fe0's on the EVM. difftest's
-    # `same_code` says what the code holds.
     CODE_DIFFERS = 5 << 32
-    # An error of Fe0: the code is its `DiagWord`.
     DIAG = 1 << 40
 
-    def case_code(self, number: int) -> FeExpr:
-        """Returns the Fe expression of the `difftest::CaseCode` for `number` in this range."""
-        return FeExpr(f"difftest::CaseCode::new({self.value + number:#x})")
+    def case_code(self, past_start: int) -> FeExpr:
+        """Returns the Fe expression of the `difftest::CaseCode` that is `past_start` past the
+        start of this range."""
+        return FeExpr(f"difftest::CaseCode::new({self.value + past_start:#x})")
 
 
-class Failure(NamedTuple):
-    """The meaning of a panic code that a differential test failed with."""
+# A byte offset into the code of a contract.
+CodeOffset = NewType("CodeOffset", int)
 
-    kind: Kind
-    # The code less the start of its range, which each Kind's comment describes. For DIAG, it is
-    # the whole diag word.
-    number: int
 
-    @classmethod
-    def decode(cls, code: PanicCode) -> Self:
+class Failure:
+    """What a failed differential test reports through its panic code, which says what failed and
+    where (DESIGN.md §10)."""
+
+    @staticmethod
+    def decode(code: PanicCode) -> Failure:
         """Returns what the panic code `code` names."""
         kind = next(k for k in reversed(Kind) if k.value <= code)
-        return cls(kind, code if kind is Kind.DIAG else code - kind.value)
+        past_start = code - kind.value
+        match kind:
+            case Kind.PANIC:
+                return Panicked(code)
+            case Kind.CASE:
+                return CaseDiffers(CaseNumber(past_start))
+            case Kind.PROBE:
+                return ProbeDiffers(ProbeIndex(past_start))
+            case Kind.SIZE:
+                return TooLarge(CaseNumber(past_start))
+            case Kind.ACCEPTED:
+                return Accepted()
+            case Kind.CODE_DIFFERS:
+                return CodeDiffers(CodeOffset(past_start))
+            case Kind.DIAG:
+                return Rejected(DiagWord.unpack(code))
+
+
+@dataclass(frozen=True)
+class Panicked(Failure):
+    code: PanicCode
+
+
+@dataclass(frozen=True)
+class CaseDiffers(Failure):
+    """The builds broke the subset rule on this case. Either one deployment created a contract and
+    the other did not, or the success flags or the return data differ (SPEC.md §8)."""
+
+    number: CaseNumber
+
+
+@dataclass(frozen=True)
+class ProbeDiffers(Failure):
+    index: ProbeIndex
+
+
+@dataclass(frozen=True)
+class TooLarge(Failure):
+    """Fe0's build exceeds the EIP-170 or EIP-3860 limit. The test EVM does not enforce these
+    limits, so the harness checks them itself (DESIGN.md §8a, §10)."""
+
+    number: CaseNumber
+
+
+@dataclass(frozen=True)
+class Accepted(Failure):
+    """Fe0 accepted a program that must fail with the error its header names (SPEC.md §8,
+    "Rejected programs")."""
+
+
+@dataclass(frozen=True)
+class CodeDiffers(Failure):
+    """The native CLI and Fe0 on the EVM gave different code for one program. The two targets share
+    one library, so they must agree byte for byte (DESIGN.md §1, §10, "The native CLI")."""
+
+    # The first byte that differs.
+    offset: CodeOffset
+
+
+@dataclass(frozen=True)
+class Rejected(Failure):
+    """Fe0 rejected the program, or rejected it with another error or position than the reject
+    header names (SPEC.md §8)."""
+
+    word: DiagWord
 
 
 class Case(NamedTuple):
-    """A deployment or call of a differential test, with the number that its panic code holds."""
+    """One deployment or call on which both builds must agree (SPEC.md §8). Its number is what a
+    failure reports (DESIGN.md §10)."""
 
-    number: int
+    number: CaseNumber
     payload: Payload
     # The account that sends the case. It applies only on a node (tools/node.py), as DESIGN.md
     # §10, "On a node", says.
     sender: AccountIndex = AccountIndex(0)
-    # The deployment that a call goes to.
-    to: DeploymentName = THIS
 
     @property
     def code(self) -> FeExpr:
         """Returns the Fe expression of this case's `difftest::CaseCode`."""
         return Kind.CASE.case_code(self.number)
+
+
+class CallCase(NamedTuple):
+    """A call may go to another deployment of the script, but only on a node. A test inside
+    `fe test` cannot deploy another program (DESIGN.md §10, "On a node"; ADR 0020)."""
+
+    case: Case
+    to: DeploymentName = THIS
+
+    @property
+    def node_only(self) -> bool:
+        return self.to != THIS or bool(self.case.payload.named)
 
 
 class Callee(NamedTuple):
@@ -380,19 +479,17 @@ class Cases(NamedTuple):
     main: Case
     # Other deployments, checked only for whether they create a contract.
     deploys: Sequence[Case]
-    # The calls, in script order, before those of DISPATCH. Each goes to the deployment that its
-    # `to` names.
-    calls: Sequence[Case]
+    # The calls, in script order, before those of DISPATCH.
+    calls: Sequence[CallCase]
     # The deployments of other programs, made first, in order.
     callees: Sequence[Callee] = ()
 
     @property
     def node_only(self) -> bool:
-        """Whether only a node can run the test, since it deploys another program or names a
-        deployment (DESIGN.md §10, "On a node")."""
-        cases = [self.main, *self.deploys, *self.calls]
-        return bool(self.callees) or any(
-            c.to != THIS or any(isinstance(a, Named) for a in c.payload.words) for c in cases)
+        """A test inside `fe test` can neither deploy another program nor resolve a deployment's
+        address, so only a node runs such a test (DESIGN.md §10, "On a node")."""
+        return (bool(self.callees) or any(d.payload.named for d in [self.main, *self.deploys])
+                or any(c.node_only for c in self.calls))
 
 
 # The wei that the test of one program spends at most on its deployments and calls.
@@ -435,7 +532,11 @@ class DiffTest:
         return FeName(f"run_{self.test}")
 
     def lines(self) -> list[FeLine]:
-        """Returns the lines of the runner and of the test function."""
+        """Returns the lines of the runner and of the test function. The runner sends every call
+        to the main deployment. Errors with ValueError when only a node can run the test
+        (Cases.node_only)."""
+        if self.cases.node_only:
+            raise ValueError(f"only a node can run the test {self.test}")
         theirs = (f"difftest::theirs({self.contract}::init_code_offset(),"
                   f" {self.contract}::init_code_len())")
         ours = f"difftest::ours({lit(self.source)})"
@@ -448,9 +549,9 @@ class DiffTest:
         out += indent(m.build(a))
         out.append(FeLine(f"    let p = b.deploy_main({a}, {self.cases.main.code})"))
         for c in self.cases.calls:
-            out += call(c.payload, c.code)
-        for k, probe in enumerate(DISPATCH, start=1):
-            out += call(probe, Kind.PROBE.case_code(k))
+            out += call(c.case.payload, c.case.code)
+        for probe in DISPATCH:
+            out += call(probe.payload, probe.code)
         test = evm_test(self.test, BALANCE, [FeLine(f"{self.runner}()")])
         return out + [FeLine("}"), FeLine("")] + test
 
@@ -597,7 +698,7 @@ def check_diag_word() -> None:
     assert DiagCode.of_value(6034) == DiagCode(PhaseLetter("C"), 34)
     at9 = DiagWord(e116, ByteOffset(9))
     assert at9.pack() == 0x45_0074_000009 and DiagWord.unpack(at9.pack()) == at9
-    assert Failure.decode(at9.pack()) == Failure(Kind.DIAG, at9.pack())
+    assert Failure.decode(at9.pack()) == Rejected(at9)
     source = FeSource("a\r\nx\ryz")
     assert LineCol(3, 2).offset(source) == 6 and LineCol.of(ByteOffset(6), source) == LineCol(3, 2)
     assert DiagWord(e116, ByteOffset(6)).describe(source) == "E116 3:2"

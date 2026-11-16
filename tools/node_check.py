@@ -3,9 +3,8 @@
 
 DESIGN.md §10, "On a node", says why it exists. It deploys Fe0's build and Fe's build of each
 program of the corpus and of corpus/gen/ (tools/gen.py) on a local anvil node (node.py), and
-sends the program's call script. Each build deploys its own build of the other programs that
-the call script deploys for the program to call. For each deployment and call, the two builds
-must agree on:
+sends the program's call script. DESIGN.md §10 says how the builds deploy the programs they
+call. For each deployment and call, the two builds must agree on:
 
 - whether it succeeded;
 - the return data of a call, and the revert data of a failure;
@@ -25,7 +24,7 @@ from typing import NamedTuple
 import cli_check
 import node
 from fegen import THIS
-from node import Build, Compiled, Effects, Entry, Node, Outcome, Session
+from node import Build, Compiled, Effects, Node, Outcome, Session, line_label
 
 # The label of each field of node.Effects, in the fields' order.
 LABELS: tuple[str, ...] = ("success", "return or revert data", "logs", "storage writes")
@@ -51,32 +50,31 @@ class BuildTrace(NamedTuple):
     failure: str | None
 
 
-def trace(n: Node, compiled: Compiled, build: Build) -> BuildTrace:
-    """Runs the call script of `compiled` on `build` in Node.isolated, and returns what each
+def trace(s: Session) -> BuildTrace:
+    """Runs the call script of the program of `s` on its build, and returns what each
     deployment and call did. When a deployment that the script needs fails, it stops there.
-    Errors as Node.call does."""
+    Errors as Session.call does."""
     out: list[Outcome] = []
-    cases = compiled.program.diff.cases
-    with n.isolated():
-        s = Session(n, compiled, build)
-        try:
-            s.deploy_all(out.append)
-        except RuntimeError as e:
-            return BuildTrace(out, str(e))
-        for case in cases.deploys:
-            out.append(Outcome(Entry.line(case).label, s.deploy(case, THIS).effects))
-        for entry in compiled.calls():
-            out.append(Outcome(entry.label, s.call(entry.case).effects))
+    try:
+        s.deploy_all(out.append)
+    except RuntimeError as e:
+        return BuildTrace(out, str(e))
+    for case in s.compiled.program.diff.cases.deploys:
+        out.append(Outcome(line_label(case), s.deploy(case, THIS).effects))
+    for entry in s.compiled.calls():
+        out.append(Outcome(entry.label, s.call(entry.message).effects))
     return BuildTrace(out, None)
 
 
 def check(n: Node, path: Path, reference: Build) -> list[str]:
     """Runs the call script of the program at `path` on Fe0's build and on `reference`, and
-    returns a line for each difference. Errors as Node.call and node.Compiled.load do."""
+    returns a line for each difference. Errors as Session.call and Compiled.load do."""
     compiled = Compiled.load(path, (Build.FE0, reference))
     name = compiled.program.path.name
-    ours = trace(n, compiled, Build.FE0)
-    theirs = trace(n, compiled, reference)
+    with n.session(compiled, Build.FE0) as s:
+        ours = trace(s)
+    with n.session(compiled, reference) as s:
+        theirs = trace(s)
     out = [f"{name} {a.label}: {d}" for a, b in zip(ours.outcomes, theirs.outcomes)
            for d in differences(a.effects, b.effects)]
     if failure := ours.failure or theirs.failure:

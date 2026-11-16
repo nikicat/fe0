@@ -139,7 +139,7 @@ def demo(sender: Sender, compiler: ChecksumAddress) -> None:
     address: ChecksumAddress = deploy.call()
     print(f"deploy({COUNTER.name}): approve the transaction", flush=True)
     receipt = sender.send({"to": compiler, "data": HexBytes(deploy._encode_transaction_data())})
-    get = selectors(source)[FeName("Get")].to_bytes(4)
+    get = selectors(source).of(FeName("Get")).to_bytes(4)
     value = w3.codec.decode(["uint256"], w3.eth.call({"to": address, "data": HexBytes(get)}))[0]
     print(f"{COUNTER.name}: deployed at {address}, {receipt['gasUsed']:,} gas; Get returns {value}")
     if value != START:

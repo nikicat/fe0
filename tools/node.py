@@ -1,13 +1,9 @@
 """Deploy and call Fe0's and Fe's builds of a corpus program on a local anvil node.
 
-It sends a program's call script and fegen.DISPATCH to each build, and reports what each
-transaction did and the gas that a call's code spent. When the call script deploys other
-programs for the program to call, each build deploys its own build of them.
-
-Each build runs the whole script from the same state of the node (`Node.isolated`). So both
-builds send the same transactions from the same accounts at the same nonces, and their
-deployments get the same addresses: a word that holds one, such as a map slot hashed from it,
-is the same in both builds.
+The differential harness on a node, step 0 of ADR 0016. It exists because inside `fe test` every
+call comes from one sender and logs are not visible. Each build runs the whole call script from
+the same snapshot of the node, so that both builds get the same addresses (DESIGN.md §10,
+"On a node").
 """
 import subprocess
 import time
@@ -27,8 +23,8 @@ from web3.types import (CallTrace, DiffModeTrace, RPCEndpoint, TraceConfig, Trac
 import cli_check
 import embed
 import gen
-from fegen import (DISPATCH, FE, ROOT, THIS, Account, AccountIndex, AddressArg, Case,
-                   DeploymentName, Payload, Word)
+from fegen import (DISPATCH, FE, ROOT, THIS, Account, AccountIndex, AddressArg, CallCase, Case,
+                   DeploymentName, Payload, Probe, ProbeIndex, Word, script_place)
 
 # The node's hardfork. Cancun has no calldata floor price (EIP-7623), so the gas of a call less
 # the gas of the same transaction to an account with no code is what the code spent.
@@ -149,30 +145,58 @@ class Deployment(NamedTuple):
     address: ChecksumAddress | None
 
 
+# A report names a deployment or call by its line in the call script or by its dispatcher
+# probe, as the in-EVM harness does (DESIGN.md §10).
+Label = NewType("Label", str)
+
+
+def line_label(case: Case) -> Label:
+    return Label(script_place(case.number, lambda n: f"line {n}"))
+
+
+def deployment_label(case: Case, name: DeploymentName) -> Label:
+    what = "main deployment" if name == THIS else name
+    return Label(script_place(case.number, lambda _: f"{line_label(case)} ({what})"))
+
+
+def dispatch_label(index: ProbeIndex) -> Label:
+    """Returns the label of the call of fegen.DISPATCH at `index`, counted from 1, such as
+    "dispatch 1"."""
+    return Label(f"dispatch {index}")
+
+
+class Message(NamedTuple):
+    """A call names its target and its address arguments by deployment, as a call script does
+    (ADR 0020). A build's addresses exist only after that build deploys."""
+
+    payload: Payload
+    sender: AccountIndex = AccountIndex(0)
+    to: DeploymentName = THIS
+
+
 class Entry(NamedTuple):
-    """A deployment or call, with the label that reports name it by."""
-
-    label: str
-    case: Case
+    label: Label
+    message: Message
 
     @classmethod
-    def line(cls, case: Case) -> Self:
-        """Returns the entry of `case`, a line of the call script."""
-        return cls(f"line {case.number}", case)
+    def line(cls, call: CallCase) -> Self:
+        """Returns the entry of `call`, labelled by its line in the call script."""
+        case = call.case
+        return cls(line_label(case), Message(case.payload, case.sender, call.to))
 
     @classmethod
-    def deployment(cls, case: Case, name: DeploymentName) -> Self:
-        """Returns the entry of `case`, the call script's line that deploys `name`, such as
-        "line 3 (t0)" or "line 1 (main deployment)"."""
-        what = "main deployment" if name == THIS else name
-        return cls(f"line {case.number} ({what})", case)
+    def probe(cls, probe: Probe) -> Self:
+        """Returns the entry of `probe`, which account 0 sends to the main deployment."""
+        return cls(dispatch_label(probe.index), Message(probe.payload))
 
 
 class Outcome(NamedTuple):
-    """What one entry did, by the entry's label."""
-
-    label: str
+    label: Label
     effects: Effects
+
+
+# The id of a snapshot of the node's state, as evm_snapshot returns it.
+SnapshotId = NewType("SnapshotId", str)
 
 
 class Node:
@@ -198,16 +222,27 @@ class Node:
     def isolated(self) -> Iterator[None]:
         """Runs the body from the node's current state, and puts that state back after it.
         Errors with RuntimeError when the node takes no snapshot, or does not go back to it."""
-        reply = self.w3.provider.make_request(RPCEndpoint("evm_snapshot"), [])
-        if "result" not in reply:
-            raise RuntimeError(f"the node takes no snapshot: {reply.get('error')}")
-        snapshot = reply["result"]
+        snapshot = self._snapshot()
         try:
             yield
         finally:
-            reverted = self.w3.provider.make_request(RPCEndpoint("evm_revert"), [snapshot])
-        if reverted.get("result") is not True:
-            raise RuntimeError(f"the node does not revert its snapshot: {reverted.get('error')}")
+            self._revert(snapshot)
+
+    def _snapshot(self) -> SnapshotId:
+        """Takes a snapshot of the node's state. Errors with RuntimeError when the node takes
+        none."""
+        match reply := self.w3.provider.make_request(RPCEndpoint("evm_snapshot"), []):
+            case {"result": str() as snapshot}:
+                return SnapshotId(snapshot)
+        raise RuntimeError(f"the node takes no snapshot: {reply.get('error')}")
+
+    def _revert(self, snapshot: SnapshotId) -> None:
+        """Puts back the node's state at `snapshot`. Errors with RuntimeError when the node does
+        not go back to it."""
+        match reply := self.w3.provider.make_request(RPCEndpoint("evm_revert"), [snapshot]):
+            case {"result": True}:
+                return
+        raise RuntimeError(f"the node does not revert its snapshot: {reply.get('error')}")
 
     def _await_start(self) -> None:
         deadline = time.monotonic() + START_TIMEOUT
@@ -228,90 +263,49 @@ class Node:
     def __exit__(self, *_: object) -> None:
         self._stop()
 
-    def create(self, initcode: bytes, case: Case, book: Addresses,
-               name: DeploymentName) -> Deployment:
-        """Deploys `initcode` with the constructor arguments, value and sender of `case`, as
-        the deployment `name` of the build whose other deployments are `book`. Errors as _send
-        and _encode do."""
-        receipt = self._send(case, {"data": initcode + self._encode(case.payload, book)})
-        address = receipt["contractAddress"] if receipt["status"] else None
-        # A deployment that succeeds outputs its runtime code, which differs between builds.
-        output = b"" if address else self._output(receipt)
-        effects = self._effects(receipt, output, {**book, name: address} if address else book)
-        return Deployment(effects, address)
-
-    def call(self, case: Case, book: Addresses) -> Run:
-        """Sends the payload of `case` to its deployment in `book`, a build's deployments.
-        Errors as _send and _encode do."""
-        receipt = self._send(case, {"to": book[case.to], "data": self._encode(case.payload, book)})
-        return Run(self._effects(receipt, self._output(receipt), book), Gas(receipt["gasUsed"]))
-
-    def code_gas(self, case: Case, run: Run, book: Addresses) -> Gas:
-        """Returns the gas that the code spent on `run`, a call that sent `case` with `book`."""
-        base = self._send(case, {"to": NO_CODE, "data": self._encode(case.payload, book)})
-        return Gas(run.gas_used - base["gasUsed"])
-
-    def _account(self, index: AccountIndex) -> ChecksumAddress:
+    def account(self, index: AccountIndex) -> ChecksumAddress:
         """Returns the account at `index`. Errors with RuntimeError when the node has none."""
         if not 0 <= index < len(self.accounts):
             raise RuntimeError(f"the node has no account {index}")
         return self.accounts[index]
 
-    def _encode(self, payload: Payload, book: Addresses) -> bytes:
-        """Returns the bytes of `payload`, with the address of each account and deployment it
-        names. `book` holds the deployments. Errors as _account does, and with RuntimeError when
-        `book` lacks a deployment."""
-        def address(a: AddressArg) -> Word:
-            if isinstance(a, Account):
-                return _word(self._account(a.index))
-            if a.name not in book:
-                raise RuntimeError(f"{a} names no deployment of this build")
-            return _word(book[a.name])
-        return payload.encode(address)
-
     def transact(self, tx: TxParams) -> TxReceipt:
         """Sends `tx`, from account 0 with TX_GAS unless `tx` sets them, and returns the receipt.
         Errors with RuntimeError when the transaction fails."""
-        receipt = self._receipt({"from": self.accounts[0], "gas": TX_GAS, **tx})
-        if not receipt["status"]:
+        receipt = self.receipt({"from": self.accounts[0], "gas": TX_GAS, **tx})
+        if not _succeeded(receipt):
             raise RuntimeError(f"the transaction {receipt['transactionHash'].to_0x_hex()} failed")
         return receipt
 
-    def _send(self, case: Case, tx: TxParams) -> TxReceipt:
-        """Sends `tx` with the value of `case` from its sender, and returns the receipt. Errors
-        as _account does."""
-        return self._receipt({**tx, "from": self._account(case.sender),
-                              "value": Wei(case.payload.value), "gas": TX_GAS})
-
-    def _receipt(self, tx: TxParams) -> TxReceipt:
-        """Sends `tx` and returns its receipt, whether or not the transaction succeeds."""
+    def receipt(self, tx: TxParams) -> TxReceipt:
+        """Sends `tx` and returns its receipt, whether or not the transaction succeeds. To error
+        on a failed transaction, use Node.transact."""
         return self.w3.eth.wait_for_transaction_receipt(self.w3.eth.send_transaction(tx))
 
-    def _effects(self, receipt: TxReceipt, output: bytes, book: Addresses) -> Effects:
-        """Returns what the transaction of `receipt` did, with the storage of `book`."""
-        success = receipt["status"] == 1
-        storage = self._storage_diff(receipt, book) if success else {}
-        logs = tuple(Log(tuple(e["topics"]), e["data"]) for e in receipt["logs"])
-        return Effects(success, output, logs, storage)
-
-    def _output(self, receipt: TxReceipt) -> bytes:
+    def output(self, receipt: TxReceipt) -> bytes:
         """Returns the return or revert data of the transaction of `receipt`."""
         trace = cast(CallTrace, self.w3.geth.debug.trace_transaction(
             receipt["transactionHash"], TraceConfig(tracer="callTracer")))
         return bytes(trace.get("output", b""))
 
-    def _storage_diff(self, receipt: TxReceipt, book: Addresses) -> dict[DeploymentName, Storage]:
-        """Returns the storage slots of each deployment of `book` that the transaction of
-        `receipt` changed, leaving out the deployments with none."""
-        diff = cast(DiffModeTrace, self.w3.geth.debug.trace_transaction(
+    def state_diff(self, receipt: TxReceipt) -> DiffModeTrace:
+        """Returns the accounts that the transaction of `receipt` changed, before and after."""
+        return cast(DiffModeTrace, self.w3.geth.debug.trace_transaction(
             receipt["transactionHash"],
             TraceConfig(tracer="prestateTracer", tracerConfig={"diffMode": True})))
-        out = {}
-        for name, address in book.items():
-            pre, post = _storage(diff["pre"], address), _storage(diff["post"], address)
-            if changed := {s: post.get(s, ZERO_WORD) for s in sorted(pre.keys() | post.keys())}:
-                out[name] = changed
-        return out
+
+    @contextmanager
+    def session(self, compiled: Compiled, build: Build) -> Iterator[Session]:
+        """Yields a Session of `build` of `compiled` that starts from the node's state now, so that
+        every build gets the same addresses (DESIGN.md §10, "On a node"). Errors as Node.isolated
+        does."""
+        with self.isolated():
+            yield Session(self, compiled, build)
+
+
+def _succeeded(receipt: TxReceipt) -> bool:
+    """Returns whether the transaction of `receipt` succeeded."""
+    return receipt["status"] == 1
 
 
 def _word(address: ChecksumAddress) -> Word:
@@ -325,6 +319,13 @@ def _storage(accounts: dict[ChecksumAddress, TraceData], account: ChecksumAddres
     return {Slot(s): StorageWord(w) for s, w in storage.items()}
 
 
+def _changed_slots(pre: Storage, post: Storage) -> Storage:
+    """Returns each slot of `pre` or `post` with its word in `post`, or the zero word when `post`
+    lacks it. The two are one account's storage in a prestate trace in diff mode, which lists
+    only the slots that the transaction changed."""
+    return {s: post.get(s, ZERO_WORD) for s in sorted(pre.keys() | post.keys())}
+
+
 def _load_program(path: Path) -> embed.Program:
     """Loads the program at `path`, an absolute path. Errors with RuntimeError when the path is
     outside ROOT, and as embed.Program.load does."""
@@ -335,9 +336,6 @@ def _load_program(path: Path) -> embed.Program:
 
 @dataclass(frozen=True)
 class Compiled:
-    """A program with the deployment code of each of its builds, each compiled once, and the
-    same for each callee of its call script."""
-
     program: embed.Program
     # The deployment code of each build, by deployment name: THIS for the program, and the
     # callee's name for each callee.
@@ -359,15 +357,13 @@ class Compiled:
         return cls(program, initcode)
 
     def calls(self) -> list[Entry]:
-        """Returns the calls to send to the main deployment: the call script's, then
-        fegen.DISPATCH's."""
-        script = [Entry.line(c) for c in self.program.diff.cases.calls]
-        return script + [Entry(f"dispatch {i}", Case(0, p)) for i, p in enumerate(DISPATCH, 1)]
+        """Returns the calls to send. The call script's come first, and each goes to the
+        deployment it names. Then come fegen.DISPATCH's, which go to the main deployment."""
+        return ([Entry.line(c) for c in self.program.diff.cases.calls]
+                + [Entry.probe(p) for p in DISPATCH])
 
 
 class Session:
-    """One build's deployments of a compiled program and its callees on a node, by name."""
-
     def __init__(self, node: Node, compiled: Compiled, build: Build) -> None:
         self.node = node
         self.compiled = compiled
@@ -375,9 +371,16 @@ class Session:
         self.book: Addresses = {}
 
     def deploy(self, case: Case, name: DeploymentName) -> Deployment:
-        """Deploys the build of the program that `name` names with `case`. Errors as
-        Node.create does."""
-        return self.node.create(self.compiled.initcode[name][self.build], case, self.book, name)
+        """Deploys the build of the program that `name` names, with the constructor arguments,
+        value and sender of `case`. Errors as Node.account and Session.address do."""
+        initcode = self.compiled.initcode[name][self.build]
+        receipt = self._send(case.payload, case.sender,
+                             {"data": initcode + self._encode(case.payload)})
+        address = receipt["contractAddress"] if _succeeded(receipt) else None
+        # A deployment that succeeds outputs its runtime code, which differs between builds.
+        output = b"" if address else self.node.output(receipt)
+        book = {**self.book, name: address} if address else self.book
+        return Deployment(self._effects(receipt, output, book), address)
 
     def keep(self, name: DeploymentName, deployment: Deployment) -> None:
         """Records the contract that `deployment` created as the deployment `name`. Errors with
@@ -388,17 +391,64 @@ class Session:
 
     def deploy_all(self, record: Callable[[Outcome], object] = lambda _: None) -> None:
         """Deploys and keeps the callees, then the main deployment, and passes what each
-        deployment did to `record` before it keeps it. Errors as `keep` does, and as
-        Node.create does."""
+        deployment did to `record` before it keeps it. Errors as `keep` and `deploy`
+        do."""
         def deploy(name: DeploymentName, case: Case) -> None:
             d = self.deploy(case, name)
-            record(Outcome(Entry.deployment(case, name).label, d.effects))
+            record(Outcome(deployment_label(case, name), d.effects))
             self.keep(name, d)
         cases = self.compiled.program.diff.cases
         for callee in cases.callees:
             deploy(callee.name, callee.case)
         deploy(THIS, cases.main)
 
-    def call(self, case: Case) -> Run:
-        """Sends `case` to its deployment. Errors as Node.call does."""
-        return self.node.call(case, self.book)
+    def call(self, message: Message) -> Run:
+        """Sends `message` to its deployment. Errors as Node.account and Session.address do."""
+        tx: TxParams = {"to": self.address(message.to), "data": self._encode(message.payload)}
+        receipt = self._send(message.payload, message.sender, tx)
+        effects = self._effects(receipt, self.node.output(receipt), self.book)
+        return Run(effects, Gas(receipt["gasUsed"]))
+
+    def code_gas(self, message: Message, run: Run) -> Gas:
+        """Returns the gas that the code spent on `run`, a call that sent `message`."""
+        base = self._send(message.payload, message.sender,
+                          {"to": NO_CODE, "data": self._encode(message.payload)})
+        return Gas(run.gas_used - base["gasUsed"])
+
+    def address(self, name: DeploymentName) -> ChecksumAddress:
+        """Returns the address of the deployment `name`. Errors with RuntimeError when the build
+        has no such deployment."""
+        if name not in self.book:
+            raise RuntimeError(f"the {self.build.label} build has no deployment {name}")
+        return self.book[name]
+
+    def _send(self, payload: Payload, sender: AccountIndex, tx: TxParams) -> TxReceipt:
+        """Sends `tx` with the value of `payload` from the account `sender`, and returns the
+        receipt, whether or not the transaction succeeds. Errors as Node.account does."""
+        return self.node.receipt({**tx, "from": self.node.account(sender),
+                                  "value": Wei(payload.value), "gas": TX_GAS})
+
+    def _encode(self, payload: Payload) -> bytes:
+        """Returns the bytes of `payload`, with the address of each account and deployment it
+        names. Errors as Node.account and Session.address do."""
+        def address(a: AddressArg) -> Word:
+            if isinstance(a, Account):
+                return _word(self.node.account(a.index))
+            return _word(self.address(a.name))
+        return payload.encode(address)
+
+    def _effects(self, receipt: TxReceipt, output: bytes, book: Addresses) -> Effects:
+        """Returns what the transaction of `receipt` did. Its storage effects cover only the
+        deployments in `book`."""
+        success = _succeeded(receipt)
+        storage = self._storage_diff(receipt, book) if success else {}
+        logs = tuple(Log(tuple(e["topics"]), e["data"]) for e in receipt["logs"])
+        return Effects(success, output, logs, storage)
+
+    def _storage_diff(self, receipt: TxReceipt, book: Addresses) -> dict[DeploymentName, Storage]:
+        """Returns the storage slots of each deployment of `book` that the transaction of
+        `receipt` changed, leaving out the deployments with none."""
+        diff = self.node.state_diff(receipt)
+        changed = {name: _changed_slots(_storage(diff["pre"], a), _storage(diff["post"], a))
+                   for name, a in book.items()}
+        return {name: slots for name, slots in changed.items() if slots}

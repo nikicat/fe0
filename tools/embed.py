@@ -57,10 +57,11 @@ from pathlib import Path
 from typing import ClassVar, Never, NamedTuple, NewType, Protocol, Self
 
 import fegen
-from fegen import (DEPLOYMENT_NAME, MAX, ROOT, THIS, Account, AccountIndex, Arg, ByteOffset, Call,
-                   Callee, Case, Cases, Deploy, DeploymentName, DiagCode, DiagWord, DiffTest,
-                   ExtraBytes, Failure, FeLine, FeName, FeSource, Kind, LineCol, Named, PanicCode,
-                   Payload, PhaseLetter, RawCall, Selector, TestName, Wei, Word)
+from fegen import (DEPLOYMENT_NAME, MAX, NO_LINE, ROOT, THIS, Accepted, Account, AccountIndex, Arg,
+                   ByteOffset, Call, CallCase, Callee, Case, CaseDiffers, CaseNumber, Cases, Deploy,
+                   DeploymentName, DiagCode, DiagWord, DiffTest, ExtraBytes, Failure, FeLine, FeName,
+                   FeSource, LineCol, Named, PanicCode, Payload, PhaseLetter, ProbeDiffers, RawCall,
+                   Rejected, Selector, TestName, TooLarge, Wei, Word)
 
 CORPUS: Path = ROOT / "corpus"
 REJECTS: Path = CORPUS / "reject"
@@ -146,10 +147,24 @@ VARIANT = re.compile(r"#\[selector\s*=\s*(\w+)\]\s*(\w+)")
 RECV = re.compile(r"\brecv\s+(\w+)")
 
 
-def selectors(source: FeSource) -> dict[FeName, Selector]:
-    """Returns the selector of each variant of the msgs that the contract of `source` receives,
-    by variant name. A msg that the contract only calls, such as another contract's, has the
-    same variant names, so its variants are left out.
+@dataclass(frozen=True)
+class Selectors:
+    by_name: Mapping[FeName, Selector]
+
+    def of(self, name: FeName) -> Selector:
+        """Returns the selector of the variant `name`.
+
+        Errors with ScriptError when the program has no variant `name`.
+        """
+        if name not in self.by_name:
+            raise ScriptError(f"{name} is no variant of the program")
+        return self.by_name[name]
+
+
+def selectors(source: FeSource) -> Selectors:
+    """Returns the selectors of the msgs that the contract of `source` receives. A msg that the
+    contract only calls, such as another contract's, has the same variant names, so its variants
+    are left out.
 
     Errors with ScriptError when two received variants have one name.
     """
@@ -163,7 +178,7 @@ def selectors(source: FeSource) -> dict[FeName, Selector]:
             if name in out:
                 raise ScriptError(f"two received variants are named {name}")
             out[FeName(name)] = Selector(int(sel, 0))
-    return out
+    return Selectors(out)
 
 
 class Head(Enum):
@@ -227,15 +242,17 @@ class Args(NamedTuple):
 class ScriptLine(ABC):
     """One entry of a call script."""
 
+    before_main: ClassVar[bool] = False
+
     @abstractmethod
     def render(self) -> str:
         """The text of the entry, without a line end."""
 
     @abstractmethod
-    def payload(self, sels: Mapping[FeName, Selector]) -> Payload:
-        """Returns what the entry sends, with `sels` as the selectors by variant name.
+    def payload(self, sels: Selectors) -> Payload:
+        """Returns what the entry sends to a program with the selectors `sels`.
 
-        Errors when the entry names a variant that `sels` lacks.
+        Errors with ScriptError when the entry names a variant that `sels` lacks.
         """
 
     def sender(self) -> AccountIndex:
@@ -243,19 +260,20 @@ class ScriptLine(ABC):
         return AccountIndex(0)
 
     def names(self) -> list[DeploymentName]:
-        """Returns the deployments that the entry's arguments name."""
+        """Returns the deployments that the entry names, in its arguments or as the target of a
+        call."""
         return []
 
     def target(self) -> DeploymentName:
         """Returns the deployment that a call goes to. It is THIS for an entry that is no call."""
         return THIS
 
-    def case(self, number: int, sels: Mapping[FeName, Selector]) -> Case:
-        """Returns the entry as the case `number`, with `sels` as the selectors by variant name.
+    def case(self, number: CaseNumber, sels: Selectors) -> Case:
+        """Returns the entry as the case `number`, sent to a program with the selectors `sels`.
 
         Errors as payload does.
         """
-        return Case(number, self.payload(sels), self.sender(), self.target())
+        return Case(number, self.payload(sels), self.sender())
 
     @staticmethod
     def parse(text: str) -> "ScriptLine | None":
@@ -299,13 +317,15 @@ class ArgsLine(ScriptLine):
         return self.args.sender
 
     def names(self) -> list[DeploymentName]:
-        return [a.name for a in self.args.words if isinstance(a, Named)]
+        return self.args.deploy().named
 
 
 @dataclass(frozen=True)
 class CalleeLine(ArgsLine):
     """A `deploy PROGRAM as NAME` entry: a deployment of another program, which the program under
     test may call."""
+
+    before_main = True
 
     # The program, in the directory of the program under test.
     program: ProgramFile
@@ -335,7 +355,7 @@ class CalleeLine(ArgsLine):
     def render(self) -> str:
         return " ".join([Head.DEPLOY.value, self.program, _AS, self.name, *self.args.render()])
 
-    def payload(self, sels: Mapping[FeName, Selector]) -> Payload:
+    def payload(self, sels: Selectors) -> Payload:
         return self.args.deploy()
 
 
@@ -350,7 +370,7 @@ class DeploymentLine(ArgsLine):
     def render(self) -> str:
         return " ".join([self.keyword.value, *self.args.render()])
 
-    def payload(self, sels: Mapping[FeName, Selector]) -> Payload:
+    def payload(self, sels: Selectors) -> Payload:
         return self.args.deploy()
 
 
@@ -358,6 +378,7 @@ class InitLine(DeploymentLine):
     """An `init` entry: the main deployment."""
 
     keyword = Head.INIT
+    before_main = True
 
 
 class DeployLine(DeploymentLine):
@@ -374,6 +395,9 @@ class CallLine(ArgsLine):
 
     def target(self) -> DeploymentName:
         return self.to
+
+    def names(self) -> list[DeploymentName]:
+        return [*super().names(), self.to]
 
     def head(self) -> list[str]:
         """The token that names the deployment, when it is not the main one."""
@@ -404,10 +428,8 @@ class NamedCallLine(CallLine):
     def render(self) -> str:
         return " ".join([*self.head(), self.name, *self.args.render()])
 
-    def payload(self, sels: Mapping[FeName, Selector]) -> Payload:
-        if self.name not in sels:
-            raise ScriptError(f"{self.name} is no variant of the program")
-        return self.args.call(sels[self.name])
+    def payload(self, sels: Selectors) -> Payload:
+        return self.args.call(sels.of(self.name))
 
 
 @dataclass(frozen=True)
@@ -420,7 +442,7 @@ class SelectorCallLine(CallLine):
     def render(self) -> str:
         return " ".join([*self.head(), f"{self.sel:#x}", *self.args.render()])
 
-    def payload(self, sels: Mapping[FeName, Selector]) -> Payload:
+    def payload(self, sels: Selectors) -> Payload:
         return self.args.call(self.sel)
 
 
@@ -433,7 +455,7 @@ class RawLine(ScriptLine):
     def render(self) -> str:
         return f"{Head.RAW.value} {self.data.hex()}"
 
-    def payload(self, sels: Mapping[FeName, Selector]) -> Payload:
+    def payload(self, sels: Selectors) -> Payload:
         return RawCall(*self.data)
 
 
@@ -475,56 +497,83 @@ def check_script_line() -> None:
         raise AssertionError(f"{bad!r} parses")
 
 
-def parse_calls(path: Path, sels: Mapping[FeName, Selector]) -> Cases:
-    """Returns what the call script `path` sends, with `sels` as the selectors by variant name.
+@dataclass
+class Script:
+    # The script, whose directory holds the callees' programs.
+    path: Path
+    # The selectors of each deployment's program.
+    programs: dict[DeploymentName, Selectors]
+    # The `init` line's case, once it is read.
+    main: Case | None = None
+    deploys: list[Case] = field(default_factory=list)
+    calls: list[CallCase] = field(default_factory=list)
+    callees: list[Callee] = field(default_factory=list)
 
-    Each case's number is its line in the script. Without an `init` line, the main deployment is
-    Case(0, Deploy()).
-    """
-    main = Case(0, Deploy())
-    deploys: list[Case] = []
-    calls: list[Case] = []
-    callees: list[Callee] = []
-    # The selectors of each deployment's program, by variant name.
-    programs: dict[DeploymentName, Mapping[FeName, Selector]] = {THIS: sels}
-    # Whether an entry other than a callee came before.
-    begun = False
-    for n, text in enumerate(path.read_text().splitlines(), start=1):
-        try:
-            line = ScriptLine.parse(text)
-            if line is None:
-                continue
-            # The main deployment comes after the callees and the `init` line.
-            known = programs.keys() - ({THIS} if isinstance(line, (CalleeLine, InitLine)) else set())
-            named = [*line.names(), *([line.to] if isinstance(line, CallLine) else [])]
-            if unknown := [m for m in named if m not in known]:
-                raise ScriptError(f"{Named(unknown[0])} names no deployment before it")
-            case = line.case(n, programs[line.target()])
-            match line:
-                case CalleeLine() if begun:
-                    raise ScriptError(f"`{line.render()}` comes after an entry that is no callee")
-                case CalleeLine() if line.name in programs:
-                    raise ScriptError(f"a second deployment named {line.name}")
-                case CalleeLine():
-                    program = path.parent / line.program
-                    if not program.exists():
-                        raise ScriptError(f"there is no {program.relative_to(ROOT)}")
-                    callees.append(Callee(line.name, program, case))
-                    programs[line.name] = selectors(FeSource(program.read_text()))
-                    continue
-            begun = True
-            match line:
-                case InitLine() if main.number:
-                    raise ScriptError(f"a second {Head.INIT.value} line")
-                case InitLine():
-                    main = case
-                case DeployLine():
-                    deploys.append(case)
-                case _:
-                    calls.append(case)
-        except ScriptError as e:
-            raise ScriptError(f"{path.relative_to(ROOT)}:{n}: {e}") from None
-    return Cases(main, deploys, calls, callees)
+    @classmethod
+    def read(cls, path: Path, sels: Selectors) -> Cases:
+        """Returns what the call script `path` sends to the program with the selectors `sels`.
+        Each case's number is its line in the script.
+
+        Errors with ScriptError, which names the path and line, when a line breaks a rule of the
+        script.
+        """
+        script = cls(path, {THIS: sels})
+        for n, text in enumerate(path.read_text().splitlines(), start=1):
+            try:
+                if line := ScriptLine.parse(text):
+                    script.add(CaseNumber(n), line)
+            except ScriptError as e:
+                raise ScriptError(f"{path.relative_to(ROOT)}:{n}: {e}") from None
+        return script.cases()
+
+    def cases(self) -> Cases:
+        """Returns what the lines read so far send. Without an `init` line, the main deployment
+        is Case(NO_LINE, Deploy())."""
+        main = self.main if self.main is not None else Case(NO_LINE, Deploy())
+        return Cases(main, self.deploys, self.calls, self.callees)
+
+    @property
+    def begun(self) -> bool:
+        """Whether an entry other than a callee came before."""
+        return self.main is not None or bool(self.deploys or self.calls)
+
+    def add(self, number: CaseNumber, line: ScriptLine) -> None:
+        """Adds `line`, the script's line `number`. Errors with ScriptError when it breaks a rule
+        of the script."""
+        self.check_names(line)
+        case = line.case(number, self.programs[line.target()])
+        match line:
+            case CalleeLine():
+                self.add_callee(line, case)
+            case InitLine() if self.main is not None:
+                raise ScriptError(f"a second {Head.INIT.value} line")
+            case InitLine():
+                self.main = case
+            case DeployLine():
+                self.deploys.append(case)
+            case _:
+                self.calls.append(CallCase(case, line.target()))
+
+    def check_names(self, line: ScriptLine) -> None:
+        """Errors with ScriptError when `line` names a deployment that no line before it made.
+        The main deployment comes after the callees and the `init` line."""
+        known = self.programs.keys() - ({THIS} if line.before_main else set())
+        if unknown := [m for m in line.names() if m not in known]:
+            raise ScriptError(f"{Named(unknown[0])} names no deployment before it")
+
+    def add_callee(self, line: CalleeLine, case: Case) -> None:
+        """Adds the callee that `line` deploys with `case`. Errors with ScriptError when it comes
+        after an entry that is no callee, when its name is taken, or when its program is
+        missing."""
+        if self.begun:
+            raise ScriptError(f"`{line.render()}` comes after an entry that is no callee")
+        if line.name in self.programs:
+            raise ScriptError(f"a second deployment named {line.name}")
+        program = self.path.parent / line.program
+        if not program.exists():
+            raise ScriptError(f"there is no {program.relative_to(ROOT)}")
+        self.callees.append(Callee(line.name, program, case))
+        self.programs[line.name] = selectors(FeSource(program.read_text()))
 
 
 # The declaration of a contract, whose name is group 1.
@@ -585,19 +634,19 @@ class Program:
         """
         path = path.relative_to(ROOT)
         script = calls_path(path)
-        if not re.fullmatch(r"[a-z][a-z0-9_]*", path.stem):
-            raise ScriptError(f"Errors when embedding {path}: the name must be a lowercase identifier")
-        if not (ROOT / script).exists():
-            raise ScriptError(f"Errors when embedding {path}: there is no {script.name}")
-        source = FeSource((ROOT / path).read_text())
-        contracts = CONTRACT.findall(source)
-        if len(contracts) != 1:
-            raise ScriptError(f"Errors when embedding {path}: it must have one contract")
         try:
+            if not re.fullmatch(r"[a-z][a-z0-9_]*", path.stem):
+                raise ScriptError("the name must be a lowercase identifier")
+            if not (ROOT / script).exists():
+                raise ScriptError(f"there is no {script.name}")
+            source = FeSource((ROOT / path).read_text())
+            contracts = CONTRACT.findall(source)
+            if len(contracts) != 1:
+                raise ScriptError("it must have one contract")
             sels = selectors(source)
         except ScriptError as e:
             raise ScriptError(f"Errors when embedding {path}: {e}") from None
-        cases = parse_calls(ROOT / script, sels)
+        cases = Script.read(ROOT / script, sels)
         diff = DiffTest(TestName(f"corpus_{path.stem}"), FeName(contracts[0]), source, cases)
         return cls(path, script, diff)
 
@@ -615,22 +664,24 @@ class Program:
         return FeSource(top + self.diff.source + fegen.source([FeLine(""), *self.diff.lines()]))
 
     def explain(self, code: PanicCode) -> FailureMessage | None:
-        f = Failure.decode(code)
-        match f.kind:
-            case Kind.PANIC:
-                return None
-            case Kind.DIAG:
-                diag = DiagWord.unpack(code).describe(self.diff.source)
+        match Failure.decode(code):
+            case Rejected(word):
+                diag = word.describe(self.diff.source)
                 return FailureMessage(f"{self.path}: Fe0 rejects it with {diag}")
-            case Kind.PROBE:
-                return FailureMessage(f"{self.path}: dispatcher probe {f.number} of fegen.DISPATCH:"
+            case ProbeDiffers(index):
+                return FailureMessage(f"{self.path}: dispatcher probe {index} of fegen.DISPATCH:"
                                       " the builds differ")
-        where = (f"{self.calls_path}:{f.number}" if f.number
-                 else f"{self.calls_path}: the deployment without arguments")
-        if f.kind is Kind.SIZE:
-            return FailureMessage(f"{where}: Fe0's code is larger than a chain accepts")
-        main = " or create no contract" if f.number == self.diff.cases.main.number else ""
-        return FailureMessage(f"{where}: the builds differ{main}")
+            case TooLarge(number):
+                return FailureMessage(f"{self.where(number)}: Fe0's code is larger than a chain"
+                                      " accepts")
+            case CaseDiffers(number):
+                main = " or create no contract" if number == self.diff.cases.main.number else ""
+                return FailureMessage(f"{self.where(number)}: the builds differ{main}")
+        return None
+
+    def where(self, number: CaseNumber) -> str:
+        """Returns where the case `number` comes from in the call script, for a report."""
+        return f"{self.calls_path}:{fegen.script_place(number, str)}"
 
 
 # The header lines of a reject program, which the module doc describes.
@@ -656,23 +707,25 @@ class Reject:
         Errors when it has no `// expect:` header, or when the header names a line past its end.
         """
         path = path.relative_to(ROOT)
-        return cls.parse(path, FeSource((ROOT / path).read_text()))
+        try:
+            return cls.parse(path, FeSource((ROOT / path).read_text()))
+        except ScriptError as e:
+            raise ScriptError(f"Errors when embedding {path}: {e}") from None
 
     @classmethod
     def parse(cls, path: Path, source: FeSource) -> Self:
         """Returns the reject program `source`, read from `path`, with the error its header names.
 
-        Errors as `load` does.
+        Errors as `load` does, with a message that leaves out the path.
         """
         lines = re.split(fegen.LINE_END, source)
         m = next(filter(None, map(EXPECT.fullmatch, lines)), None)
         if not m:
-            raise ScriptError(f"Errors when embedding {path}: it has no `// expect: X000 line:col` header")
+            raise ScriptError("it has no `// expect: X000 line:col` header")
         try:
             expected = DiagWord.matched(m, source)
         except ValueError:
-            raise ScriptError(f"Errors when embedding {path}: the header names line"
-                              f" {LineCol.matched(m).line}, past the end") from None
+            raise ScriptError(f"the header names line {LineCol.matched(m).line}, past the end") from None
         return cls(path, source, expected, FE_ACCEPTS in lines)
 
     @property
@@ -699,13 +752,13 @@ class Reject:
         return None
 
     def explain(self, code: PanicCode) -> FailureMessage | None:
-        kind = Failure.decode(code).kind
-        if kind is Kind.ACCEPTED:
-            got = "accepts it"
-        elif kind is Kind.DIAG:
-            got = "gives " + DiagWord.unpack(code).describe(self.source)
-        else:
-            return None
+        match Failure.decode(code):
+            case Accepted():
+                got = "accepts it"
+            case Rejected(word):
+                got = "gives " + word.describe(self.source)
+            case _:
+                return None
         expected = self.expected.describe(self.source)
         return FailureMessage(f"{self.path}: Fe0 {got}, expected {expected}")
 
@@ -855,8 +908,8 @@ class Corpus(NamedTuple):
     def write(self, out: Path) -> "Written":
         """Replaces the directory `out` with batch ingots of the programs that fe check accepts,
         and one ingot of all the reject programs. Returns them with a message for each failure
-        of fe check. A program that only a node can run (fegen.Cases.node_only) is left to the
-        node check."""
+        of fe check. A program that fegen.DiffTest.lines cannot render is left to the node
+        check."""
         checked = self.check_official()
         shutil.rmtree(out, ignore_errors=True)
         here = [p for p in checked.accepted if not p.diff.cases.node_only]

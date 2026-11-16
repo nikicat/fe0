@@ -15,9 +15,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 
-from fegen import (CHAIN_LEN, FE0, MAX, MAX_DEPTH, Call, Case, Cases, Deploy, DiffTest, ExtraBytes,
-                   FeCode, FeLine, FeName, FeSource, Selector, TestName, Wei, Word, difftest_use,
-                   lines, source, write_formatted)
+from fegen import (CHAIN_LEN, FE0, MAX, MAX_DEPTH, Call, CallCase, Case, CaseNumber, Cases, Deploy,
+                   DiffTest, ExtraBytes, FeCode, FeLine, FeName, FeSource, Selector, TestName, Wei, Word,
+                   difftest_use, lines, source, write_formatted)
 
 
 @dataclass(frozen=True)
@@ -422,7 +422,7 @@ CHAIN = FeSource(CHAIN_MSG.source + "\ncontract CgChain {\n"
 # The case number of the main deployment. Smaller numbers name the other deployments, in order
 # from 1, and larger numbers name the calls. In hex, a failed test's panic code then ends in the
 # case: 0x1_0000_1003 is the third call (fegen.Kind).
-MAIN_CASE = 0x1000
+MAIN_CASE = CaseNumber(0x1000)
 
 
 # Words that the calls of several programs send.
@@ -433,8 +433,9 @@ def program(test: TestName, contract: FeName, program: FeSource, calls: Sequence
             deploys: Sequence[Deploy] = (), main: Deploy = Deploy()) -> DiffTest:
     """Returns the differential test `test` of `program`, whose contract is `contract`. It sends
     the program `calls` and `deploys`, numbered around MAIN_CASE."""
-    cases = Cases(Case(MAIN_CASE, main), [Case(n, d) for n, d in enumerate(deploys, start=1)],
-                  [Case(n, c) for n, c in enumerate(calls, start=MAIN_CASE + 1)])
+    cases = Cases(Case(MAIN_CASE, main),
+                  [Case(CaseNumber(n), d) for n, d in enumerate(deploys, start=1)],
+                  [CallCase(Case(CaseNumber(n), c)) for n, c in enumerate(calls, start=MAIN_CASE + 1)])
     return DiffTest(test, contract, program, cases)
 
 

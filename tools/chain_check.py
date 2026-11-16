@@ -316,7 +316,7 @@ class Chain:
         source = FeSource(COUNTER.read_text())
         deployed = self.deploy_program(source, w3.codec.encode(["uint256"], [START]))
         print(f"deploy({COUNTER.name}): {deployed.gas:,} gas, at {deployed.address}")
-        get = embed.selectors(source)[FeName("Get")].to_bytes(4)
+        get = embed.selectors(source).of(FeName("Get")).to_bytes(4)
         got = w3.eth.call({"to": deployed.address, "data": HexBytes(get)})
         if w3.codec.decode(["uint256"], got)[0] != START:
             return [FailureMessage(f"{COUNTER.name} deployed by Compiler: Get returns"

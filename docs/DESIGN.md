@@ -458,10 +458,10 @@ in `deploy token.fe as t0`, pass the address as `@t0` and call it, as in `@t0 Tr
 The docstring of `tools/embed.py` gives the format. Such a program runs only on a node, since
 its test inside `fe test` could not deploy the other program. So does a program whose script
 names a deployment such as `@this`, since that test could not resolve its address
-(`fegen.Cases.node_only`). On the node, each build deploys
-its own build of each callee and runs the whole script from the same snapshot of the node
-(`Node.isolated`). So the contracts of both builds get the same addresses, and a storage slot
-hashed from one is the same in both.
+(`fegen.Cases.node_only`). On the node, each build deploys its own build of each callee and
+runs the whole script from the same snapshot of the node (`Node.session` in `tools/node.py`).
+So the contracts of both builds get the same addresses, and a storage slot hashed from one is
+the same in both.
 
 **One test per batch.** The root module of each batch ingot holds one test that calls every
 runner of the batch. Its name starts with `embed.BATCH_TEST`. The harness runs only these
