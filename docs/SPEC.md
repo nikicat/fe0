@@ -688,3 +688,73 @@ evaluation order, `uses` duplicates and unused entries, and extra calldata bytes
 The newline rule of §3.4 was answered on Nov 11, by `tools/newline_check.py`. It found that Fe
 reads some line breaks inside parentheses differently, and Fe0's rule became narrower. No
 question is open.
+
+## 10. Fe0 and Fe at a glance
+
+A summary of the sections above, for a reader who wants the shape of the subset before its
+rules. Each row points to the section that owns the rule; where the two disagree, that section
+wins. ✅ means Fe0 has the feature as Fe does. ◐ means Fe0 has it with a narrower rule, so it
+rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is valid Fe (§3.3).
+
+**Types**
+
+| Feature | Fe0 | Where |
+|---|---|---|
+| `u256`, `bool`, `Address`, with checked arithmetic | ✅ | §2, §4 |
+| Other integer widths, signed integers, `usize`, `isize` | ❌ | §2 |
+| `String` | ◐ only as an `assert!` message of at most 31 bytes | §1 |
+| Tuples, arrays, structs other than events, enums, references | ❌ | §2, §3.3 |
+| Generics, traits, `impl`, closures, `as` casts | ❌ | §3.3 |
+| A literal's type inferred from later uses | ◐ the type must be fixed where the literal is written | §2 |
+
+**Syntax and expressions**
+
+| Feature | Fe0 | Where |
+|---|---|---|
+| Binary operators and their precedence | ✅ | §3.2 |
+| Unary `-` and `+`, `**` | ❌ | §3.3 |
+| Compound assignment | ✅ | §1 |
+| Decimal and hex literals | ✅ | §1 |
+| Binary and octal literals | ❌ | §1 |
+| `if` as an expression, block values | ✅ | §4 |
+| `while`, `break`, `continue`, `return` | ✅ | §3.1 |
+| `for`, ranges, `loop`, `match` | ❌ | §3.3 |
+| `let`, `var`, shadowing | ✅ | §5.2 |
+| Field access and method calls | ❌ except `ctx.caller()`, `ctx.address()`, `log.emit`, `a.call` | §3.3 |
+| Line breaks inside an expression | ◐ only inside `( )`, after `(`, `,` or an operator, or before `)` | §3.4 |
+| A `<` that may open generic arguments | ◐ rejected whenever it may | §3.2 |
+| Doc comments | ✅ | §1 |
+
+**Items and names**
+
+| Feature | Fe0 | Where |
+|---|---|---|
+| `const` | ◐ refers only to earlier constants | §5.3 |
+| Functions with positional and labelled parameters | ✅ | §5.4 |
+| Recursion | ◐ deeper than Fe's stack limit, Fe0 differs (task T0gp3v) | §5.4 |
+| `mod`, `use`, `extern`, `unsafe`, `with` | ❌ | §3.3 |
+| A local named like a field or an item, or starting uppercase | ◐ rejected | §5.2 |
+| Type names and contextual words as names | ◐ rejected everywhere | §1 |
+| A program without a contract | ◐ rejected | §6 |
+
+**Contracts and effects**
+
+| Feature | Fe0 | Where |
+|---|---|---|
+| `msg` with literal selectors, `recv` with one arm per variant | ✅ | §6 |
+| `sol("…")` selectors | ❌ a stretch goal | §3.3 |
+| Fallback arms, `#[payable]` | ❌ | §3.3 |
+| `mut` storage fields, with Fe's packing | ✅ | §6 |
+| Fields without `mut` | ❌ a stretch goal | §6 |
+| `StorageMap` of `u256`, `bool` and `Address` | ✅ | §6 |
+| Maps elsewhere, maps of maps, `StorageMap` methods | ❌ | §3.3 |
+| `uses` checks on `init` and arms | ✅ | §6 |
+| Duplicate `uses` entries, `Log` and `Call` granted without `mut` | ◐ rejected | §6 |
+| `uses` on free functions | ❌ free functions are pure | §5.5 |
+| `ctx.caller()`, `ctx.address()` | ✅ | §6 |
+| Other `Ctx` methods | ❌ | §3.3 |
+| Events with up to three indexed fields of the three types | ✅ | §6 |
+| `a.call(M::V { … })` | ✅ | §6 |
+| `try_call`, static calls, gas or value on a call | ❌ | §3.3 |
+| The dispatcher, ABI decoding and `init` arguments | ✅ | §6 |
+| Diagnostics | ◐ the first error only, as a stable code | §7 |

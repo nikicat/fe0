@@ -20,7 +20,8 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
 
 ## Next
 - README from the starter's SUBMISSION.md: pitch, problem, approach, Fe highlight (the effect
-  check), architecture, build and test, demo, limitations, Fe0 spec link.
+  check), architecture, build and test, demo, limitations (link SPEC.md §10, the Fe0 and Fe
+  matrix), Fe0 spec link.
 - The README's build and test section covers the native CLI: `fe build --backend native -e
   executable --out-dir out/cli fe0-cli`, then `out/cli/fe0_cli < program.fe`, its exit codes
   (0, 1, 2) and `tools/cli_check.py`. On an AArch64 Linux host it needs the patched Fe of
