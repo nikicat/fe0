@@ -1,0 +1,85 @@
+// Fe clones a function once for each struct constant that is passed to it. `count` and
+// `count_code` do the same work; one takes a struct, the other its `u8` field.
+pub struct Kind { code: u8 }
+
+impl Copy for Kind {}
+
+pub const K0: Kind = Kind { code: 0 }
+pub const K1: Kind = Kind { code: 1 }
+pub const K2: Kind = Kind { code: 2 }
+pub const K3: Kind = Kind { code: 3 }
+pub const K4: Kind = Kind { code: 4 }
+pub const K5: Kind = Kind { code: 5 }
+pub const K6: Kind = Kind { code: 6 }
+pub const K7: Kind = Kind { code: 7 }
+pub const K8: Kind = Kind { code: 8 }
+pub const K9: Kind = Kind { code: 9 }
+pub const K10: Kind = Kind { code: 10 }
+pub const K11: Kind = Kind { code: 11 }
+
+// Returns how many of the 32 bytes of `x` equal the code of `k`.
+fn count(_ x: u256, _ k: Kind) -> u256 {
+    count_code(x, k.code)
+}
+
+// Returns how many of the 32 bytes of `x` equal `code`.
+fn count_code(_ x: u256, _ code: u8) -> u256 {
+    var n: u256 = 0
+    var i: u256 = 0
+    while i < 32 {
+        if (x >> (i * 8)) & 0xff == code as u256 {
+            n += 1
+        }
+        i += 1
+    }
+    n
+}
+
+msg M {
+    #[selector = 1]
+    Run { a: u256 } -> u256,
+}
+
+// Passes 12 struct constants to `count`.
+pub contract Structs {
+    recv M {
+        Run { a } -> u256 {
+            var n: u256 = 0
+            n += count(a, K0)
+            n += count(a, K1)
+            n += count(a, K2)
+            n += count(a, K3)
+            n += count(a, K4)
+            n += count(a, K5)
+            n += count(a, K6)
+            n += count(a, K7)
+            n += count(a, K8)
+            n += count(a, K9)
+            n += count(a, K10)
+            n += count(a, K11)
+            n
+        }
+    }
+}
+
+// Passes the same 12 codes to `count_code` as plain `u8` values.
+pub contract Plain {
+    recv M {
+        Run { a } -> u256 {
+            var n: u256 = 0
+            n += count_code(a, 0)
+            n += count_code(a, 1)
+            n += count_code(a, 2)
+            n += count_code(a, 3)
+            n += count_code(a, 4)
+            n += count_code(a, 5)
+            n += count_code(a, 6)
+            n += count_code(a, 7)
+            n += count_code(a, 8)
+            n += count_code(a, 9)
+            n += count_code(a, 10)
+            n += count_code(a, 11)
+            n
+        }
+    }
+}

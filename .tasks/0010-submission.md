@@ -28,5 +28,8 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
   WORKAROUNDS.md.
 - Declaration: pre-existing work (everything before commit of Nov 3, see git log), reused code
   (none), AI assistance (most work AI-assisted, verified by probes and tests).
+- Redeploy every phase contract and Compiler from the submitted commit with `tools/deploy.py`
+  and browser-web3-signer, then update docs/DEMO.md and `deployments/42161.json`. The Nov 14
+  deployment already differs from main (since fb9d801).
 - Make the repo public (Apache-2.0 LICENSE is in place), record the exact commit SHA and
   `fe 26.6.0`. The README explains the move from 26.5.1 (ADR 0015).
