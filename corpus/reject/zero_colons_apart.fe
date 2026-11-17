@@ -1,5 +1,5 @@
 // expect: P002 10:22
-// The colons of `Address::zero()` must touch (SPEC §1). Fe rejects this too.
+// The colons of `Address::zero()` must touch (SPEC §1).
 msg M {
     #[selector = 1]
     Get -> Address,

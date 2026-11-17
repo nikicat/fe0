@@ -1,5 +1,5 @@
 // expect: P005 12:15
-// A newline may not come inside `[ ]` (SPEC §3.4). Fe rejects it too (1-0001).
+// A newline may not come inside `[ ]` (SPEC §3.4).
 msg M {
     #[selector = 1]
     Get { k: u256, a: Address } -> u256,

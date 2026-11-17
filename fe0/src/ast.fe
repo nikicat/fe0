@@ -116,7 +116,7 @@ pub const NODE_BOOL: Kind = Kind { code: 41 }
 pub const NODE_NAME: Kind = Kind { code: 42 }
 // binary operator: op (an O_ kind), lhs, rhs.
 pub const NODE_BINARY: Kind = Kind { code: 43 }
-// `!` or `~`: op (O_BANG or O_TILDE), operand.
+// `!`, `~` or `+`: op (O_BANG, O_TILDE or O_PLUS), operand.
 pub const NODE_UNARY: Kind = Kind { code: 44 }
 // call: name (of the callee), list of ARGs.
 pub const NODE_CALL: Kind = Kind { code: 45 }

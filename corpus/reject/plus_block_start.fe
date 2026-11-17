@@ -1,0 +1,6 @@
+// expect: P005 5:5
+// A `+` at the start of the first line of a block (SPEC §3.4).
+// fe: accepts
+fn f(_ x: u256) -> u256 {
+    +x
+}

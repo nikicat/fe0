@@ -1,5 +1,5 @@
 // expect: P002 10:16
-// An attribute must end its line, and Fe rejects `#[indexed]` with its field on one line too
+// An attribute must end its line, so `#[indexed]` may not share a line with its field
 // (SPEC §3.1).
 msg M {
     #[selector = 1]

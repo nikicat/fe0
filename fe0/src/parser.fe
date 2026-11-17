@@ -816,6 +816,12 @@ impl Parser {
         self.peek() == T_NEWLINE && self.prev() == T_IDENT && self.peek2() == P_LBRACE
     }
 
+    // Whether the current token is a prefix operator of rule `unary` (SPEC.md §3.1, §3.4).
+    fn at_prefix_op(self) -> bool {
+        let k = self.peek()
+        k == O_BANG || k == O_TILDE || (k == O_PLUS && self.prev() != T_NEWLINE)
+    }
+
     // Index of the token after the bracket group that opens at token `start`, or of the T_EOF
     // token when the group does not close.
     fn after_group(self, _ start: TokIdx) -> TokIdx {
@@ -835,12 +841,12 @@ impl Parser {
         i
     }
 
-    // SPEC.md §3.1, rule `unary`. Written as a loop, so a run of operators does not recurse.
-    // The operators are consecutive tokens, so the primary is wrapped in them from the last back
-    // to the first.
+    // SPEC.md §3.1, rule `unary`. Written as a loop, so a run of operators takes no nesting
+    // depth (ADR 0012). Errors with P_EXPECTED_EXPR on a `+` that starts a line where a newline
+    // ends statements (SPEC.md §3.4).
     fn unary(mut self) -> Result<Diag, NodeId> {
         let first = self.at
-        while self.peek() == O_BANG || self.peek() == O_TILDE {
+        while self.at_prefix_op() {
             self.bump()
         }
         var op = self.at

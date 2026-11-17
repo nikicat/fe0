@@ -621,6 +621,7 @@ fn binary_precedence() {
 #[test]
 fn unary_and_primaries() {
     tail_is("fn f() { !~a == !b }", "(== (! (~ a)) (! b))")
+    tail_is("fn f() { +a * ~+ +b }", "(* (+ a) (~ (+ (+ b))))")
     tail_is("fn f() { 0x10 + 1_000 }", "(+ 16 1000)")
     tail_is("fn f() { true != false }", "(!= true false)")
     tail_is("fn f() { { 1 } }", "{1}")
@@ -804,6 +805,10 @@ fn newlines() {
     assert!(
         parse_err("fn f() { if a { 1 }\n else { 2 } }").code == P_EXPECTED_EXPR,
     )
+    // A line may not start with `+` where a newline ends statements (SPEC.md §3.4). Inside
+    // parentheses it may, and the `+` is unary.
+    rejects("fn f() {\n    +a\n}", P_EXPECTED_EXPR, 13)
+    tail_is("fn f() { g(1,\n+2) }", "(call g (1 (+ 2)))")
 }
 
 #[test]

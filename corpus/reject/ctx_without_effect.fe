@@ -1,5 +1,5 @@
 // expect: E051 9:33
-// An arm names `ctx`, but the contract declares no `Ctx` effect (SPEC §6). Fe rejects it too.
+// An arm names `ctx`, but the contract declares no `Ctx` effect (SPEC §6).
 msg M {
     #[selector = 1]
     Get -> Address,

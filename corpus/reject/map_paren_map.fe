@@ -1,7 +1,6 @@
-// expect: P006 13:16
+// expect: P006 12:16
 // fe: accepts
-// Fe0 indexes only a map's name, never a map in parentheses (SPEC §3.1), although Fe accepts
-// `(m)[k] = 1`.
+// Fe0 indexes only a map's name, never a map in parentheses (SPEC §3.1).
 msg M {
     #[selector = 1]
     Set { k: u256 },

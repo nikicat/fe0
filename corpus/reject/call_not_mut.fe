@@ -1,7 +1,6 @@
-// expect: E018 18:13
+// expect: E018 17:13
 // fe: accepts
-// Fe0 calls only through a `Call` effect that `uses` grants as `mut` (SPEC §6, "Calls"),
-// although Fe accepts `uses (call)`.
+// Fe0 calls only through a `Call` effect that `uses` grants as `mut` (SPEC §6, "Calls").
 msg Other {
     #[selector = 0x11]
     Echo { a: u256 } -> u256,

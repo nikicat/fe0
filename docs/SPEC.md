@@ -182,7 +182,7 @@ bitand      = shift { "&" shift } ;
 shift       = add { ( "<<" | ">>" ) add } ;
 add         = mul { ( "+" | "-" ) mul } ;
 mul         = unary { ( "*" | "/" | "%" ) unary } ;
-unary       = ( "!" | "~" ) unary | primary ;
+unary       = ( "!" | "~" | "+" ) unary | primary ;
 args        = arg { "," arg } [ "," ] ;
 arg         = [ IDENT ":" ] expr ;
 primary     = INT | "true" | "false" | IDENT "(" [ args ] ")" | IDENT | "(" expr ")" | block | if
@@ -215,6 +215,10 @@ tightest:
 and index
 
 - All binary operators associate to the left.
+- Unary `+` takes a `u256` and gives it back unchanged. Fe rejects it on `bool` and `Address`
+  with `8-0052` **[✓]**. The probes are `corpus/unary_plus.fe`, `corpus/reject/plus_bool.fe`
+  and `corpus/reject/plus_address.fe`. Fe has no unary `-` on `u256`: it rejects `-x` with
+  `8-0016`, because `u256` has no `Neg` **[✓]**. The probe is `corpus/reject/minus_u256.fe`.
 - Comparisons do not chain: `a < b < c` is rejected. Fe rejects it too **[✓]**, with `8-0016`,
   because `bool` has no `Ord`.
 - **Generic arguments.** After a name, Fe reads `<` as the start of generic arguments when
@@ -235,7 +239,7 @@ and index
 
 ### 3.3 Left out of Fe0 (all valid Fe)
 
-- `**`, unary `-` and `+`, `as` casts, ranges, `for` and `match`;
+- `**`, `as` casts, ranges, `for` and `match`;
 - method calls other than `ctx.caller()`, `ctx.address()`, `log.emit(…)` and `a.call(…)`, path
   calls other than `Address::zero()`, field access, generics and traits;
 - the other ways to call a contract: `try_call`, `static`, `call_with_default`, a call with a
@@ -264,6 +268,12 @@ A statement ends at a newline, right before the `}` that closes its block, as in
   differently, so Fe0 rejects them all **[✓]**.
 - Anywhere else, a newline ends the statement if the tokens so far form a complete statement.
   Otherwise the program is a syntax error.
+- Where a newline can end a statement, a line may not start with `+`. Fe joins such a line
+  onto the one before, so it reads `let b = a` followed by `+b` as `let b = a + b` **[✓]**.
+  The probe is `corpus/reject/plus_line_start.fe`. Fe accepts `+` at the start of the first
+  line of a block, where there is no line before to join **[✓]**. Fe0 rejects it there as
+  well (`corpus/reject/plus_block_start.fe`). Inside parentheses, `g(x,` followed by `+x)` is
+  a unary plus in both **[✓]**. The probe is the arm `Plus` of `corpus/unary_plus.fe`.
 - A statement must end before the next one starts, so `while c { } x = 1` on one line is
   rejected.
 - The `{` that opens a block must be on the same line as the header or condition before it.
@@ -278,7 +288,9 @@ A statement ends at a newline, right before the `}` that closes its block, as in
 
 So an expression may span lines only where the innermost open bracket is `(`, and only after
 `(`, `,` or a binary operator, or before `)`. Fe's rule is more permissive in some places, for
-example a line inside parentheses may start with `||`, so this is a valid subset.
+example a line inside parentheses may start with `||`, so this is a valid subset. Fe also
+accepts a line inside parentheses that starts with a binary `+`, and Fe0 rejects it (`L009`)
+**[✓]**. The probe is `corpus/reject/line_break_plus.fe`.
 
 Probed **[✓]**:
 - Fe accepts a parenthesised expression spread over several lines.
@@ -293,10 +305,11 @@ Probed **[✓]**:
   on two lines of such a block. Fe rejects it with `8-0013`. Fe0 rejects both probes, because
   `g` is not a value and that `return` has no value.
 - Fe accepts the `{` of an `if` or `while` on the next line.
-- Inside parentheses, Fe rejects a line that starts with `-` or `*`, a line break before or
-  after the `:` of a call label, after `!` or `~`, and between a function's name and the `(`
+- Inside parentheses, Fe reads a line that starts with `-` or `*` as a new expression, not as
+  the rest of the one before, so it rejects it (`1-0001`). It also rejects a line break before
+  or after the `:` of a call label, after `!` or `~`, and between a function's name and the `(`
   of its call. In an `if` condition, Fe ends the condition at a line break before `<`. The
-  probes are `corpus/reject/line_break_*.fe`. Fe0 rejects them all with `L009`.
+  probes are the other `corpus/reject/line_break_*.fe`. Fe0 rejects them all with `L009`.
 - `tools/newline_check.py` compares how Fe and Fe0 split programs into statements, with Fe's
   own parser. It checks the corpus, the reject programs that Fe0 parses, and generated
   programs, each also with random line breaks wherever the rule above allows one. On Nov 11,
@@ -376,7 +389,9 @@ ABI-encoded string.
      probe is `corpus/uppercase_params.fe`.
 3. **Constants** are evaluated at compile time with the §4 semantics. Overflow is a compile-time
    error (`3-0034`), and so is division by zero (`3-0025`) **[✓]**.
-   - A constant may refer only to earlier constants and literals.
+   - A constant may refer only to earlier constants and literals. So a map entry is not a
+     constant expression (`C001`). Fe rejects one too, because the map is an undefined name
+     there (`8-0012`) **[✓]**. The probe is `corpus/reject/map_in_const.fe`.
    - Fe accepts forward references **[✓]**; Fe0 keeps the restriction, which is safe under the
      subset rule.
 4. **Function calls.**
@@ -386,7 +401,10 @@ ABI-encoded string.
    - Arguments must follow the parameter order. Swapped labels are `8-0024` **[✓]**.
    - Recursion is allowed. Fe0 adds no limit beyond EVM gas and stack depth.
 5. **Free functions are pure.** They have no `uses` clause, so they cannot touch storage, read
-   the caller, emit an event or call a contract (§6).
+   the caller, emit an event or call a contract (§6). Fe rejects a free function that reads
+   the caller or a map, because `ctx` or the map is an undefined name there (`8-0012`)
+   **[✓]**. The probes are `corpus/reject/ctx_in_free_function.fe` and
+   `corpus/reject/map_in_free_function.fe`.
 6. **Return paths.** A function with `-> T` must produce a `T` on every path, either through its
    final expression or through `return`. Otherwise it is an error (`8-0000`, type mismatch)
    **[✓]**.
@@ -492,6 +510,9 @@ grant a storage field.
 - Fe0 rejects the same effect name declared twice (`N001`). Fe accepts it, even for two kinds
   of effect under one name, such as `a: Ctx, a: mut Log` **[✓]**. Fe0 keeps the stricter rule
   ([ADR 0001](adr/0001-strict-subset.md#update-nov-17)).
+- Only a `Ctx` effect has `caller()` (`T001`). Fe rejects `owner.caller()` on an `Address`
+  field too, because `Address` has no such method (`2-0010`) **[✓]**. The probe is
+  `corpus/reject/ctx_not_an_effect.fe`.
 - Other methods of `Ctx`, such as `ctx.origin()`, are left out of Fe0 (§3.3). So is `uses` on
   a free function (§5.5).
 
@@ -502,7 +523,12 @@ grant a storage field.
   never written reads as zero: `0`, `false` or the address 0.
 - `m[k] = v` writes the entry.
 - `m` must be a map, `k` must have the key type, and `v` must have the value type (`T001`).
-- `m[k] op= v` needs a `u256` entry (`T001`), as any compound assignment does (§4).
+  Fe rejects indexing a field that is not a map (`8-0016`), and a key or value of another type
+  (`8-0000`) **[✓]**. The probes are `corpus/reject/map_index_not_a_map.fe`,
+  `corpus/reject/map_key_type.fe` and `corpus/reject/map_value_type.fe`.
+- `m[k] op= v` needs a `u256` entry (`T001`), as any compound assignment does (§4). Fe rejects
+  `f[k] += true` on a `bool` entry (`8-0016`) **[✓]**. The probe is
+  `corpus/reject/map_compound_bool.fe`.
 - Reading an entry needs `m` in the body's `uses`, and writing one needs `mut m`, as for a
   storage field (`E116`, `E018`). Fe rejects both **[✓]**.
 - A map is not a value (`N003`), and a whole map is not assignable (`N014`). Fe rejects the
@@ -720,7 +746,8 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 | Feature | Fe0 | Where |
 |---|---|---|
 | Binary operators and their precedence | ✅ | §3.2 |
-| Unary `-` and `+`, `**` | ❌ | §3.3 |
+| Unary `+` | ◐ not at the start of a line where a newline can end a statement | §3.2, §3.4 |
+| `**` | ❌ | §3.3 |
 | Compound assignment | ✅ | §1 |
 | Decimal and hex literals | ✅ | §1 |
 | Binary and octal literals | ❌ | §1 |

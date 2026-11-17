@@ -1,5 +1,5 @@
 // expect: E116 12:13
-// Reading an entry needs the map in `uses` (SPEC §6, "Maps"). Fe rejects it too (8-0116).
+// Reading an entry needs the map in `uses` (SPEC §6, "Maps").
 msg M {
     #[selector = 1]
     Get { k: u256, a: Address } -> u256,

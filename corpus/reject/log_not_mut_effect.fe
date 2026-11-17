@@ -1,6 +1,5 @@
-// expect: P002 14:23
-// A `Log` effect is declared `mut Log` (SPEC §6, "Events"). Fe rejects `log: Log` when the
-// body emits.
+// expect: P002 13:23
+// A `Log` effect is declared `mut Log` (SPEC §6, "Events").
 msg M {
     #[selector = 1]
     Go { n: u256 },

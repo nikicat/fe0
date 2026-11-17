@@ -1,0 +1,5 @@
+// expect: T001 4:7
+// Unary `+` on a `bool` (SPEC §3.2).
+fn f(_ b: bool) -> bool {
+    !+b
+}

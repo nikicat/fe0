@@ -1,6 +1,5 @@
-// expect: N005 9:10
-// A parameter may not take the name of a `Ctx` effect (SPEC §5.2). Fe rejects it too
-// (8-0134).
+// expect: N005 8:10
+// A parameter may not take the name of a `Ctx` effect (SPEC §5.2).
 msg M {
     #[selector = 1]
     Get -> u256,

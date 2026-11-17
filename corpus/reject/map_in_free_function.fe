@@ -1,5 +1,5 @@
 // expect: E116 4:5
-// A free function may not read a map (SPEC §5.5). Fe rejects it too (8-0012).
+// A free function may not read a map (SPEC §5.5).
 fn g() -> u256 {
     m[1]
 }

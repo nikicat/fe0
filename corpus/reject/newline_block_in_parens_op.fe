@@ -1,6 +1,5 @@
-// expect: P005 7:5
-// Inside a block, a newline ends the statement even when the block is in parentheses
-// (SPEC §3.4). So `+ 1` starts a new statement, and Fe0 has no unary `+`.
+// expect: P005 6:5
+// A line of a block inside parentheses that starts with `+` (SPEC §3.4).
 // fe: accepts
 fn f(_ x: u256) -> u256 {
     ({ x

@@ -1,5 +1,5 @@
 // expect: N014 13:13
-// A whole map is not assignable (SPEC §6, "Maps"). Fe rejects it too (16-0010).
+// A whole map is not assignable (SPEC §6, "Maps").
 msg M {
     #[selector = 1]
     Get { k: u256, a: Address } -> u256,

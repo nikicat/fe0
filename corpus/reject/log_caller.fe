@@ -1,7 +1,6 @@
-// expect: T001 18:21
+// expect: T001 17:21
 // fe: accepts
-// In Fe0, only a `Ctx` effect has `caller()` (SPEC §6, "Events"), although Fe accepts it on a
-// `Log` effect.
+// Only a `Ctx` effect has `caller()`, not a `Log` effect (SPEC §6, "Events").
 msg M {
     #[selector = 1]
     Go { n: u256 },

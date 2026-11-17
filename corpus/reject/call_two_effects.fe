@@ -1,7 +1,6 @@
-// expect: N001 15:31
+// expect: N001 14:31
 // fe: accepts
-// A contract has at most one `Call` effect (SPEC §6, "Calls"). Fe accepts two when no body
-// grants both.
+// A contract has at most one `Call` effect (SPEC §6, "Calls").
 msg Other {
     #[selector = 0x11]
     Echo { a: u256 } -> u256,

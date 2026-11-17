@@ -1,6 +1,5 @@
-// expect: T001 13:13
-// Only a `Ctx` effect has `caller()` (SPEC §6, "The caller"). Fe rejects this too, because
-// `Address` has no such method.
+// expect: T001 12:13
+// Only a `Ctx` effect has `caller()`, not an `Address` (SPEC §6, "The caller").
 msg M {
     #[selector = 1]
     Get -> Address,

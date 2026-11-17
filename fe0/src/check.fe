@@ -11,7 +11,7 @@ use std::evm::crypto::keccak256
 const U256_MAX: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 const SELECTOR_MAX: u256 = 0xffffffff
 
-// The most indexed fields an event may have. Topic 0 is the hash of the event's signature.
+// The most indexed fields an event may have (SPEC §6, "Events").
 const MAX_INDEXED: usize = MAX_TOPICS - 1
 
 // A set of contract fields with one bit per field, so it holds at most MAX_FIELDS fields.
@@ -59,7 +59,8 @@ impl FrameSlot {
     }
 }
 
-// A word of an event's log data, counted from the first.
+// A word of an event's log data, counted from the first. The data words (SPEC §6, "Events")
+// come first, then one word for each indexed field, which LOGn takes as a topic.
 pub struct LogWord { n: usize }
 
 impl Copy for LogWord {}
@@ -256,9 +257,7 @@ impl Checked {
         self.slots.set(d.index(), w.index())
     }
 
-    // Returns the word of the log data that holds the value of an event's FIELD node `f`. The
-    // data fields take the first words, then the indexed fields, which become topics, each in
-    // declaration order.
+    // Returns the word of the log data that holds the value of an event's FIELD node `f`.
     pub fn log_word(self, _ f: NodeId) -> LogWord {
         LogWord { n: self.slots[f.index()] }
     }
@@ -694,7 +693,8 @@ impl Checker {
     }
 
     // Gives each contract field its index and storage place. Fields share the item namespace.
-    // Errors as `note_call_effect` does.
+    // Errors with N_DUPLICATE at a field named like another field or an item, with
+    // E_TOO_MANY_FIELDS at a field past MAX_FIELDS, and as `note_call_effect` does.
     fn fields(mut self) -> Result<Diag, ()> {
         let l = self.node(self.c.the_contract).list()
         self.unique(l)?
@@ -777,7 +777,9 @@ impl Checker {
         } else if k == NODE_UNARY {
             let a = self.eval(n.operand())?
             v.ty = self.fit(n.operand(), a.ty, unary_ty(n.op()))?
-            v.v = if n.op() == O_BANG { a.v ^ 1 } else { ~a.v }
+            v.v = if n.op() == O_BANG {
+                a.v ^ 1
+            } else if n.op() == O_TILDE { ~a.v } else { a.v }
         } else if k == NODE_BINARY {
             v = self.eval_binary(i)?
         } else {
@@ -909,7 +911,8 @@ impl Checker {
         Result::Ok(())
     }
 
-    // Returns topic 0 of EVENT `e`: the keccak of its signature, as in `Moved(address,uint256)`.
+    // Returns topic 0 of EVENT `e` (SPEC §6, "Events"). It hashes a signature such as
+    // `Moved(address,uint256)`.
     fn topic0(self, _ e: NodeId) -> u256 {
         let n = self.node(e)
         var sig: MemVec<u8> = MemVec::new()
@@ -943,7 +946,7 @@ impl Checker {
         self.distinct_received_selectors(n.recvs())
     }
 
-    // Fails with N_DUPLICATE_SELECTOR when two msgs received in RECV list `l` share a selector, so
+    // Errors with N_DUPLICATE_SELECTOR when two msgs received in RECV list `l` share a selector, so
     // that the dispatcher could not tell their variants apart. Each msg's own selectors are
     // already distinct (`msg_item`).
     fn distinct_received_selectors(self, _ l: ListId) -> Result<Diag, ()> {
@@ -960,7 +963,7 @@ impl Checker {
         Result::Ok(())
     }
 
-    // Fails with N_DUPLICATE_SELECTOR at VARIANT `v` when a msg received by one of the first `k`
+    // Errors with N_DUPLICATE_SELECTOR at VARIANT `v` when a msg received by one of the first `k`
     // RECVs in list `l` has its selector.
     fn distinct_received_selector(self, _ v: NodeId, _ l: ListId, _ k: usize) -> Result<Diag, ()> {
         var j: usize = 0

@@ -1,7 +1,6 @@
-// expect: N001 9:28
+// expect: N001 8:28
 // fe: accepts
-// Fe0 rejects the same `Ctx` effect twice in a contract's `uses` (SPEC §6, "The caller").
-// Fe accepts it.
+// A contract may not declare the same `Ctx` effect twice (SPEC §6, "The caller").
 msg M {
     #[selector = 1]
     Get -> Address,

@@ -1,0 +1,6 @@
+// expect: T001 4:14
+// Unary `+` on an `Address` (SPEC §3.2).
+fn f(_ a: Address) -> Address {
+    let b = +a
+    b
+}

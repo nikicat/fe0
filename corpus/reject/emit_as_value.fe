@@ -1,6 +1,6 @@
 // expect: T003 17:21
 // fe: accepts
-// Emitting has no value (SPEC §6, "Events"), although Fe accepts `let x = log.emit(…)`.
+// Emitting has no value (SPEC §6, "Events").
 msg M {
     #[selector = 1]
     Go { n: u256 },

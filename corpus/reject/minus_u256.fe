@@ -1,0 +1,5 @@
+// expect: P005 4:5
+// Unary `-` on a `u256` (SPEC §3.2).
+fn f(_ x: u256) -> u256 {
+    -x
+}

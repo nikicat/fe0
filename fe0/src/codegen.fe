@@ -191,16 +191,24 @@ impl Output {
 // What `compile` returns.
 pub struct Compiled { pub out: Output, pub warns: MemVec<Diag> }
 
+// The kind of body being generated, which decides how it leaves.
+enum BodyKind {
+    Fn,
+    // An INIT body jumps to this label when it ends.
+    Init(Label),
+    Arm,
+}
+
+impl Copy for BodyKind {}
+
 // The body being generated: a FN, INIT or ARM.
 struct Body {
-    kind: Kind,
+    kind: BodyKind,
     // The type of the body's value, or TY_UNIT.
     ret: Ty,
     frame: Size,
     // The words that the body has on the stack. Code that leaves early pops them.
     depth: usize,
-    // Where an INIT body jumps when it ends. Empty for FN and ARM bodies, which leave without it.
-    exit: LabelSlot,
 }
 
 // An enclosing `while`, with the stack depth at its start.
@@ -303,13 +311,7 @@ impl Gen {
             c,
             asm: Asm::new(),
             refs: Refs::new(nodes),
-            body: Body {
-                kind: NODE_NONE,
-                ret: TY_UNIT,
-                frame: bytes(0),
-                depth: 0,
-                exit: EMPTY_SLOT,
-            },
+            body: Body { kind: BodyKind::Fn, ret: TY_UNIT, frame: bytes(0), depth: 0 },
             loops: MemVec::new(),
         }
     }
@@ -437,21 +439,23 @@ impl Gen {
             let f = self.refs.todo.pop().unwrap()
             let n = self.node(f)
             self.asm.bind(self.refs.fn_labels[f.index()].label())
-            self.begin(f)
+            self.begin(f, BodyKind::Fn)
             self.body_end(n.body())
         }
     }
 
     // Starts the body of FN, INIT or ARM `owner`. INIT and ARM bodies use the first frame
     // (DESIGN.md §6.1).
-    fn begin(mut self, _ owner: NodeId) {
+    fn begin(mut self, _ owner: NodeId, _ kind: BodyKind) {
         let n = self.node(owner)
-        let kind = n.kind
         let frame = frame_size(self.c.frame_slots(owner))
-        self.body = Body { kind, ret: n.ty().or_unit(), frame, depth: 0, exit: EMPTY_SLOT }
-        if kind != NODE_FN {
-            self.push(FRAMES.word())
-            self.store_at(FP)
+        self.body = Body { kind, ret: n.ty().or_unit(), frame, depth: 0 }
+        match kind {
+            BodyKind::Fn => {},
+            BodyKind::Init(_) | BodyKind::Arm => {
+                self.push(FRAMES.word())
+                self.store_at(FP)
+            },
         }
     }
 
@@ -480,26 +484,27 @@ impl Gen {
     // Leaves the body. Its value, if it has one, is on top of the stack.
     fn leave(mut self) {
         let value = self.body.ret != TY_UNIT
-        let kind = self.body.kind
-        if kind == NODE_FN {
-            // The caller expects only the value, so drop the words under it.
-            var k: usize = if value { 1 } else { 0 }
-            while k < self.body.depth {
-                if value { self.op(OP_SWAP1) }
-                self.op(OP_POP)
-                k += 1
-            }
-            self.unlink_frame()
-            self.op(OP_JUMP)
-        } else if kind == NODE_ARM {
-            if value {
-                self.store_at(SCRATCH)
-                self.return_memory(WORD)
-            } else {
-                self.op(OP_STOP)
-            }
-        } else {
-            self.asm.jump(self.body.exit.label())
+        match self.body.kind {
+            BodyKind::Fn => {
+                // The caller expects only the value, so drop the words under it.
+                var k: usize = if value { 1 } else { 0 }
+                while k < self.body.depth {
+                    if value { self.op(OP_SWAP1) }
+                    self.op(OP_POP)
+                    k += 1
+                }
+                self.unlink_frame()
+                self.op(OP_JUMP)
+            },
+            BodyKind::Arm => {
+                if value {
+                    self.store_at(SCRATCH)
+                    self.return_memory(WORD)
+                } else {
+                    self.op(OP_STOP)
+                }
+            },
+            BodyKind::Init(exit) => self.asm.jump(exit),
         }
     }
 
@@ -671,7 +676,7 @@ impl Gen {
     fn arm(mut self, _ a: NodeId) {
         let n = self.node(a)
         let fields = self.node(self.c.resolved(a)).list()
-        self.begin(a)
+        self.begin(a, BodyKind::Arm)
         self.require_calldata(selector_and_words(self.len(fields)))
         var k: usize = 0
         while k < self.len(n.list()) {
@@ -707,10 +712,10 @@ impl Gen {
         let init = self.node(c).init()
         if !init.is_none() {
             self.init_args(init, rt, end)
-            self.begin(init)
-            self.body.exit = self.asm.label().slot()
+            let exit = self.asm.label()
+            self.begin(init, BodyKind::Init(exit))
             self.body_end(self.node(init).body())
-            self.asm.bind(self.body.exit.label())
+            self.asm.bind(exit)
         }
         self.push(rt.word())
         self.asm.push_label(end)
@@ -769,7 +774,9 @@ impl Gen {
             return LEAVES_WORD
         } else if k == NODE_UNARY {
             self.value(n.operand())
-            self.op(if n.op() == O_BANG { OP_ISZERO } else { OP_NOT })
+            if n.op() != O_PLUS {
+                self.op(if n.op() == O_BANG { OP_ISZERO } else { OP_NOT })
+            }
             return LEAVES_WORD
         } else if k == NODE_CALL {
             return self.call(i)

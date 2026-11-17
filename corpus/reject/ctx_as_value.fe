@@ -1,6 +1,5 @@
-// expect: N003 11:21
+// expect: N003 10:21
 // A `Ctx` effect is not a value, so it cannot be bound to a local (SPEC §6, "The caller").
-// Fe rejects this too.
 msg M {
     #[selector = 1]
     Get -> Address,

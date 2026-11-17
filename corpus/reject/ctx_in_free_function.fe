@@ -1,6 +1,5 @@
-// expect: E116 9:5
-// A free function reads the caller. It has no `uses`, so it may not (SPEC §5.5). Fe rejects it
-// too, as an undefined name.
+// expect: E116 8:5
+// A free function has no `uses`, so it may not read the caller (SPEC §5.5).
 msg M {
     #[selector = 1]
     Get -> Address,

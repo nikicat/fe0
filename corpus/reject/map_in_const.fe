@@ -1,5 +1,5 @@
 // expect: C001 3:17
-// An entry is not a constant expression (SPEC §5.3). Fe rejects it too (8-0012).
+// An entry is not a constant expression (SPEC §5.3).
 const N: u256 = m[1]
 msg M {
     #[selector = 1]

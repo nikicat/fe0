@@ -1,6 +1,5 @@
-// expect: P010 11:5
-// A map field must be `mut` (SPEC §6), as every field in Fe0. Fe rejects it too, because a
-// map is state only (3-0061).
+// expect: P010 10:5
+// A map field must be `mut`, as every field in Fe0 (SPEC §6, "Maps").
 msg M {
     #[selector = 1]
     Get { k: u256, a: Address } -> u256,

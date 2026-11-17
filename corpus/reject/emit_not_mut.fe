@@ -1,7 +1,6 @@
-// expect: E018 18:13
+// expect: E018 17:13
 // fe: accepts
-// Fe0 emits only through a `Log` effect that `uses` grants as `mut` (SPEC §6, "Events"),
-// although Fe accepts `uses (log)`.
+// Fe0 emits only through a `Log` effect that `uses` grants as `mut` (SPEC §6, "Events").
 msg M {
     #[selector = 1]
     Go { n: u256 },

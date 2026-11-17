@@ -9,7 +9,7 @@ here and rerun the script, so the offsets stay right.
 usage: [FE=path/to/fe] gen_check_tests.py
 """
 import re
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass, replace
 from enum import Enum
 from typing import Self
 
@@ -76,20 +76,24 @@ class Diagnosed:
 Case = Accepts | Diagnosed
 
 
-def ok(src: str) -> Accepts:
-    return Accepts(PointedSource.unmarked(src))
+def text(src: str | ContractCase) -> str:
+    return src if isinstance(src, str) else src.source()
 
 
-def warn(src: str, code: str) -> Diagnosed:
+def ok(src: str | ContractCase) -> Accepts:
+    return Accepts(PointedSource.unmarked(text(src)))
+
+
+def warn(src: str | ContractCase, code: str) -> Diagnosed:
     """Returns a case that the checker warns about with the diagnostic `code`. The diagnostic
     points at the byte that `|` marks in `src`."""
-    return Diagnosed(Helper.WARNS, PointedSource.parse(src), FeName(code))
+    return Diagnosed(Helper.WARNS, PointedSource.parse(text(src)), FeName(code))
 
 
-def err(src: str, code: str) -> Diagnosed:
+def err(src: str | ContractCase, code: str) -> Diagnosed:
     """Returns a case that the checker rejects with the diagnostic `code`. The diagnostic
     points at the byte that `|` marks in `src`."""
-    return Diagnosed(Helper.REJECTS, PointedSource.parse(src), FeName(code))
+    return Diagnosed(Helper.REJECTS, PointedSource.parse(text(src)), FeName(code))
 
 
 # The msg that every contract case receives.
@@ -99,17 +103,28 @@ GET_OK = "        Get {} -> u256 uses (a) { a }\n"
 ARMS_OK = GET_OK + "        Set { v } uses (mut a) { a = v }\n"
 # The fields of the maps cases. FIELD_A stays because GET_OK reads it.
 MAPS = FIELD_A + "    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n"
-def contract(arms: str, body_fields: str = FIELD_A, init: str = "", msgs: str = "",
-             recvs: str = "", effects: str = "") -> str:
-    """Returns a program of MSG, then contract K, which receives M with the arms `arms`. Its
-    `uses` clause is left out when `effects` is empty."""
-    uses = f"uses ({effects}) " if effects else ""
-    return (MSG + msgs + "contract K " + uses + "{\n" + body_fields + init + "    recv M {\n" + arms
-            + "    }\n" + recvs + "}\n")
-def set_arm(body: str, fields: str = FIELD_A, init: str = "", effects: str = "") -> str:
+@dataclass(frozen=True)
+class ContractCase:
+    """A program of `items`, MSG and `msgs`, then contract K, which receives M with the arms
+    `arms`. Its `uses` clause is left out when `effects` is empty."""
+
+    arms: str
+    fields: str = FIELD_A
+    _: KW_ONLY
+    init: str = ""
+    msgs: str = ""
+    recvs: str = ""
+    effects: str = ""
+    items: str = ""
+
+    def source(self) -> str:
+        uses = f"uses ({self.effects}) " if self.effects else ""
+        return (self.items + MSG + self.msgs + "contract K " + uses + "{\n" + self.fields + self.init
+                + "    recv M {\n" + self.arms + "    }\n" + self.recvs + "}\n")
+def set_arm(body: str, fields: str = FIELD_A) -> ContractCase:
     """Returns the contract whose arms are GET_OK and a Set arm with the text `body` after
     `Set { v } `."""
-    return contract(GET_OK + "        Set { v } " + body + "\n", fields, init, effects=effects)
+    return ContractCase(GET_OK + "        Set { v } " + body + "\n", fields)
 def event(name: str, *fields: str) -> str:
     """Returns the source of an event struct. Write each entry of `fields` without its comma."""
     body = "".join(f"    {f},\n" for f in fields)
@@ -119,9 +134,8 @@ def indexed(field: str) -> str:
 RECV_N = "    recv N {\n        O {} { }\n    }\n"
 # The event that the events cases emit.
 EVENT = event("E", indexed("to: Address"), "amount: u256")
-def log_arm(body: str, items: str = EVENT, init: str = "",
-            effects: str = "log: mut Log, ctx: Ctx") -> str:
-    return items + set_arm(body, init=init, effects=effects)
+def log_arm(body: str, items: str = EVENT) -> ContractCase:
+    return replace(set_arm(body), items=items, effects="log: mut Log, ctx: Ctx")
 def emit_ok(effect: str = "log", amount: str = "v") -> str:
     """Returns a statement that emits EVENT. The statement reads `ctx.caller()`, so its body needs
     the Ctx effect."""
@@ -131,8 +145,8 @@ OTHER = "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[s
 CALL_FIELDS = FIELD_A + "    mut t: Address\n"
 CALL = "call: mut Call"
 CALL_CTX = CALL + ", ctx: Ctx"
-def call_arm(body: str, init: str = "", effects: str = CALL) -> str:
-    return OTHER + set_arm(body, CALL_FIELDS, init, effects)
+def call_arm(body: str) -> ContractCase:
+    return replace(set_arm(body, CALL_FIELDS), items=OTHER, effects=CALL)
 groups: dict[TestName, list[Case]] = {
 TestName("types_of_operators"): [
     ok("fn f(_ a: u256, _ b: bool, _ c: Address, _ d: Address) -> bool {\n    a + 1 * 2 / 3 % 4 & 5 | 6 ^ 7 << 8 >> 9 > 0 && !b || c == d && ~a != 0\n}"),
@@ -143,6 +157,9 @@ TestName("types_of_operators"): [
     err("fn f(_ a: u256) -> bool { a == |true }", "T_MISMATCH"),
     err("fn f(_ a: u256) -> bool { !|a }", "T_MISMATCH"),
     err("fn f(_ b: bool) -> bool { ~|b }", "T_MISMATCH"),
+    err("fn f(_ b: bool) -> bool { +|b }", "T_MISMATCH"),
+    err("fn f(_ c: Address) -> Address { +|c }", "T_MISMATCH"),
+    ok("fn f(_ a: u256) -> u256 { +a + +1 }"),
     err("fn g() {}\nfn f() -> bool { |g() == g() }", "T_NO_VALUE"),
 ],
 TestName("if_and_blocks"): [
@@ -187,9 +204,9 @@ TestName("locals"): [
     ok("const A: u256 = 1\nfn F() -> u256 { A }"),
     err("fn f() -> u256 {\n    |let Some: u256 = 1\n    Some\n}", "N_UPPERCASE_LOCAL"),
     ok("fn f(_ Option: u256, X: u256) -> u256 { Option + X }"),
-    err(contract(GET_OK + "        Set { |v: Ok } { }\n"), "N_UPPERCASE_LOCAL"),
+    err(ContractCase(GET_OK + "        Set { |v: Ok } { }\n"), "N_UPPERCASE_LOCAL"),
     err("fn f() -> u256 {\n    |var Foo: u256 = 1\n    Foo\n}", "N_UPPERCASE_LOCAL"),
-    err("const n: u256 = 5\n" + contract(GET_OK + "        Set { |v: n } { }\n"), "N_SHADOWS_ITEM"),
+    err(ContractCase(GET_OK + "        Set { |v: n } { }\n", items="const n: u256 = 5\n"), "N_SHADOWS_ITEM"),
     err("const n: u256 = 5\nfn f() -> u256 {\n    |let n: u256 = 2\n    n\n}", "N_SHADOWS_ITEM"),
     err("fn g() -> u256 { 1 }\nfn f(|_ g: u256) -> u256 { g }", "N_SHADOWS_ITEM"),
     err("msg m {\n    #[selector = 0x01]\n    A {},\n}\nfn f(|_ m: u256) -> u256 { m }", "N_SHADOWS_ITEM"),
@@ -241,7 +258,7 @@ TestName("calls"): [
     ok("fn g() {}\nfn f() { g() }"),
 ],
 TestName("constants"): [
-    ok("const A: u256 = 2 + 3\nconst B: u256 = A * 4 - 1 / 1 % 7\nconst C: bool = B == 19 && !false\nconst D: u256 = 1 << 256"),
+    ok("const A: u256 = 2 + 3\nconst B: u256 = A * 4 - 1 / 1 % 7\nconst C: bool = B == 19 && !false\nconst D: u256 = 1 << 256\nconst E: u256 = ~+2 - +A"),
     err("const A: u256 = |B\nconst B: u256 = 1", "N_FORWARD_CONST"),
     err("const A: u256 = |A", "N_FORWARD_CONST"),
     err("const A: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff |+ 1", "C_OVERFLOW"),
@@ -252,23 +269,24 @@ TestName("constants"): [
     err("fn g() -> u256 { 1 }\nconst A: u256 = |g()", "C_NOT_CONST"),
     err("const A: bool = |1", "T_MISMATCH"),
     err("const A: u256 = 1 + |true", "T_MISMATCH"),
+    err("const A: u256 = +|true", "T_MISMATCH"),
 ],
 TestName("effects"): [
-    ok(contract(ARMS_OK, init="    init(x: u256) uses (mut a) { a = x }\n")),
-    err(contract("        Get {} -> u256 { |a }\n        Set { v } uses (mut a) { a = v }\n"), "E_NOT_IN_USES"),
+    ok(ContractCase(ARMS_OK, init="    init(x: u256) uses (mut a) { a = x }\n")),
+    err(ContractCase("        Get {} -> u256 { |a }\n        Set { v } uses (mut a) { a = v }\n"), "E_NOT_IN_USES"),
     err(set_arm("uses (a) { |a = v }"), "E_NOT_MUT"),
     err(set_arm("uses (a) { |a += v }"), "E_NOT_MUT"),
-    err(contract("        Get {} -> u256 uses (|b) { 1 }\n        Set { v } { }\n"), "E_UNKNOWN_FIELD"),
+    err(ContractCase("        Get {} -> u256 uses (|b) { 1 }\n        Set { v } { }\n"), "E_UNKNOWN_FIELD"),
     ok(set_arm("uses (a, mut a) { a = v }")),
     err(set_arm("uses (mut a, a) { |a = v }"), "E_NOT_MUT"),
-    err(contract(ARMS_OK) + "fn f() -> u256 { |a }", "E_NOT_IN_USES"),
-    warn(contract("        Get {} -> u256 uses (a, |b) { a }\n        Set { v } uses (mut a) { a = v }\n", FIELD_A + "    mut b: u256\n"), "E_UNUSED_USE"),
-    warn(contract(ARMS_OK, init="    init() uses (|mut a) { }\n"), "E_UNUSED_USE"),
-    ok(contract("        Get {} -> u256 uses (mut a) { a }\n        Set { v } uses (mut a) { a = v }\n")),
-    err(contract(ARMS_OK, init="    init(|a: u256) { }\n"), "N_SHADOWS_FIELD"),
-    err(contract("        Get {} -> u256 {\n            |let a: u256 = 1\n            a\n        }\n        Set { v } { }\n"), "N_SHADOWS_FIELD"),
-    err(contract(ARMS_OK, FIELD_A + "    mut |a: bool\n"), "N_DUPLICATE"),
-    err("const a: u256 = 1\n" + contract(ARMS_OK, "    mut |a: u256\n"), "N_DUPLICATE"),
+    err(ContractCase(ARMS_OK).source() + "fn f() -> u256 { |a }", "E_NOT_IN_USES"),
+    warn(ContractCase("        Get {} -> u256 uses (a, |b) { a }\n        Set { v } uses (mut a) { a = v }\n", FIELD_A + "    mut b: u256\n"), "E_UNUSED_USE"),
+    warn(ContractCase(ARMS_OK, init="    init() uses (|mut a) { }\n"), "E_UNUSED_USE"),
+    ok(ContractCase("        Get {} -> u256 uses (mut a) { a }\n        Set { v } uses (mut a) { a = v }\n")),
+    err(ContractCase(ARMS_OK, init="    init(|a: u256) { }\n"), "N_SHADOWS_FIELD"),
+    err(ContractCase("        Get {} -> u256 {\n            |let a: u256 = 1\n            a\n        }\n        Set { v } { }\n"), "N_SHADOWS_FIELD"),
+    err(ContractCase(ARMS_OK, FIELD_A + "    mut |a: bool\n"), "N_DUPLICATE"),
+    err(ContractCase(ARMS_OK, "    mut |a: u256\n", items="const a: u256 = 1\n"), "N_DUPLICATE"),
 ],
 TestName("maps"): [
     ok(set_arm("uses (mut m, mut f) {\n            m[Address::zero()] += v\n            f[v] = !f[m[Address::zero()] + 1]\n        }", MAPS)),
@@ -276,7 +294,7 @@ TestName("maps"): [
     err(set_arm("uses (m) { |m[Address::zero()] = v }", MAPS), "E_NOT_MUT"),
     err(set_arm("uses (m) { let x = |m }", MAPS), "N_NOT_A_VALUE"),
     err(set_arm("uses (mut m) { |m = v }", MAPS), "N_ASSIGN_IMMUTABLE"),
-    err(contract("        Get {} -> u256 uses (a) { |a[1] }\n        Set { v } { }\n", MAPS), "T_MISMATCH"),
+    err(ContractCase("        Get {} -> u256 uses (a) { |a[1] }\n        Set { v } { }\n", MAPS), "T_MISMATCH"),
     err(set_arm("uses (mut a) { |a[v] = v }", MAPS), "T_MISMATCH"),
     err(set_arm("uses (mut m) { m[|v] = v }", MAPS), "T_MISMATCH"),
     err(set_arm("uses (mut f) { f[v] = |v }", MAPS), "T_MISMATCH"),
@@ -286,8 +304,8 @@ TestName("maps"): [
 TestName("events"): [
     ok(log_arm("uses (mut log, ctx) { " + emit_ok() + " }")),
     ok(log_arm("uses (mut log) {\n            let to = Address::zero()\n            log.emit(E { amount: v + 1, to })\n        }")),
-    ok(log_arm("{ }", init="    init() uses (mut log, ctx) { " + emit_ok(amount="1") + " }\n")),
-    ok(log_arm("uses (mut l2, ctx) { " + emit_ok("l2") + " }", effects="log: mut Log, l2: mut Log, ctx: Ctx")),
+    ok(replace(log_arm("{ }"), init="    init() uses (mut log, ctx) { " + emit_ok(amount="1") + " }\n")),
+    ok(replace(log_arm("uses (mut l2, ctx) { " + emit_ok("l2") + " }"), effects="log: mut Log, l2: mut Log, ctx: Ctx")),
     ok(log_arm("uses (mut log) { log.emit(D {}) }", EVENT + event("D"))),
     err(log_arm("uses (log, ctx) { |" + emit_ok() + " }"), "E_NOT_MUT"),
     err(log_arm("uses (ctx) { |" + emit_ok() + " }"), "E_NOT_IN_USES"),
@@ -304,9 +322,9 @@ TestName("events"): [
     err(log_arm("uses (mut log, ctx) { let x = |" + emit_ok() + " }"), "T_NO_VALUE"),
     err(log_arm("{ let x = |E }"), "N_NOT_A_VALUE"),
     err(log_arm("{ |E() }"), "N_NOT_A_FUNCTION"),
-    err(log_arm("{ }") + "fn f() { |log.emit(E { to: Address::zero(), amount: 1 }) }", "E_NOT_IN_USES"),
+    err(log_arm("{ }").source() + "fn f() { |log.emit(E { to: Address::zero(), amount: 1 }) }", "E_NOT_IN_USES"),
     err(log_arm("{ }", event("E", "to: u256", "|to: u256")), "N_DUPLICATE"),
-    err(log_arm("{ }") + "#[event]\n|struct M {}", "N_DUPLICATE"),
+    err(log_arm("{ }").source() + "#[event]\n|struct M {}", "N_DUPLICATE"),
     ok(log_arm("{ }", event("E", *(indexed(f"a{k}: u256") for k in range(3)), "b: u256"))),
     err(log_arm("{ }", event("E", "b: u256", *(indexed(f"a{k}: bool") for k in range(3)),
                         indexed("|a3: bool"))), "T_TOO_MANY_INDEXED"),
@@ -314,51 +332,51 @@ TestName("events"): [
 TestName("msg_calls"): [
     ok(call_arm("uses (t, mut call) { t.call(O::Put { a: v }) }")),
     ok(call_arm("uses (mut a, t, mut call) { a = t.call(O::Echo { a: v + 1 }) }")),
-    ok(call_arm("uses (mut call, ctx) {\n            let to = ctx.caller()\n            to.call(O::Put { a: v })\n        }", effects=CALL_CTX)),
+    ok(replace(call_arm("uses (mut call, ctx) {\n            let to = ctx.caller()\n            to.call(O::Put { a: v })\n        }"), effects=CALL_CTX)),
     ok(call_arm("uses (mut a, t, mut call) { a = t.call(O::Echo { a: t.call(O::Echo { a: v }) }) }")),
     ok(call_arm("uses (t, mut call) { t.call(M::Set { v }) }")),
-    ok(call_arm("{ }", init="    init(to: Address) uses (mut call) { to.call(O::Put { a: 1 }) }\n")),
+    ok(replace(call_arm("{ }"), init="    init(to: Address) uses (mut call) { to.call(O::Put { a: 1 }) }\n")),
     warn(call_arm("uses (|mut call) { }"), "E_UNUSED_USE"),
     err(call_arm("uses (t, call) { |t.call(O::Put { a: v }) }"), "E_NOT_MUT"),
     err(call_arm("uses (t) { |t.call(O::Put { a: v }) }"), "E_NOT_IN_USES"),
-    err(call_arm("uses (t) { |t.call(O::Put { a: v }) }", effects="ctx: Ctx"), "E_NOT_IN_USES"),
+    err(replace(call_arm("uses (t) { |t.call(O::Put { a: v }) }"), effects="ctx: Ctx"), "E_NOT_IN_USES"),
     err(call_arm("uses (mut call) { |t.call(O::Put { a: v }) }"), "E_NOT_IN_USES"),
-    err(call_arm("{ }", effects=CALL + ", |c2: mut Call"), "N_DUPLICATE"),
+    err(replace(call_arm("{ }"), effects=CALL + ", |c2: mut Call"), "N_DUPLICATE"),
     err(call_arm("uses (mut call) { |v.call(O::Put { a: v }) }"), "T_MISMATCH"),
     err(call_arm("uses (mut call) { |call.call(O::Put { a: v }) }"), "N_NOT_A_VALUE"),
     err(call_arm("uses (mut call) { let x = |call }"), "N_NOT_A_VALUE"),
     err(call_arm("uses (call) { assert!(|call.caller() == Address::zero()) }"), "T_MISMATCH"),
-    ok(call_arm("uses (mut call, ctx) {\n            let me = ctx.address()\n            me.call(M::Set { v })\n        }", effects=CALL_CTX)),
-    err(call_arm("uses (mut call) { assert!(|ctx.address() == t) }", effects=CALL_CTX), "E_NOT_IN_USES"),
+    ok(replace(call_arm("uses (mut call, ctx) {\n            let me = ctx.address()\n            me.call(M::Set { v })\n        }"), effects=CALL_CTX)),
+    err(replace(call_arm("uses (mut call) { assert!(|ctx.address() == t) }"), effects=CALL_CTX), "E_NOT_IN_USES"),
     err(call_arm("uses (call) { assert!(|call.address() == Address::zero()) }"), "T_MISMATCH"),
     err(call_arm("uses (t, mut call) { |t.call(P::Put { a: v }) }"), "N_UNKNOWN_NAME"),
-    err(call_arm("uses (t, mut call) { |t.call(f::Put { a: v }) }") + "fn f() {}", "N_NOT_A_MSG"),
+    err(call_arm("uses (t, mut call) { |t.call(f::Put { a: v }) }").source() + "fn f() {}", "N_NOT_A_MSG"),
     err(call_arm("uses (t, mut call) { |t.call(O::Get { a: v }) }"), "N_UNKNOWN_VARIANT"),
     err(call_arm("uses (t, mut call) { |t.call(O::Put {}) }"), "N_MISSING_FIELD"),
     err(call_arm("uses (t, mut call) { t.call(O::Put { a: v, |a: v }) }"), "N_DUPLICATE"),
     err(call_arm("uses (t, mut call) { t.call(O::Put { a: v, |b: v }) }"), "N_UNKNOWN_FIELD"),
     err(call_arm("uses (t, mut call) { t.call(O::Put { a: |true }) }"), "T_MISMATCH"),
     err(call_arm("uses (t, mut call) { let x = |t.call(O::Put { a: v }) }"), "T_NO_VALUE"),
-    err(call_arm("{ }") + "fn f(_ to: Address) { |to.call(O::Put { a: 1 }) }", "E_NOT_IN_USES"),
+    err(call_arm("{ }").source() + "fn f(_ to: Address) { |to.call(O::Put { a: 1 }) }", "E_NOT_IN_USES"),
 ],
 TestName("selectors"): [
     ok("msg N {\n    #[selector = 0xffffffff]\n    A {},\n    #[selector = 0]\n    B {},\n}"),
     err("msg N {\n    |#[selector = 0x100000000]\n    A {},\n}", "T_SELECTOR_TOO_LARGE"),
     err("msg N {\n    #[selector = 1]\n    A {},\n    |#[selector = 0x01]\n    B {},\n}", "N_DUPLICATE_SELECTOR"),
-    ok(contract(ARMS_OK, msgs="msg N {\n    #[selector = 0x03]\n    O {},\n}\n", recvs=RECV_N)),
-    err(contract(ARMS_OK, msgs="msg N {\n    |#[selector = 0x02]\n    O {},\n}\n", recvs=RECV_N), "N_DUPLICATE_SELECTOR"),
+    ok(ContractCase(ARMS_OK, msgs="msg N {\n    #[selector = 0x03]\n    O {},\n}\n", recvs=RECV_N)),
+    err(ContractCase(ARMS_OK, msgs="msg N {\n    |#[selector = 0x02]\n    O {},\n}\n", recvs=RECV_N), "N_DUPLICATE_SELECTOR"),
 ],
 TestName("messages"): [
-    ok(contract("        Set { v: w } uses (mut a) { a = w }\n" + GET_OK)),
-    err(contract(GET_OK) .replace("    recv M", "    |recv M"), "N_MISSING_ARM"),
-    err(contract(ARMS_OK + "        |Get {} -> u256 { 1 }\n"), "N_DUPLICATE"),
-    err(contract(ARMS_OK + "        |Put {} { }\n"), "N_UNKNOWN_VARIANT"),
-    err(contract("        |Get {} uses (a) { }\n        Set { v } uses (mut a) { a = v }\n"), "T_MISMATCH"),
-    err(contract(GET_OK + "        Set { |w } { }\n"), "N_UNKNOWN_FIELD"),
-    err(contract(GET_OK + "        |Set {} { }\n"), "N_MISSING_BIND"),
-    err(contract(GET_OK + "        Set { |v: a } { }\n"), "N_SHADOWS_FIELD"),
-    err("fn N() {}\n" + contract("", "").replace("recv M", "|recv N"), "N_NOT_A_MSG"),
-    err(contract(ARMS_OK, recvs="    |recv M {\n" + ARMS_OK + "    }\n"), "N_DUPLICATE"),
+    ok(ContractCase("        Set { v: w } uses (mut a) { a = w }\n" + GET_OK)),
+    err(ContractCase(GET_OK).source().replace("    recv M", "    |recv M"), "N_MISSING_ARM"),
+    err(ContractCase(ARMS_OK + "        |Get {} -> u256 { 1 }\n"), "N_DUPLICATE"),
+    err(ContractCase(ARMS_OK + "        |Put {} { }\n"), "N_UNKNOWN_VARIANT"),
+    err(ContractCase("        |Get {} uses (a) { }\n        Set { v } uses (mut a) { a = v }\n"), "T_MISMATCH"),
+    err(ContractCase(GET_OK + "        Set { |w } { }\n"), "N_UNKNOWN_FIELD"),
+    err(ContractCase(GET_OK + "        |Set {} { }\n"), "N_MISSING_BIND"),
+    err(ContractCase(GET_OK + "        Set { |v: a } { }\n"), "N_SHADOWS_FIELD"),
+    err("fn N() {}\n" + ContractCase("", "").source().replace("recv M", "|recv N"), "N_NOT_A_MSG"),
+    err(ContractCase(ARMS_OK, recvs="    |recv M {\n" + ARMS_OK + "    }\n"), "N_DUPLICATE"),
     err(set_arm("|{ true }"), "T_MISMATCH"),
 ],
 }
@@ -417,10 +435,10 @@ for name, cases in groups.items():
     out += [FeLine(""), FeLine("#[test]"), FeLine(f"fn {name}() {{")] + [c.line() for c in cases]
     out.append(FeLine("}"))
 SIDE = ("const A: u256 = 6 * 7\nfn f(_ p: u256) -> u256 {\n    let x = p + A\n    var y = x\n    y\n}\n"
-        + set_arm("uses (mut b) { b = v == A }", FIELD_A + "    mut b: bool\n"))
-PLACES = contract("        Get {} -> u256 uses (d) { d }\n        Set { v } uses (mut d) { d = v }\n",
-                  "    mut a: Address\n    mut b: bool\n    mut c: Address\n    mut d: u256\n"
-                  "    mut e: bool\n")
+        + set_arm("uses (mut b) { b = v == A }", FIELD_A + "    mut b: bool\n").source())
+PLACES = ContractCase("        Get {} -> u256 uses (d) { d }\n        Set { v } uses (mut d) { d = v }\n",
+                      "    mut a: Address\n    mut b: bool\n    mut c: Address\n    mut d: u256\n"
+                      "    mut e: bool\n").source()
 # The standard ERC20 Transfer event, and an event with no fields.
 EVENTS = (event("Transfer", indexed("from: Address"), indexed("to: Address"), "value: u256")
           + event("Empty"))
@@ -470,8 +488,7 @@ fn storage_places() {{
     assert!(e.slot() == 3 && e.whole())
 }}
 
-// An event's topic 0 is the keccak of its signature, and its data fields take the first words
-// of the log data, then its indexed fields (SPEC §6, "Events").
+// The log of an event (SPEC §6, "Events") and the LogWord of each of its fields.
 #[test]
 fn event_words() {{
     let c = passes({lit(EVENTS)}).program

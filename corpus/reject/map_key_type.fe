@@ -1,5 +1,5 @@
 // expect: T001 12:15
-// A key must have the map's key type (SPEC §6, "Maps"). Fe rejects it too (8-0000).
+// A key must have the map's key type (SPEC §6, "Maps").
 msg M {
     #[selector = 1]
     Get { k: u256, a: Address } -> u256,

@@ -1,6 +1,5 @@
-// expect: T001 14:13
-// A compound assignment needs a `u256` entry (SPEC §6, "Maps"). Fe rejects it too
-// (8-0016).
+// expect: T001 13:13
+// A compound assignment needs a `u256` entry (SPEC §6, "Maps").
 msg M {
     #[selector = 1]
     Get { k: u256, a: Address } -> u256,

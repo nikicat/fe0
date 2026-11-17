@@ -1,0 +1,33 @@
+// Unary `+` on `u256` (SPEC §3.2).
+msg PlusMsg {
+    #[selector = 1]
+    Plus { a: u256 } -> u256,
+    #[selector = 2]
+    Mixed { a: u256, b: u256 } -> u256,
+    #[selector = 3]
+    Const {} -> u256,
+}
+
+const TWO: u256 = +2
+const NOT_TWO: u256 = ~+TWO
+
+fn sum(_ a: u256, _ b: u256) -> u256 {
+    a + b
+}
+
+contract UnaryPlus {
+    recv PlusMsg {
+        Plus { a } -> u256 {
+            let b = sum(0,
+                +a)
+            b
+        }
+        Mixed { a, b } -> u256 {
+            let c = + +a * +b
+            ~+~c - +b
+        }
+        Const {} -> u256 {
+            NOT_TWO + TWO
+        }
+    }
+}

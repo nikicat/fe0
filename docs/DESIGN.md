@@ -215,7 +215,7 @@ Each expression leaves exactly one word on the stack (unit-typed ones leave noth
 | `<< >>` | `SHL`/`SHR`, which take the shift amount `b` on top. They never fail (SPEC §4) |
 | `&& \|\|` | Short-circuit with `JUMPI` |
 | Comparisons | `b` is on top, so `a < b` is `GT` and `a > b` is `LT`. `ISZERO` negates for `<= >= !=` |
-| `!b` | `ISZERO`. `~a` is `NOT` |
+| `!b` | `ISZERO`. `~a` is `NOT`. `+a` emits only `a` |
 | `assert!(c)` | `c ISZERO JUMPI panic_01` |
 | `assert!(c, "m")` | `JUMPI` past an inline block that `MSTORE`s `Error(string)` and `REVERT`s |
 | `ctx.caller()`, `ctx.address()`, `Address::zero()` | `CALLER`, `ADDRESS`, `PUSH0` |

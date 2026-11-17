@@ -96,6 +96,9 @@ fn types_of_operators() {
     rejects("fn f(_ a: u256) -> bool { a == true }", T_MISMATCH, 31)
     rejects("fn f(_ a: u256) -> bool { !a }", T_MISMATCH, 27)
     rejects("fn f(_ b: bool) -> bool { ~b }", T_MISMATCH, 27)
+    rejects("fn f(_ b: bool) -> bool { +b }", T_MISMATCH, 27)
+    rejects("fn f(_ c: Address) -> Address { +c }", T_MISMATCH, 33)
+    accepts("fn f(_ a: u256) -> u256 { +a + +1 }")
     rejects("fn g() {}\nfn f() -> bool { g() == g() }", T_NO_VALUE, 27)
 }
 
@@ -315,7 +318,7 @@ fn calls() {
 #[test]
 fn constants() {
     accepts(
-        "const A: u256 = 2 + 3\nconst B: u256 = A * 4 - 1 / 1 % 7\nconst C: bool = B == 19 && !false\nconst D: u256 = 1 << 256",
+        "const A: u256 = 2 + 3\nconst B: u256 = A * 4 - 1 / 1 % 7\nconst C: bool = B == 19 && !false\nconst D: u256 = 1 << 256\nconst E: u256 = ~+2 - +A",
     )
     rejects(
         "const A: u256 = B\nconst B: u256 = 1",
@@ -343,6 +346,7 @@ fn constants() {
     )
     rejects("const A: bool = 1", T_MISMATCH, 16)
     rejects("const A: u256 = 1 + true", T_MISMATCH, 20)
+    rejects("const A: u256 = +true", T_MISMATCH, 17)
 }
 
 #[test]
@@ -860,8 +864,7 @@ fn storage_places() {
     assert!(e.slot() == 3 && e.whole())
 }
 
-// An event's topic 0 is the keccak of its signature, and its data fields take the first words
-// of the log data, then its indexed fields (SPEC §6, "Events").
+// The log of an event (SPEC §6, "Events") and the LogWord of each of its fields.
 #[test]
 fn event_words() {
     let c = passes(

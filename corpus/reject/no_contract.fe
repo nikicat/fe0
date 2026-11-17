@@ -1,5 +1,5 @@
 // expect: G001 1:1
-// A program needs a contract to generate code for (SPEC §6). Fe accepts a module without one.
+// A program needs a contract to generate code for (SPEC §6).
 // fe: accepts
 fn f() -> u256 {
     1

@@ -1,0 +1,7 @@
+// expect: P005 6:5
+// A line that starts with `+` outside parentheses, where a newline ends the statement
+// (SPEC §3.4).
+fn f(_ a: u256) -> u256 {
+    let b = a
+    +b
+}

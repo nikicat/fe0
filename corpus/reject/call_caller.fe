@@ -1,7 +1,6 @@
-// expect: T001 18:13
+// expect: T001 17:13
 // fe: accepts
-// In Fe0, only a `Ctx` effect has `caller()` (SPEC §6, "Calls"), although Fe accepts it on a
-// `Call` effect.
+// Only a `Ctx` effect has `caller()`, not a `Call` effect (SPEC §6, "Calls").
 msg Other {
     #[selector = 0x11]
     Echo { a: u256 } -> u256,
