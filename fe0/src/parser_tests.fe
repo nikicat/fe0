@@ -823,6 +823,11 @@ fn items() {
         "(contract C (ctx:Ctx b:Ctx a:u256) ? ())",
     )
     item_is("contract C uses () {}", "(contract C () ? ())")
+    // `mut Ctx` is the same effect as `Ctx` (SPEC §6, "The caller").
+    item_is(
+        "contract C uses (ctx: mut Ctx) {}",
+        "(contract C (ctx:Ctx) ? ())",
+    )
 }
 
 #[test]
@@ -896,7 +901,7 @@ fn errors() {
     // A contract's effect must have type `Ctx`, or `Log` or `Call` written with `mut`.
     rejects("contract C uses (ctx: u256) {}", P_EXPECTED_TOKEN, 22)
     rejects("contract C uses (call: Call) {}", P_EXPECTED_TOKEN, 23)
-    rejects("contract C uses (ctx: mut Ctx) {}", P_EXPECTED_TOKEN, 26)
+    rejects("contract C uses (ctx: mut u256) {}", P_EXPECTED_TOKEN, 26)
     rejects("contract C uses (log: Log) {}", P_EXPECTED_TOKEN, 22)
     rejects("contract C uses (ctx) {}", P_EXPECTED_TOKEN, 20)
     // A lexer error stops the parse.

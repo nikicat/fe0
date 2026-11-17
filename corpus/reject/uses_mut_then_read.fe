@@ -1,0 +1,16 @@
+// expect: E018 13:13
+// A field listed `mut` and then without `mut` may not be written (SPEC §6, "Effects").
+msg M {
+    #[selector = 1]
+    Bump {},
+}
+
+contract C {
+    mut n: u256,
+
+    recv M {
+        Bump {} uses (mut n, n) {
+            n += 1
+        }
+    }
+}

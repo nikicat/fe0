@@ -131,7 +131,7 @@ pub const N_ASSIGN_IMMUTABLE: DiagCode = DiagCode { raw: 3014 }
 pub const N_TWO_CONTRACTS: DiagCode = DiagCode { raw: 3015 }
 // Two variants with one selector, in one msg or in two msgs the contract receives (SPEC §6).
 pub const N_DUPLICATE_SELECTOR: DiagCode = DiagCode { raw: 3016 }
-// A local or parameter whose name starts with an uppercase letter (SPEC §5.2).
+// A local whose name starts with an uppercase letter (SPEC §5.2).
 pub const N_UPPERCASE_LOCAL: DiagCode = DiagCode { raw: 3017 }
 // A local or parameter named like an item (SPEC §5.2).
 pub const N_SHADOWS_ITEM: DiagCode = DiagCode { raw: 3018 }
@@ -159,7 +159,6 @@ pub const E_NOT_IN_USES: DiagCode = DiagCode { raw: 5116 }
 pub const E_NOT_MUT: DiagCode = DiagCode { raw: 5018 }
 // A `uses` entry that names no field of the contract (SPEC §6).
 pub const E_UNKNOWN_FIELD: DiagCode = DiagCode { raw: 5051 }
-pub const E_DUPLICATE_USE: DiagCode = DiagCode { raw: 5001 }
 // More contract fields than a FieldSet holds (MAX_FIELDS in check.fe).
 pub const E_TOO_MANY_FIELDS: DiagCode = DiagCode { raw: 5002 }
 // A warning, not an error: a `uses` entry for a field that the body never reads or assigns. Fe

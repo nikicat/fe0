@@ -16,7 +16,7 @@ impl Display for Message {
 }
 
 // One message per error code in fe0/src/diag.fe.
-const MESSAGES: [Message; 57] = [
+const MESSAGES: [Message; 56] = [
     Message { code: L_UNEXPECTED_CHAR, text: "unexpected character" },
     Message { code: L_UNTERMINATED_STRING, text: "unterminated string" },
     Message { code: L_BAD_ESCAPE, text: "unknown escape in a string" },
@@ -66,7 +66,6 @@ const MESSAGES: [Message; 57] = [
     Message { code: E_NOT_IN_USES, text: "field not listed in `uses`" },
     Message { code: E_NOT_MUT, text: "field not `mut` in `uses`" },
     Message { code: E_UNKNOWN_FIELD, text: "`uses` names no field" },
-    Message { code: E_DUPLICATE_USE, text: "field listed twice in `uses`" },
     Message { code: E_TOO_MANY_FIELDS, text: "too many contract fields" },
     Message { code: E_UNUSED_USE, text: "field in `uses` is never used" },
     Message { code: C_NOT_CONST, text: "not a constant expression" },

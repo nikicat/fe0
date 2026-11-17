@@ -2,20 +2,45 @@
 """Generate fe0/src/check_tests.fe and format it with fe fmt.
 
 A case accepts, warns or rejects. A reject or warn case marks the position of its diagnostic
-with `|`, and the script turns the mark into a byte offset. Change the cases here and rerun
-it, so the offsets stay right.
+with `|`, and the script turns the mark into a byte offset. A mark is a `|` that is neither
+part of `||` nor followed by whitespace. Every other `|` stays in the source. Change the cases
+here and rerun the script, so the offsets stay right.
 
 usage: [FE=path/to/fe] gen_check_tests.py
 """
+import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import NewType
+from typing import Self
 
-from fegen import (CHAIN_LEN, FE0, FeLine, FeName, FeSource, TestName, lines, lit, source,
-                   write_formatted)
+from fegen import (CHAIN_LEN, FE0, ByteOffset, FeLine, FeName, FeSource, TestName, lines, lit,
+                   source, write_formatted)
 
-# A Fe source with one `|`, which marks the byte that a diagnostic points at.
-MarkedSource = NewType("MarkedSource", str)
+MARK = re.compile(r"(?<!\|)\|(?![|\s])")
+
+
+@dataclass(frozen=True)
+class PointedSource:
+    """A Fe source and the byte in it that a diagnostic points at."""
+
+    src: FeSource
+    at: ByteOffset
+
+    @classmethod
+    def parse(cls, marked: str) -> Self:
+        marks = [m.start() for m in MARK.finditer(marked)]
+        if len(marks) != 1:
+            raise ValueError(f"Found {len(marks)} marks in {marked!r}. A diagnosed case needs"
+                             " exactly one.")
+        i = marks[0]
+        return cls(FeSource(marked[:i] + marked[i + 1:]), ByteOffset(len(marked[:i].encode())))
+
+    @staticmethod
+    def unmarked(src: str) -> FeSource:
+        if MARK.search(src):
+            raise ValueError(f"Found a mark in {src!r}. An accepted case has no diagnostic to"
+                             " point at.")
+        return FeSource(src)
 
 
 @dataclass(frozen=True)
@@ -25,8 +50,6 @@ class Accepts:
     src: FeSource
 
     def line(self) -> FeLine:
-        """The test's line that checks the case."""
-        assert "|" not in self.src or "||" in self.src, self.src
         return FeLine(f"    accepts({lit(self.src)})")
 
 
@@ -43,39 +66,34 @@ class Diagnosed:
     names the diagnostic's code."""
 
     helper: Helper
-    src: MarkedSource
+    pointed: PointedSource
     code: FeName
 
     def line(self) -> FeLine:
-        """The test's line that checks the case, with the mark turned into a byte offset."""
-        i = self.src.index("|")
-        unmarked = self.src[:i] + self.src[i + 1:]
-        return FeLine(f"    {self.helper.value}({lit(unmarked)}, {self.code}, {i})")
+        return FeLine(f"    {self.helper.value}({lit(self.pointed.src)}, {self.code}, {self.pointed.at})")
 
 
 Case = Accepts | Diagnosed
 
 
 def ok(src: str) -> Accepts:
-    """The case of the source `src`, which the checker accepts."""
-    return Accepts(FeSource(src))
+    return Accepts(PointedSource.unmarked(src))
 
 
 def warn(src: str, code: str) -> Diagnosed:
-    """The case of the marked source `src`, which the checker warns about with the diag code
-    `code`."""
-    return Diagnosed(Helper.WARNS, MarkedSource(src), FeName(code))
+    """Returns a case that the checker warns about with the diagnostic `code`. The diagnostic
+    points at the byte that `|` marks in `src`."""
+    return Diagnosed(Helper.WARNS, PointedSource.parse(src), FeName(code))
 
 
 def err(src: str, code: str) -> Diagnosed:
-    """The case of the marked source `src`, which the checker rejects with the diag code
-    `code`."""
-    return Diagnosed(Helper.REJECTS, MarkedSource(src), FeName(code))
+    """Returns a case that the checker rejects with the diagnostic `code`. The diagnostic
+    points at the byte that `|` marks in `src`."""
+    return Diagnosed(Helper.REJECTS, PointedSource.parse(src), FeName(code))
 
 
 # The msg that every contract case receives.
 MSG = "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\n"
-# The field that GET_OK and ARMS_OK read and write.
 FIELD_A = "    mut a: u256\n"
 GET_OK = "        Get {} -> u256 uses (a) { a }\n"
 ARMS_OK = GET_OK + "        Set { v } uses (mut a) { a = v }\n"
@@ -93,33 +111,27 @@ def set_arm(body: str, fields: str = FIELD_A, init: str = "", effects: str = "")
     `Set { v } `."""
     return contract(GET_OK + "        Set { v } " + body + "\n", fields, init, effects=effects)
 def event(name: str, *fields: str) -> str:
-    """The event struct `name` with the fields `fields`, each written without its comma."""
+    """Returns the source of an event struct. Write each entry of `fields` without its comma."""
     body = "".join(f"    {f},\n" for f in fields)
     return f"#[event]\nstruct {name} {{" + ("\n" + body if fields else "") + "}\n"
 def indexed(field: str) -> str:
-    """The event field `field`, marked as indexed."""
     return "#[indexed]\n    " + field
 RECV_N = "    recv N {\n        O {} { }\n    }\n"
 # The event that the events cases emit.
 EVENT = event("E", indexed("to: Address"), "amount: u256")
 def log_arm(body: str, items: str = EVENT, init: str = "",
             effects: str = "log: mut Log, ctx: Ctx") -> str:
-    """The contract of set_arm(body) with the init `init` and the effects `effects`, after the
-    items `items`."""
     return items + set_arm(body, init=init, effects=effects)
 def emit_ok(effect: str = "log", amount: str = "v") -> str:
-    """An emit of an EVENT value through the effect `effect`, with the amount `amount`."""
+    """Returns a statement that emits EVENT. The statement reads `ctx.caller()`, so its body needs
+    the Ctx effect."""
     return f"{effect}.emit(E {{ to: ctx.caller(), amount: {amount} }})"
 # The msg of another contract, which the msg_calls cases call.
 OTHER = "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[selector = 0x12]\n    Put { a: u256 },\n}\n"
-# The fields of the msg_calls cases: FIELD_A, and the address `t` that they call.
 CALL_FIELDS = FIELD_A + "    mut t: Address\n"
-# The effects of the msg_calls cases: the Call effect alone, and with the Ctx effect.
 CALL = "call: mut Call"
 CALL_CTX = CALL + ", ctx: Ctx"
 def call_arm(body: str, init: str = "", effects: str = CALL) -> str:
-    """The contract of set_arm(body) with CALL_FIELDS, the init `init` and the effects
-    `effects`, after OTHER."""
     return OTHER + set_arm(body, CALL_FIELDS, init, effects)
 groups: dict[TestName, list[Case]] = {
 TestName("types_of_operators"): [
@@ -174,8 +186,9 @@ TestName("locals"): [
     err("fn f() { |y = 1 }", "N_UNKNOWN_NAME"),
     ok("const A: u256 = 1\nfn F() -> u256 { A }"),
     err("fn f() -> u256 {\n    |let Some: u256 = 1\n    Some\n}", "N_UPPERCASE_LOCAL"),
-    err("fn f(|_ X: u256) -> u256 { X }", "N_UPPERCASE_LOCAL"),
-    err(contract(GET_OK + "        Set { |v: V } { }\n"), "N_UPPERCASE_LOCAL"),
+    ok("fn f(_ Option: u256, X: u256) -> u256 { Option + X }"),
+    err(contract(GET_OK + "        Set { |v: Ok } { }\n"), "N_UPPERCASE_LOCAL"),
+    err("fn f() -> u256 {\n    |var Foo: u256 = 1\n    Foo\n}", "N_UPPERCASE_LOCAL"),
     err("const n: u256 = 5\n" + contract(GET_OK + "        Set { |v: n } { }\n"), "N_SHADOWS_ITEM"),
     err("const n: u256 = 5\nfn f() -> u256 {\n    |let n: u256 = 2\n    n\n}", "N_SHADOWS_ITEM"),
     err("fn g() -> u256 { 1 }\nfn f(|_ g: u256) -> u256 { g }", "N_SHADOWS_ITEM"),
@@ -246,7 +259,8 @@ TestName("effects"): [
     err(set_arm("uses (a) { |a = v }"), "E_NOT_MUT"),
     err(set_arm("uses (a) { |a += v }"), "E_NOT_MUT"),
     err(contract("        Get {} -> u256 uses (|b) { 1 }\n        Set { v } { }\n"), "E_UNKNOWN_FIELD"),
-    err(contract("        Get {} -> u256 uses (a, |mut a) { a }\n        Set { v } { }\n"), "E_DUPLICATE_USE"),
+    ok(set_arm("uses (a, mut a) { a = v }")),
+    err(set_arm("uses (mut a, a) { |a = v }"), "E_NOT_MUT"),
     err(contract(ARMS_OK) + "fn f() -> u256 { |a }", "E_NOT_IN_USES"),
     warn(contract("        Get {} -> u256 uses (a, |b) { a }\n        Set { v } uses (mut a) { a = v }\n", FIELD_A + "    mut b: u256\n"), "E_UNUSED_USE"),
     warn(contract(ARMS_OK, init="    init() uses (|mut a) { }\n"), "E_UNUSED_USE"),
@@ -348,12 +362,12 @@ TestName("messages"): [
     err(set_arm("|{ true }"), "T_MISMATCH"),
 ],
 }
+TOO_MANY_FIELDS = FeName("E_TOO_MANY_FIELDS")
 codes = sorted({c.code for g in groups.values() for c in g if isinstance(c, Diagnosed)}
-               | {FeName("E_TOO_MANY_FIELDS")})
+               | {TOO_MANY_FIELDS})
 code_uses = "\n".join(f"    {c}," for c in codes)
 out = lines(FeSource(f"""// Generated by tools/gen_check_tests.py. Edit the cases there and rerun it.
-// Tests for the checker: cases per rule of SPEC §2 and §4–6, each of which accepts, warns or
-// rejects. A warn or reject case names the diagnostic's code and the byte offset it points at.
+// Tests the checker on the rules of SPEC §2 and §4 to §6 (DESIGN.md §13).
 
 use ingot::ast::{{TY_BOOL, TY_U256}}
 use ingot::check::{{CheckOutput, MAX_FIELDS, check}}
@@ -534,15 +548,14 @@ fn fields(_ count: usize) -> Option<Diag> {
     with (Source = Fields { count }.source()) {
         check(parse()).err
     }
-}
-
+}'''))
+out += lines(FeSource(f"""
 #[test]
-fn too_many_fields() {
+fn too_many_fields() {{
     assert!(fields(MAX_FIELDS).is_none())
     let d = fields(MAX_FIELDS + 1).unwrap()
-    assert!(d.code == E_TOO_MANY_FIELDS)
+    assert!(d.code == {TOO_MANY_FIELDS})
     // The error points at the name of the extra field.
     assert!(d.pos() == Pos::at(FIELDS_HEAD.len() + MAX_FIELDS * FIELD_LINE.len() + FIELD_NAME_AT))
-}
-'''.rstrip("\n")))
+}}"""))
 write_formatted(FE0 / "src/check_tests.fe", source(out))

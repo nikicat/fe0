@@ -28,3 +28,19 @@ the spec is fixed. Rules not yet confirmed by a probe are marked [V] in SPEC.md.
 - Each reject test also runs `fe check`, which must reject the file too (DESIGN.md §10).
 - Non-`mut` contract fields turned out to be code-backed immutables, not storage, so Fe0 v1
   requires `mut` on every field.
+
+## Update (Nov 17)
+The decision is narrower now. Where Fe is more permissive and following it costs nothing in the
+size of the on-chain phase contracts, Fe0 follows Fe. Each stricter rule is a place where a Fe
+program does not compile with Fe0, and SPEC.md §10 lists them.
+
+- **Now as in Fe.** Fe0 accepts a field listed twice in the `uses` of `init` or of an arm, and
+  the last entry decides `mut`. A `Ctx` effect may be written `mut Ctx`. A parameter may start
+  with an uppercase letter.
+- **Uppercase locals stay rejected (`N017`).** Fe rejects a local only when it names a struct,
+  an enum or a variant of Fe's prelude. Matching that rule needs a table of those names in the
+  Checker. The table made the Checker contract 891 bytes larger, from 22,205 to 23,096 bytes
+  (Fe 26.6.0, `-O s`, Nov 17).
+- **The same effect name declared twice stays rejected (`N001`).** Fe accepts it, even for two
+  kinds of effect under one name, such as `a: Ctx, a: mut Log`. Fe0 would need Checker bytes
+  to resolve such a name, for a program nobody writes.

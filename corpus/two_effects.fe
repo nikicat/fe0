@@ -1,6 +1,5 @@
-// Two `Ctx` effects under names other than ctx (SPEC §6, "The caller"). Both name the same
-// caller, so the arm that compares them always passes. One arm grants `a` as `mut`, which
-// changes nothing for an effect. The effects take no storage, so `last` sits in slot 0.
+// Two `Ctx` effects under names other than ctx, one declared `mut Ctx` and one granted `mut`
+// (SPEC §6, "The caller").
 msg TwoMsg {
     #[selector = 1]
     Touch -> bool,
@@ -8,7 +7,7 @@ msg TwoMsg {
     Last -> Address,
 }
 
-contract Two uses (a: Ctx, b: Ctx) {
+contract Two uses (a: Ctx, b: mut Ctx) {
     mut last: Address,
 
     recv TwoMsg {

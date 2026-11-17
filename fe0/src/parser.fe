@@ -144,7 +144,6 @@ impl TokIdx {
 }
 
 impl Parser {
-    // Token `i`.
     fn tok_at(self, _ i: usize) -> Token {
         self.toks[i]
     }
@@ -153,7 +152,6 @@ impl Parser {
         self.tok_at(self.at)
     }
 
-    // Kind of token `i`.
     fn kind_at(self, _ i: usize) -> Tok {
         self.tok_at(i).kind
     }
@@ -583,17 +581,16 @@ impl Parser {
         let name = self.ident()?
         self.expect(P_COLON)?
         var ty = TY_CTX
-        if self.eat(K_MUT) {
-            var word = W_LOG
+        var word = W_CTX
+        if self.eat(K_MUT) && !self.at_word(W_CTX) {
+            word = W_LOG
             ty = TY_LOG
             if self.at_word(W_CALL_EFFECT) {
                 word = W_CALL_EFFECT
                 ty = TY_CALL
             }
-            self.expect_word(word)?
-        } else {
-            self.expect_word(W_CTX)?
         }
+        self.expect_word(word)?
         Result::Ok(
             self.ast.add_node(Node::new_field(pos, name, ty, indexed: false)),
         )
@@ -660,7 +657,7 @@ impl Parser {
         self.comma_items(P_RPAREN, EFFECTS)
     }
 
-    // [ "uses" "(" [ use { "," use } [ "," ] ] ")" ]
+    // SPEC.md §3.1, rule `uses`. Returns EMPTY_LIST when there is no `uses` clause.
     fn uses_clause(mut self) -> Result<Diag, ListId> {
         if !self.eat(K_USES) {
             return Result::Ok(EMPTY_LIST)

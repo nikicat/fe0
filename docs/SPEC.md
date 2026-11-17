@@ -145,7 +145,7 @@ field       = IDENT ":" type ;
 
 contract    = "contract" IDENT [ effects ] "{" { cfield } [ init ] { recv } "}" ;
 effects     = "uses" "(" [ effect { "," effect } [ "," ] ] ")" ;
-effect      = IDENT ":" ( "Ctx" | "mut" ( "Log" | "Call" ) ) ;  (* §6, "The caller", "Events", "Calls" *)
+effect      = IDENT ":" ( [ "mut" ] "Ctx" | "mut" ( "Log" | "Call" ) ) ;  (* §6, "The caller", "Events", "Calls" *)
 cfield      = "mut" IDENT ":" ( type | map ) [ "," ] ;   (* v1: mut only, see §6 *)
 event       = "#" "[" "event" "]" NL [ "pub" ] "struct" IDENT "{" [ efields ] "}" ;
 efields     = efield { "," efield } [ "," ] ;
@@ -349,7 +349,7 @@ ABI-encoded string.
    declared in any order. Duplicates are an error. Fe rejects an event named like a msg
    (`2-0004`) **[✓]**.
 2. **Locals.** `let`, `var` and the binds of a `recv` arm declare locals. The name rules below
-   apply to locals and to parameters.
+   apply to locals and to parameters, except `N017` below.
    - `let` declares an immutable local and `var` a mutable one. Assigning to a `let` local is an
      error, as in Fe (`8-0018`) **[✓]**.
    - Shadowing with a new `let`/`var` is allowed **[✓]**.
@@ -367,11 +367,13 @@ ABI-encoded string.
      the arm for any value of the field, and `n` in the body was still the constant **[✓]**.
      Fe accepts a parameter named like any item, and a local named like a function or a msg
      **[✓]**.
-   - The name of a local or a parameter may not start with an uppercase letter (`N017`).
-   - Fe's rule is narrower. Fe reads an uppercase local or bind that names a type or a variant
-     in scope, such as `let Some` or `x: Option`, as a pattern, and rejects it **[✓]**. Fe
-     accepts any other uppercase local, such as `let Foo` **[✓]**, and every uppercase
-     parameter **[✓]**. Fe0 rejects them all, so that one rule covers locals and parameters alike.
+   - The name of a local may not start with an uppercase letter (`N017`).
+   - Fe's rule for locals is narrower. Fe reads an uppercase local or bind that names a type or
+     a variant in scope, such as `let Some` or `x: Option`, as a pattern, and rejects it
+     **[✓]**. It accepts any other uppercase local, such as `let Foo` **[✓]**. Fe0 keeps the
+     stricter rule for locals ([ADR 0001](adr/0001-strict-subset.md#update-nov-17)).
+   - Fe accepts every uppercase parameter, even `_ Option: u256` **[✓]**, and so does Fe0. The
+     probe is `corpus/uppercase_params.fe`.
 3. **Constants** are evaluated at compile time with the §4 semantics. Overflow is a compile-time
    error (`3-0034`), and so is division by zero (`3-0025`) **[✓]**.
    - A constant may refer only to earlier constants and literals.
@@ -457,7 +459,9 @@ contract Counter {
 - An arm binding with the same name as a field in `uses` is an error. Fe reports this ("a name
   that an effect binds and that a parameter … also binds").
 - Fe accepts *unused* `uses` entries **[✓]**, so Fe0 reports them only as warnings.
-- Fe also accepts *duplicate* entries (`uses (v, v)`) **[✓]**; Fe0 rejects them.
+- A field may be listed more than once, as in `uses (v, mut v)`. Its last entry decides whether
+  the body may assign it, as in Fe **[✓]**. Fe rejects an assignment after `uses (mut v, v)`
+  (`8-0018`). The probes are `corpus/uses_twice.fe` and `corpus/reject/uses_mut_then_read.fe`.
 
 This check is the point of Fe0.
 
@@ -483,9 +487,13 @@ grant a storage field.
 - A storage field may not take the name of an effect (`N001`). Neither may a local, a parameter
   or a bind (§5.2). For a `Ctx` effect, Fe rejects such a storage field, bind or parameter
   **[✓]**. It accepts such a local **[✓]**.
-- Fe0 rejects a `Ctx` effect written `mut Ctx` (`P002`) and the same `Ctx` effect declared
-  twice (`N001`). Fe accepts both **[✓]**. Other methods of `Ctx`, such as `ctx.origin()`, are
-  left out of Fe0 (§3.3). So is `uses` on a free function (§5.5).
+- A `Ctx` effect may be written `mut Ctx`, and it means the same as `Ctx`, as in Fe **[✓]**.
+  The probe is `corpus/two_effects.fe`.
+- Fe0 rejects the same effect name declared twice (`N001`). Fe accepts it, even for two kinds
+  of effect under one name, such as `a: Ctx, a: mut Log` **[✓]**. Fe0 keeps the stricter rule
+  ([ADR 0001](adr/0001-strict-subset.md#update-nov-17)).
+- Other methods of `Ctx`, such as `ctx.origin()`, are left out of Fe0 (§3.3). So is `uses` on
+  a free function (§5.5).
 
 **Maps** ([ADR 0018](adr/0018-storage-maps.md)). A contract field may be a map, as in
 `mut balances: StorageMap<Address, u256>`. Its key type and its value type are each `u256`,
@@ -733,7 +741,9 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 | Functions with positional and labelled parameters | ✅ | §5.4 |
 | Recursion | ◐ deeper than Fe's stack limit, Fe0 differs (task T0gp3v) | §5.4 |
 | `mod`, `use`, `extern`, `unsafe`, `with` | ❌ | §3.3 |
-| A local named like a field or an item, or starting uppercase | ◐ rejected | §5.2 |
+| A local named like a field or an item | ◐ rejected | §5.2 |
+| Uppercase parameters | ✅ | §5.2 |
+| Uppercase locals | ◐ rejected | §5.2 |
 | Type names and contextual words as names | ◐ rejected everywhere | §1 |
 | A program without a contract | ◐ rejected | §6 |
 
@@ -749,7 +759,10 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 | `StorageMap` of `u256`, `bool` and `Address` | ✅ | §6 |
 | Maps elsewhere, maps of maps, `StorageMap` methods | ❌ | §3.3 |
 | `uses` checks on `init` and arms | ✅ | §6 |
-| Duplicate `uses` entries, `Log` and `Call` granted without `mut` | ◐ rejected | §6 |
+| A field listed twice in the `uses` of `init` or an arm | ✅ the last entry decides | §6 |
+| `mut Ctx` | ✅ | §6 |
+| The same effect name declared twice in a contract's `uses` | ◐ rejected | §6 |
+| `Log` and `Call` granted without `mut` | ◐ rejected | §6 |
 | `uses` on free functions | ❌ free functions are pure | §5.5 |
 | `ctx.caller()`, `ctx.address()` | ✅ | §6 |
 | Other `Ctx` methods | ❌ | §3.3 |

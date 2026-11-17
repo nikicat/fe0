@@ -1,0 +1,17 @@
+// Uppercase parameters, one of them named like a type of Fe's prelude (SPEC §5.2).
+msg M {
+    #[selector = 1]
+    Twice { X: u256 } -> u256,
+}
+
+fn double(_ Option: u256, Two: u256) -> u256 {
+    Option * Two
+}
+
+contract C {
+    recv M {
+        Twice { X: value } -> u256 {
+            double(value, Two: 2)
+        }
+    }
+}

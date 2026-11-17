@@ -23,14 +23,16 @@ pub const MAX_FIELDS: usize = 256
 const NO_FIELDS: FieldSet = FieldSet { bits: 0 }
 
 impl FieldSet {
-    // Returns this set with field `f` added.
     fn add(self, _ f: FieldIndex) -> FieldSet {
-        FieldSet { bits: self.bits | (1 << f.n as u256) }
+        FieldSet { bits: self.bits | f.bit() }
     }
 
-    // Whether the set holds field `f`.
+    fn without(self, _ f: FieldIndex) -> FieldSet {
+        FieldSet { bits: self.bits & ~f.bit() }
+    }
+
     fn has(self, _ f: FieldIndex) -> bool {
-        (self.bits >> f.n as u256) & 1 == 1
+        self.bits & f.bit() != 0
     }
 }
 
@@ -38,6 +40,12 @@ impl FieldSet {
 struct FieldIndex { n: usize }
 
 impl Copy for FieldIndex {}
+
+impl FieldIndex {
+    fn bit(self) -> u256 {
+        1 << self.n as u256
+    }
+}
 
 // A slot in a body's frame. Parameters take the first slots, in order, then locals.
 pub struct FrameSlot { n: usize }
@@ -437,13 +445,13 @@ impl Checker {
         NO_NODE
     }
 
-    // Fails with `code` at the first node in list `l` whose name an earlier node already has.
-    fn unique(self, _ l: ListId, _ code: DiagCode) -> Result<Diag, ()> {
+    // Errors with N_DUPLICATE at the first node in list `l` whose name an earlier node already has.
+    fn unique(self, _ l: ListId) -> Result<Diag, ()> {
         var k: usize = 1
         while k < self.len(l) {
             let i = self.elem(l, k)
             if self.seen(i, l, k, BY_NAME) {
-                return Result::Err(self.at(code, i))
+                return Result::Err(self.at(N_DUPLICATE, i))
             }
             k += 1
         }
@@ -532,9 +540,8 @@ impl Checker {
         Result::Ok(d)
     }
 
-    // Declares local `sym` of type `ty`, declared by node `decl`, in the next frame slot. Errors
-    // with N_SHADOWS_FIELD, N_SHADOWS_ITEM or N_UPPERCASE_LOCAL when SPEC §5.2 does not allow
-    // the name.
+    // Declares the parameter or local `sym` in the next frame slot. Errors with N_SHADOWS_FIELD,
+    // N_SHADOWS_ITEM or N_UPPERCASE_LOCAL at `decl` when SPEC §5.2 does not allow the name.
     fn declare(mut self, _ sym: Sym, _ decl: NodeId, _ ty: Ty) -> Result<Diag, ()> {
         if !self.field(sym).is_none() {
             return Result::Err(self.at(N_SHADOWS_FIELD, decl))
@@ -542,7 +549,7 @@ impl Checker {
         if !self.item(sym).is_none() {
             return Result::Err(self.at(N_SHADOWS_ITEM, decl))
         }
-        if self.c.ast.starts_upper(sym) {
+        if self.node(decl).kind != NODE_PARAM && self.c.ast.starts_upper(sym) {
             return Result::Err(self.at(N_UPPERCASE_LOCAL, decl))
         }
         self.set_ty(decl, ty)
@@ -554,7 +561,7 @@ impl Checker {
 
     // Declares the PARAMs in list `l`.
     fn params(mut self, _ l: ListId) -> Result<Diag, ()> {
-        self.unique(l, N_DUPLICATE)?
+        self.unique(l)?
         var k: usize = 0
         while k < self.len(l) {
             let p = self.elem(l, k)
@@ -575,10 +582,10 @@ impl Checker {
         Result::Ok(())
     }
 
-    // Returns the fields that USE list `l` grants, and records each entry's FIELD in `res`.
-    // Errors with E_DUPLICATE_USE or E_UNKNOWN_FIELD at a bad entry.
+    // Returns the fields that USE list `l` grants, and records each entry's FIELD in `res`. A
+    // field may be listed more than once, and its last entry decides whether it is `mut`, as in
+    // Fe (SPEC §6). Errors with E_UNKNOWN_FIELD at an entry that names no field.
     fn grant(mut self, _ l: ListId) -> Result<Diag, Grant> {
-        self.unique(l, E_DUPLICATE_USE)?
         var read = NO_FIELDS
         var write = NO_FIELDS
         var k: usize = 0
@@ -591,16 +598,18 @@ impl Checker {
             self.set_res(u, f)
             let i = self.c.field_index(f)
             read = read.add(i)
-            if self.node(u).is_mut() {
-                write = write.add(i)
+            write = if self.node(u).is_mut() {
+                write.add(i)
+            } else {
+                write.without(i)
             }
             k += 1
         }
         Result::Ok(Grant { list: l, read, write, used: NO_FIELDS })
     }
 
-    // Checks BLOCK `body` of FN, INIT or ARM `owner` once its parameters are declared. Records the
-    // body's frame size for `Checked.frame_slots`, and warns as `warn_unused` does.
+    // Checks BLOCK `body` of FN, INIT or ARM `owner` once its parameters or binds are declared.
+    // Records the body's frame size for `Checked.frame_slots`, and warns as `warn_unused` does.
     fn finish(mut self, _ owner: NodeId, _ body: NodeId) -> Result<Diag, ()> {
         self.want(body, self.body.ret)?
         self.c.set_frame_slots(owner, self.body.frame)
@@ -651,7 +660,7 @@ impl Checker {
 
     fn program(mut self) -> Result<Diag, ()> {
         let items = self.c.ast.items
-        self.unique(items, N_DUPLICATE)?
+        self.unique(items)?
         self.c.the_contract = self.find_contract()?
         if !self.c.the_contract.is_none() {
             self.fields()?
@@ -688,7 +697,7 @@ impl Checker {
     // Errors as `note_call_effect` does.
     fn fields(mut self) -> Result<Diag, ()> {
         let l = self.node(self.c.the_contract).list()
-        self.unique(l, N_DUPLICATE)?
+        self.unique(l)?
         var prev = NO_PLACE
         var k: usize = 0
         while k < self.len(l) {
@@ -850,11 +859,11 @@ impl Checker {
 
     fn msg_item(mut self, _ i: NodeId) -> Result<Diag, ()> {
         let variants = self.node(i).list()
-        self.unique(variants, N_DUPLICATE)?
+        self.unique(variants)?
         var k: usize = 0
         while k < self.len(variants) {
             let v = self.elem(variants, k)
-            self.unique(self.node(v).list(), N_DUPLICATE)?
+            self.unique(self.node(v).list())?
             if self.c.ast.word_value(v) > SELECTOR_MAX {
                 return Result::Err(self.at(T_SELECTOR_TOO_LARGE, v))
             }
@@ -870,7 +879,7 @@ impl Checker {
     // EventLog. Errors with T_TOO_MANY_INDEXED at a fourth indexed field.
     fn event_item(mut self, _ e: NodeId) -> Result<Diag, ()> {
         let l = self.node(e).list()
-        self.unique(l, N_DUPLICATE)?
+        self.unique(l)?
         var data: usize = 0
         var k: usize = 0
         while k < self.len(l) {
@@ -925,7 +934,7 @@ impl Checker {
             self.finish(n.init(), init.body())?
         }
         // Each RECV is named after its msg, so this rejects two blocks for one msg.
-        self.unique(n.recvs(), N_DUPLICATE)?
+        self.unique(n.recvs())?
         var k: usize = 0
         while k < self.len(n.recvs()) {
             self.recv(self.elem(n.recvs(), k))?
@@ -978,7 +987,7 @@ impl Checker {
         let m = self.item_of(n.name(), NODE_MSG, r, N_NOT_A_MSG)?
         self.set_res(r, m)
         let variants = self.node(m).list()
-        self.unique(n.list(), N_DUPLICATE)?
+        self.unique(n.list())?
         var k: usize = 0
         while k < self.len(n.list()) {
             let a = self.elem(n.list(), k)
@@ -997,14 +1006,14 @@ impl Checker {
         Result::Ok(())
     }
 
-    // Checks ARM `a` of VARIANT `v`. Its binds are its parameters.
+    // Checks ARM `a` of VARIANT `v` (SPEC §6, "Messages and dispatch").
     fn arm(mut self, _ a: NodeId, _ v: NodeId) -> Result<Diag, ()> {
         let n = self.node(a)
         if n.ty() != self.node(v).ty() {
             return Result::Err(self.at(T_MISMATCH, a))
         }
         let fields = self.node(v).list()
-        self.unique(n.list(), N_DUPLICATE)?
+        self.unique(n.list())?
         self.begin(n.ty(), n.use_list())?
         var k: usize = 0
         while k < self.len(n.list()) {
