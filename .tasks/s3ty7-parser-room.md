@@ -8,7 +8,7 @@ tags: [compiler, size]
 The Parser contract has 1,882 bytes left under 24,576 (22,694 on Nov 17), and every syntax gap
 in SPEC.md §10 costs Parser bytes. Free room before spending it, in measured steps:
 1. Measure the code bytes of each Parser function (`fe build --emit sizes`, `-O s`).
-2. Tables instead of code where a function maps tokens to values, as the Lexer's keyword and
+2. ~~Tables~~ (ruled out, below) instead of code where a function maps tokens to values, as the Lexer's keyword and
    punctuation tables did (7,685 to 6,031 bytes, ADR 0014).
 3. Move token-level decisions to the Lexer contract (about 18.5 KB room): bracket matching
    (`after_group`), the newline rules of §3.4, contextual words.
@@ -54,8 +54,14 @@ fe0-chain built with master at `-O s`, with no change to our code:
   The wire code and `==` then need an 81-arm `match` (`wire()`, 1,182 bytes) in every
   contract. Lexer +2,077, Parser +2,519, Checker +2,117, Back +1,774. Requested upstream as
   argotorg/fe#2020 (Nov 17): a cast between a unit-only enum and its variant index.
+- Tables (step 2, Nov 17): a packed word for `binding_power` and 256-bit token sets for
+  `reads_as_generics` and `after_group` saved 311 Parser bytes. The user judged the code worse
+  for it and not worth it. Notes: a `[u8; N]` constant stores one 32-byte word per element (an
+  81-entry table added 2,464 data bytes), sets for `at_stmt_end` and `at_prefix_op` grew the
+  Parser by 21 bytes, and `#[inline(never)]` does not stop the copies.
 - A raw `u8` parameter in `eat` and `expect` saves 1,717 Parser bytes, but drops the type at
   every call site. Kept only as a last resort.
 
 ## Next
-Step 2: tables in the Parser.
+Step 4 (`ctx.NAME()` read generally) when the `Ctx` methods are added, or step 3 (bracket and
+newline work in the Lexer contract) if room runs out before the next Fe release.
