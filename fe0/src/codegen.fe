@@ -652,7 +652,7 @@ impl Gen {
 
     // The selector of ARM `arm`: that of the msg variant it handles.
     fn selector_of(self, _ arm: NodeId) -> Selector {
-        Selector { v: self.c.ast.word_value(self.c.resolved(arm)) }
+        Selector { v: self.c.ast.word_value(self.c.variant_of(arm)) }
     }
 
     // The ARMs of every RECV of contract `c`, in order, each with a new label.
@@ -675,14 +675,14 @@ impl Gen {
     // Emits ARM `a`, which decodes its arguments into its frame and runs its body.
     fn arm(mut self, _ a: NodeId) {
         let n = self.node(a)
-        let fields = self.node(self.c.resolved(a)).list()
+        let fields = self.node(self.c.variant_of(a)).list()
         self.begin(a, BodyKind::Arm)
         self.require_calldata(selector_and_words(self.len(fields)))
         var k: usize = 0
         while k < self.len(n.list()) {
             let b = self.elem(n.list(), k)
             self.push(
-                arg_offset(self.index_of(fields, self.c.resolved(b))).word(),
+                arg_offset(self.index_of(fields, self.c.field_of(b))).word(),
             )
             self.op(OP_CALLDATALOAD)
             self.body.depth += 1
@@ -766,7 +766,7 @@ impl Gen {
         } else if k == NODE_BOOL {
             self.push(if n.is_true() { 1 } else { 0 })
         } else if k == NODE_NAME {
-            let d = self.c.resolved(i)
+            let d = self.c.declaration(i)
             self.load(d)
             return LEAVES_WORD
         } else if k == NODE_BINARY {
@@ -784,10 +784,8 @@ impl Gen {
             return self.if_expr(i)
         } else if k == NODE_BLOCK {
             return self.block(i)
-        } else if k == NODE_CALLER {
-            self.op(OP_CALLER)
-        } else if k == NODE_SELF_ADDRESS {
-            self.op(OP_ADDRESS)
+        } else if k == NODE_CTX_READ {
+            self.op(self.c.ctx_op(i))
         } else if k == NODE_ZERO_ADDRESS {
             self.push(0)
         } else if k == NODE_INDEX {
@@ -946,16 +944,16 @@ impl Gen {
     fn dest_offset(self, _ dest: ArgDest, _ a: NodeId, _ k: usize) -> FrameOff {
         match dest {
             ArgDest::Params(params, next) => self.local_offset(self.elem(params, k)).past(next),
-            ArgDest::LogWords => self.log_offset(self.c.log_word(self.c.resolved(a))),
+            ArgDest::LogWords => self.log_offset(self.c.log_word(self.c.field_of(a))),
             ArgDest::CallArgs(fields) => self.call_arg_offset(
-                self.index_of(fields, self.c.resolved(a)),
+                self.index_of(fields, self.c.field_of(a)),
             ),
         }
     }
 
     // Emits CALL `i`, by the calling convention of DESIGN.md §6.2.
     fn call(mut self, _ i: NodeId) -> Leaves {
-        let f = self.c.resolved(i)
+        let f = self.c.callee(i)
         let args = self.node(i).list()
         let params = self.node(f).list()
         // The callee's frame starts where this body's ends.
@@ -1115,7 +1113,7 @@ impl Gen {
     // `x = e` or `x op= e`.
     fn assign(mut self, _ i: NodeId) {
         let n = self.node(i)
-        let d = self.c.resolved(n.place())
+        let d = self.c.declaration(n.place())
         if n.op() == O_ASSIGN {
             self.value(n.value())
         } else {
@@ -1149,14 +1147,14 @@ impl Gen {
     fn entry_slot(mut self, _ i: NodeId) {
         self.value(self.node(i).key())
         self.store_at(SCRATCH)
-        self.push(self.c.storage_place(self.c.resolved(i)).slot())
+        self.push(self.c.storage_place(self.c.map_field(i)).slot())
         self.store_at(SCRATCH.after(WORD))
         self.on_scratch(OP_KECCAK256, words(2))
     }
 
     // Emits `log.emit(E { … })` as one LOGn (SPEC §6, "Events").
     fn emit(mut self, _ i: NodeId) {
-        let e = self.c.resolved(i)
+        let e = self.c.event_of(i)
         let args = self.node(i).list()
         self.store_args(args, ArgDest::LogWords)
         // LOGn takes the offset on top, then the size, topic 0, topic 1 and the later topics.
@@ -1204,7 +1202,7 @@ impl Gen {
     // Nov 14).
     fn msg_call(mut self, _ i: NodeId) -> Leaves {
         let n = self.node(i)
-        let v = self.c.resolved(i)
+        let v = self.c.variant_of(i)
         let fields = self.node(v).list()
         let args = n.list()
         // The order of evaluation is in SPEC §4.

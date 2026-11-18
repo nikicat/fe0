@@ -96,7 +96,7 @@ rule for every name, which the subset rule allows.
 |---|---|---|
 | `u256` | 0 … 2²⁵⁶−1 | All arithmetic, bitwise and comparison operators (§4) |
 | `bool` | `true`, `false` | `! && \|\| == !=` |
-| `Address` | 160-bit account address | `== !=`, and `a.call(…)` (§6, "Calls"). `ctx.caller()`, `ctx.address()` and `Address::zero()` make one (§6). Other values come from parameters, storage and return values |
+| `Address` | 160-bit account address | `== !=`, and `a.call(…)` (§6, "Calls"). `Address::zero()` and the methods of `Ctx` that return an `Address` make one (§6, "The caller"). Other values come from parameters, storage and return values |
 
 - A contract field may also be a map, `StorageMap<K, V>` (§6, "Maps").
 - There are no other types: no signed integers or other widths, no tuples, arrays, structs,
@@ -186,11 +186,10 @@ unary       = ( "!" | "~" | "+" ) unary | primary ;
 args        = arg { "," arg } [ "," ] ;
 arg         = [ IDENT ":" ] expr ;
 primary     = INT | "true" | "false" | IDENT "(" [ args ] ")" | IDENT | "(" expr ")" | block | if
-            | assert | caller | self_address | zero | index | emit | msg_call ;
+            | assert | ctx_read | zero | index | emit | msg_call ;
 if          = "if" expr block [ "else" ( if | block ) ] ;
 assert      = "assert" "!" "(" expr [ "," STRING ] ")" ;
-caller      = IDENT "." "caller" "(" ")" ;
-self_address = IDENT "." "address" "(" ")" ;   (* §6, "The caller" *)
+ctx_read    = IDENT "." IDENT "(" ")" ;   (* a method of Ctx other than emit and call, which have their own rules; §6, "The caller" *)
 zero        = "Address" "::" "zero" "(" ")" ;
 index       = IDENT "[" expr "]" ;
 emit        = IDENT "." "emit" "(" IDENT "{" [ args ] "}" ")" ;   (* §6, "Events" *)
@@ -240,7 +239,7 @@ and index
 ### 3.3 Left out of Fe0 (all valid Fe)
 
 - `**`, `as` casts, ranges, `for` and `match`;
-- method calls other than `ctx.caller()`, `ctx.address()`, `log.emit(…)` and `a.call(…)`, path
+- method calls other than the methods of `Ctx` in §6, `log.emit(…)` and `a.call(…)`, path
   calls other than `Address::zero()`, field access, generics and traits;
 - the other ways to call a contract: `try_call`, `static`, `call_with_default`, a call with a
   set gas or value, a call on an address that is not a name, such as `ctx.caller().call(…)`,
@@ -495,11 +494,16 @@ grant a storage field.
   address of the contract being created. It needs `ctx` in the body's `uses` as
   `ctx.caller()` does, and Fe rejects a body without it the same way (`8-0012`) **[✓]**. Fe
   accepts `log.address()` on a `Log` effect **[✓]**, and Fe0 rejects it (`T001`).
+- Nine more methods of `Ctx` each read one value of the transaction or the block, with one EVM
+  instruction in Fe and in Fe0. `ctx.origin()` and `ctx.coinbase()` give an `Address`.
+  `ctx.gasprice()`, `ctx.block_number()`, `ctx.prevrandao()`, `ctx.gaslimit()`,
+  `ctx.chainid()`, `ctx.basefee()` and `ctx.blobbasefee()` give a `u256` **[✓]**. Each needs
+  `ctx` in the body's `uses`, as `ctx.caller()` does. The probe is `corpus/ctx_methods.fe`.
 - `Address::zero()` is the address 0. It needs no effect, so a free function may use it. It is
   not a constant expression (`C001`). Fe rejects it in a constant too, because `zero` is not a
   `const fn` (`3-0024`) **[✓]**.
 - A `Ctx` effect is not a value. A name that refers to one is an error (`N003`), except before
-  `.caller()` and `.address()`. Assigning to one is an error (`N014`), even when `uses` names it `mut`. Fe
+  one of its methods. Assigning to one is an error (`N014`), even when `uses` names it `mut`. Fe
   rejects both **[✓]**.
 - A `Ctx` effect takes no storage. The storage fields' slots are the same as without it.
 - A storage field may not take the name of an effect (`N001`). Neither may a local, a parameter
@@ -510,11 +514,18 @@ grant a storage field.
 - Fe0 rejects the same effect name declared twice (`N001`). Fe accepts it, even for two kinds
   of effect under one name, such as `a: Ctx, a: mut Log` **[✓]**. Fe0 keeps the stricter rule
   ([ADR 0001](adr/0001-strict-subset.md#update-nov-17)).
-- Only a `Ctx` effect has `caller()` (`T001`). Fe rejects `owner.caller()` on an `Address`
+- Only a `Ctx` effect has the methods above (`T001`). Fe rejects `owner.caller()` on an `Address`
   field too, because `Address` has no such method (`2-0010`) **[✓]**. The probe is
   `corpus/reject/ctx_not_an_effect.fe`.
-- Other methods of `Ctx`, such as `ctx.origin()`, are left out of Fe0 (§3.3). So is `uses` on
-  a free function (§5.5).
+- Fe0 takes the methods of Fe's `Ctx` that take no arguments and return `u256` or `Address`,
+  except `gas()` ([ADR 0017](adr/0017-caller.md#update-nov-17)). `timestamp()`, `value()` and
+  `selfbalance()` return types that Fe0 lacks. Fe0 also leaves out the methods that take
+  arguments, such as `balance(a)` and `blockhash(n)`. Fe accepts
+  `ctx.gas()` and `ctx.blockhash(1)` **[✓]**.
+- Fe0 rejects a method without arguments that it leaves out or that `Ctx` lacks (`N002`). The
+  probes are `corpus/reject/ctx_other_method.fe` and `corpus/reject/ctx_unknown_method.fe`.
+  Fe0's parser rejects a method call with arguments at its first argument (`P002`). The probe
+  is `corpus/reject/ctx_method_args.fe`.
 
 **Maps** ([ADR 0018](adr/0018-storage-maps.md)). A contract field may be a map, as in
 `mut balances: StorageMap<Address, u256>`. Its key type and its value type are each `u256`,
@@ -755,7 +766,7 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 | `while`, `break`, `continue`, `return` | ✅ | §3.1 |
 | `for`, ranges, `loop`, `match` | ❌ | §3.3 |
 | `let`, `var`, shadowing | ✅ | §5.2 |
-| Field access and method calls | ❌ except `ctx.caller()`, `ctx.address()`, `log.emit`, `a.call` | §3.3 |
+| Field access and method calls | ❌ except the `Ctx` methods of §6, `log.emit`, `a.call` | §3.3 |
 | Line breaks inside an expression | ◐ only inside `( )`, after `(`, `,` or an operator, or before `)` | §3.4 |
 | A `<` that may open generic arguments | ◐ rejected whenever it may | §3.2 |
 | Doc comments | ✅ | §1 |
@@ -791,8 +802,8 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 | The same effect name declared twice in a contract's `uses` | ◐ rejected | §6 |
 | `Log` and `Call` granted without `mut` | ◐ rejected | §6 |
 | `uses` on free functions | ❌ free functions are pure | §5.5 |
-| `ctx.caller()`, `ctx.address()` | ✅ | §6 |
-| Other `Ctx` methods | ❌ | §3.3 |
+| `Ctx` methods without arguments that return `u256` or `Address`, except `gas()` | ✅ | §6 |
+| `gas()`, the `Ctx` methods that return `Wei` or `Timestamp`, and those with arguments | ❌ | §6 |
 | Events with up to three indexed fields of the three types | ✅ | §6 |
 | `a.call(M::V { … })` | ✅ | §6 |
 | `try_call`, static calls, gas or value on a call | ❌ | §3.3 |

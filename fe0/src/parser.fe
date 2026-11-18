@@ -910,7 +910,8 @@ impl Parser {
     }
 
     // Reads a method call on a name, which is an effect or an address (SPEC.md §3.1, rules
-    // `caller`, `self_address`, `emit` and `msg_call`).
+    // `ctx_read`, `emit` and `msg_call`). The parser takes any method name of a `ctx_read`, and
+    // the checker resolves it (ADR 0017, update Nov 17).
     fn method_form(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let receiver = self.ident()?
@@ -921,15 +922,11 @@ impl Parser {
         if self.at_word(W_CALL) {
             return self.msg_call(pos, receiver)
         }
-        var kind = NODE_CALLER
-        var word = W_CALLER
-        if self.at_word(W_ADDRESS) {
-            kind = NODE_SELF_ADDRESS
-            word = W_ADDRESS
-        }
-        self.empty_call(word)?
+        let method = self.ident()?
+        self.expect(P_LPAREN)?
+        self.expect(P_RPAREN)?
         Result::Ok(
-            self.ast.add_node(Node::new_ctx_read(kind, pos, effect: receiver)),
+            self.ast.add_node(Node::new_ctx_read(pos, effect: receiver, method)),
         )
     }
 
@@ -993,7 +990,8 @@ impl Parser {
         Result::Ok(self.ast.add_node(Node::new_index(pos, map, key)))
     }
 
-    // `w ( )`, the shared end of rules `caller`, `self_address` and `zero`.
+    // Reads `w ( )`, the end of rule `zero`. It stays a function with one caller because inlining
+    // it made the Parser 67 bytes larger (Fe 26.6.0, Nov 18).
     fn empty_call(mut self, _ w: Spelling) -> Result<Diag, ()> {
         self.expect_word(w)?
         self.expect(P_LPAREN)?

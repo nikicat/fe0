@@ -62,6 +62,9 @@ fe0-chain built with master at `-O s`, with no change to our code:
 - A raw `u8` parameter in `eat` and `expect` saves 1,717 Parser bytes, but drops the type at
   every call site. Kept only as a last resort.
 
+Step 4 is in the working tree: the parser reads any `ctx.m()`, and the checker resolves `m`
+(ADR 0017, update of Nov 17). The Parser is 22,578 bytes, 1,998 under the limit.
+
 ## Next
-Step 4 (`ctx.NAME()` read generally) when the `Ctx` methods are added, or step 3 (bracket and
-newline work in the Lexer contract) if room runs out before the next Fe release.
+Step 3 (bracket and newline work in the Lexer contract) only if room runs out before the next
+Fe release.

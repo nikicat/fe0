@@ -1,0 +1,14 @@
+// expect: P002 11:27
+// fe: accepts
+// Fe0 reads only the methods of `Ctx` that take no arguments (SPEC §6, "The caller").
+msg M {
+    #[selector = 1]
+    Get -> u256,
+}
+contract C uses (ctx: Ctx) {
+    recv M {
+        Get {} -> u256 uses (ctx) {
+            ctx.blockhash(1)
+        }
+    }
+}

@@ -1,0 +1,49 @@
+// The methods of `Ctx` that Fe0 supports (SPEC §6, "The caller"). The block number, the fees
+// and `prevrandao` change from block to block, so their arms return a comparison.
+msg CtxMsg {
+    #[selector = 1]
+    Origin {} -> Address,
+    #[selector = 2]
+    Coinbase {} -> Address,
+    #[selector = 3]
+    Chain {} -> u256,
+    #[selector = 4]
+    GasLimit {} -> u256,
+    #[selector = 5]
+    Number {} -> bool,
+    #[selector = 6]
+    Fees {} -> bool,
+    #[selector = 7]
+    Random {} -> bool,
+    #[selector = 8]
+    Callers {} -> bool,
+}
+
+contract CtxMethods uses (ctx: Ctx) {
+    recv CtxMsg {
+        Origin {} -> Address uses (ctx) {
+            ctx.origin()
+        }
+        Coinbase {} -> Address uses (ctx) {
+            ctx.coinbase()
+        }
+        Chain {} -> u256 uses (ctx) {
+            ctx.chainid()
+        }
+        GasLimit {} -> u256 uses (ctx) {
+            ctx.gaslimit()
+        }
+        Number {} -> bool uses (ctx) {
+            ctx.block_number() > 0
+        }
+        Fees {} -> bool uses (ctx) {
+            ctx.gasprice() >= ctx.basefee() && ctx.blobbasefee() > 0
+        }
+        Random {} -> bool uses (ctx) {
+            ctx.prevrandao() > 0
+        }
+        Callers {} -> bool uses (ctx) {
+            ctx.caller() == ctx.origin() && ctx.address() != ctx.caller()
+        }
+    }
+}

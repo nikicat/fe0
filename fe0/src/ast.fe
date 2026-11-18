@@ -128,8 +128,8 @@ pub const NODE_IF: Kind = Kind { code: 47 }
 pub const NODE_BLOCK: Kind = Kind { code: 48 }
 // `assert!`: cond, message (a STR or NO_NODE).
 pub const NODE_ASSERT: Kind = Kind { code: 49 }
-// `ctx.caller()`: name (the effect).
-pub const NODE_CALLER: Kind = Kind { code: 50 }
+// `ctx.m()`, a method of a Ctx effect: name (the effect), method (m).
+pub const NODE_CTX_READ: Kind = Kind { code: 50 }
 // `Address::zero()`, with no slots.
 pub const NODE_ZERO_ADDRESS: Kind = Kind { code: 51 }
 // an entry of a map, `m[k]`: name (the map), key.
@@ -140,9 +140,6 @@ pub const NODE_EMIT: Kind = Kind { code: 53 }
 // `a.call(M::V { f: e, … })`: target (the NAME of the address), msg_name (M), variant (V), list
 // of ARGs, each labelled with a field of the variant.
 pub const NODE_MSG_CALL: Kind = Kind { code: 54 }
-// `ctx.address()`: name (the effect).
-pub const NODE_SELF_ADDRESS: Kind = Kind { code: 55 }
-
 // A type. A node's ty() holds one written in the source, or TY_NONE when none is written.
 // The checker also uses TY_UNIT, TY_NEVER and TY_INT.
 pub struct Ty { code: u8 }
@@ -286,13 +283,9 @@ pub struct Node {
     pos_off: usize,
     op: Tok,
     ty: Ty,
-    // name, cond, lhs, operand, place or target
     a: usize,
-    // value, rhs, word, local, event, msg_name, use_list, recvs, otherwise or message
     b: usize,
-    // list
     c: usize,
-    // body, init, key, variant, str_len or a flag
     d: usize,
 }
 
@@ -581,10 +574,8 @@ impl Node {
         Node::make(NODE_ASSERT, pos, a: cond.id, b: message.id, c: 0, d: 0)
     }
 
-    // Returns a node of `kind` that reads the effect `effect`. The kind is NODE_CALLER or
-    // NODE_SELF_ADDRESS.
-    pub fn new_ctx_read(_ kind: Kind, _ pos: Pos, effect: Sym) -> Node {
-        Node::make(kind, pos, a: effect.id, b: 0, c: 0, d: 0)
+    pub fn new_ctx_read(_ pos: Pos, effect: Sym, method: Sym) -> Node {
+        Node::make(NODE_CTX_READ, pos, a: effect.id, b: method.id, c: 0, d: 0)
     }
 
     pub fn new_zero_address(_ pos: Pos) -> Node {
@@ -670,6 +661,9 @@ impl Node {
         Sym { id: self.b }
     }
     pub fn msg_name(self) -> Sym {
+        Sym { id: self.b }
+    }
+    pub fn method(self) -> Sym {
         Sym { id: self.b }
     }
     pub fn use_list(self) -> ListId {
@@ -990,5 +984,9 @@ impl Ast {
     // Whether name `sym` starts with an uppercase letter.
     pub fn starts_upper(self, _ sym: Sym) -> bool {
         self.text.starts_upper(self.syms[sym.id])
+    }
+
+    pub fn spelling(self, _ sym: Sym) -> Spelling {
+        self.text.packed(self.syms[sym.id])
     }
 }

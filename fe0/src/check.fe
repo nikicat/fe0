@@ -1,7 +1,21 @@
 // Checks names, types, constants and effects (SPEC §2 and §4–6), and records what code
 // generation needs in side tables indexed by node. The design is in DESIGN.md §5.
 
-use ingot::asm::MAX_TOPICS
+use ingot::asm::{
+    MAX_TOPICS,
+    OP_ADDRESS,
+    OP_BASEFEE,
+    OP_BLOBBASEFEE,
+    OP_CALLER,
+    OP_CHAINID,
+    OP_COINBASE,
+    OP_GASLIMIT,
+    OP_GASPRICE,
+    OP_NUMBER,
+    OP_ORIGIN,
+    OP_PREVRANDAO,
+    Op,
+}
 use ingot::ast::*
 use ingot::diag::*
 use ingot::lexer::*
@@ -185,17 +199,71 @@ pub struct CheckOutput {
     pub warns: MemVec<Diag>,
 }
 
+// The spellings of the methods of `Ctx` that Fe0 supports (SPEC.md §6, "The caller").
+const W_CALLER: Spelling = Spelling::of(0x63616c6c6572)
+const W_ADDRESS: Spelling = ABI_ADDRESS
+const W_ORIGIN: Spelling = Spelling::of(0x6f726967696e)
+const W_COINBASE: Spelling = Spelling::of(0x636f696e62617365)
+const W_GASPRICE: Spelling = Spelling::of(0x6761737072696365)
+const W_BLOCK_NUMBER: Spelling = Spelling::of(0x626c6f636b5f6e756d626572)
+const W_PREVRANDAO: Spelling = Spelling::of(0x7072657672616e64616f)
+const W_GASLIMIT: Spelling = Spelling::of(0x6761736c696d6974)
+const W_CHAINID: Spelling = Spelling::of(0x636861696e6964)
+const W_BASEFEE: Spelling = Spelling::of(0x62617365666565)
+const W_BLOBBASEFEE: Spelling = Spelling::of(0x626c6f6262617365666565)
+
+struct CtxMethod { op: Op, ty: Ty }
+
+impl Copy for CtxMethod {}
+
+// Returns the method of `Ctx` spelled `name`, or None when Fe0 has no such method (SPEC.md §6,
+// "The caller"). The methods are a chain of tests, not a table: a table made the Checker larger
+// (docs/adr/0017-caller.md, update Nov 17).
+fn ctx_method(_ name: Spelling) -> Option<CtxMethod> {
+    if name == W_CALLER {
+        return Option::Some(CtxMethod { op: OP_CALLER, ty: TY_ADDRESS })
+    }
+    if name == W_ADDRESS {
+        return Option::Some(CtxMethod { op: OP_ADDRESS, ty: TY_ADDRESS })
+    }
+    if name == W_ORIGIN {
+        return Option::Some(CtxMethod { op: OP_ORIGIN, ty: TY_ADDRESS })
+    }
+    if name == W_COINBASE {
+        return Option::Some(CtxMethod { op: OP_COINBASE, ty: TY_ADDRESS })
+    }
+    if name == W_GASPRICE {
+        return Option::Some(CtxMethod { op: OP_GASPRICE, ty: TY_U256 })
+    }
+    if name == W_BLOCK_NUMBER {
+        return Option::Some(CtxMethod { op: OP_NUMBER, ty: TY_U256 })
+    }
+    if name == W_PREVRANDAO {
+        return Option::Some(CtxMethod { op: OP_PREVRANDAO, ty: TY_U256 })
+    }
+    if name == W_GASLIMIT {
+        return Option::Some(CtxMethod { op: OP_GASLIMIT, ty: TY_U256 })
+    }
+    if name == W_CHAINID {
+        return Option::Some(CtxMethod { op: OP_CHAINID, ty: TY_U256 })
+    }
+    if name == W_BASEFEE {
+        return Option::Some(CtxMethod { op: OP_BASEFEE, ty: TY_U256 })
+    }
+    if name == W_BLOBBASEFEE {
+        return Option::Some(CtxMethod { op: OP_BLOBBASEFEE, ty: TY_U256 })
+    }
+    Option::None
+}
+
 // The checked program: the AST and the side tables that code generation reads.
 pub struct Checked {
     pub ast: Ast,
     // The type of every expression node, and of every node that declares a name: CONST, PARAM,
     // contract FIELD, LET and BIND.
     types: MemVec<Ty>,
-    // What a name refers to. For NAME: the declaring node (CONST, PARAM, FIELD, LET or BIND).
-    // For INDEX: the map's FIELD. For CALLER and SELF_ADDRESS: the effect's FIELD. For EMIT: the EVENT. For CALL:
-    // the FN. For RECV: the MSG. For ARM and MSG_CALL: the VARIANT. For BIND: the variant's
-    // FIELD. For an ARG of an EMIT or a MSG_CALL: the event's or the variant's FIELD. For USE:
-    // the FIELD.
+    // The node that each node refers to, read through the methods below. What it refers to
+    // depends on the node's kind, so that the checker keeps one table, as with `slots`.
     res: MemVec<NodeId>,
     // One number per node, written and read through the methods below. Its meaning depends
     // on the node's kind, so that the checker keeps one table, not one per meaning.
@@ -242,8 +310,37 @@ impl Checked {
         self.types[i.index()]
     }
 
-    // Returns the node that node `i` refers to. The `res` field says which nodes have one.
-    pub fn resolved(self, _ i: NodeId) -> NodeId {
+    // Returns the node that declares the name of NAME node `i`: a CONST, PARAM, FIELD, LET or
+    // BIND.
+    pub fn declaration(self, _ i: NodeId) -> NodeId {
+        self.res[i.index()]
+    }
+
+    // Returns the map FIELD that INDEX node `i` names.
+    pub fn map_field(self, _ i: NodeId) -> NodeId {
+        self.res[i.index()]
+    }
+
+    // Returns the FIELD that BIND, USE or ARG node `i` names: a field of a variant, of an event
+    // or of the contract.
+    pub fn field_of(self, _ i: NodeId) -> NodeId {
+        self.res[i.index()]
+    }
+
+    pub fn event_of(self, _ emit: NodeId) -> NodeId {
+        self.res[emit.index()]
+    }
+
+    pub fn callee(self, _ call: NodeId) -> NodeId {
+        self.res[call.index()]
+    }
+
+    pub fn msg_of(self, _ recv: NodeId) -> NodeId {
+        self.res[recv.index()]
+    }
+
+    // Returns the VARIANT that ARM or MSG_CALL node `i` handles or calls.
+    pub fn variant_of(self, _ i: NodeId) -> NodeId {
         self.res[i.index()]
     }
 
@@ -309,6 +406,15 @@ impl Checked {
 
     fn set_field_index(mut self, _ f: NodeId, _ i: FieldIndex) {
         self.slots.set(f.index(), i.n)
+    }
+
+    // Returns the instruction that reads the value of CTX_READ node `i`.
+    pub fn ctx_op(self, _ i: NodeId) -> Op {
+        Op::from_wire(self.slots[i.index()])
+    }
+
+    fn set_ctx_op(mut self, _ i: NodeId, _ op: Op) {
+        self.slots.set(i.index(), op.wire())
     }
 
     // Returns the storage place of contract FIELD node `f`.
@@ -529,7 +635,7 @@ impl Checker {
         self.item(sym)
     }
 
-    // The node that declares the name of NAME, CALL, CALLER, SELF_ADDRESS or INDEX `i`. Errors
+    // The node that declares the name of NAME, CALL, CTX_READ or INDEX `i`. Errors
     // with N_UNKNOWN_NAME when nothing declares it.
     fn resolve(self, _ i: NodeId) -> Result<Diag, NodeId> {
         let d = self.lookup(self.node(i).name())
@@ -622,7 +728,7 @@ impl Checker {
         var k: usize = 0
         while k < self.len(l) {
             let u = self.elem(l, k)
-            if !self.body.grant.used.has(self.c.field_index(self.c.resolved(u))) {
+            if !self.body.grant.used.has(self.c.field_index(self.c.field_of(u))) {
                 self.warns.push(self.at(E_UNUSED_USE, u))
             }
             k += 1
@@ -979,7 +1085,7 @@ impl Checker {
 
     // Returns the VARIANT list of the msg that checked RECV `r` receives.
     fn received(self, _ r: NodeId) -> ListId {
-        self.node(self.c.resolved(r)).list()
+        self.node(self.c.msg_of(r)).list()
     }
 
     // Checks RECV `r` and each of its arms against the msg it names. Errors as `item_of` does,
@@ -1085,8 +1191,8 @@ impl Checker {
             t = self.block(i)?
         } else if k == NODE_ASSERT {
             let _ = self.want(n.cond(), TY_BOOL)?
-        } else if k == NODE_CALLER || k == NODE_SELF_ADDRESS {
-            t = self.ctx_address(i)?
+        } else if k == NODE_CTX_READ {
+            t = self.ctx_read(i)?
         } else if k == NODE_ZERO_ADDRESS {
             t = TY_ADDRESS
         } else if k == NODE_INDEX {
@@ -1122,11 +1228,19 @@ impl Checker {
         Result::Ok(self.c.ty(d))
     }
 
-    // Returns the type of CALLER or SELF_ADDRESS `i`, which is always TY_ADDRESS. Errors as
-    // `effect` does, so `.caller()` and `.address()` need a `Ctx` effect.
-    fn ctx_address(mut self, _ i: NodeId) -> Result<Diag, Ty> {
+    // Returns the type of CTX_READ `i` and records the instruction that `Checked.ctx_op` returns.
+    // Errors as `effect` does, and with N_UNKNOWN_NAME when `ctx_method` finds no method of that
+    // name.
+    fn ctx_read(mut self, _ i: NodeId) -> Result<Diag, Ty> {
         self.effect(i, TY_CTX)?
-        Result::Ok(TY_ADDRESS)
+        let m = match ctx_method(self.c.ast.spelling(self.node(i).method())) {
+            Option::Some(m) => m,
+            Option::None => {
+                return Result::Err(self.at(N_UNKNOWN_NAME, i))
+            },
+        }
+        self.c.set_ctx_op(i, m.op)
+        Result::Ok(m.ty)
     }
 
     // Returns the declaration that the name of node `i` refers to. Errors as `read` does, and
@@ -1214,7 +1328,7 @@ impl Checker {
             }
             var j: usize = 0
             while j < k {
-                if self.c.resolved(self.elem(args, j)) == f {
+                if self.c.field_of(self.elem(args, j)) == f {
                     return Result::Err(self.at(N_DUPLICATE, a))
                 }
                 j += 1

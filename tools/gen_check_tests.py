@@ -132,10 +132,13 @@ def event(name: str, *fields: str) -> str:
 def indexed(field: str) -> str:
     return "#[indexed]\n    " + field
 RECV_N = "    recv N {\n        O {} { }\n    }\n"
+CTX = "ctx: Ctx"
+def ctx_arm(body: str) -> ContractCase:
+    return replace(set_arm(body), effects=CTX)
 # The event that the events cases emit.
 EVENT = event("E", indexed("to: Address"), "amount: u256")
 def log_arm(body: str, items: str = EVENT) -> ContractCase:
-    return replace(set_arm(body), items=items, effects="log: mut Log, ctx: Ctx")
+    return replace(set_arm(body), items=items, effects="log: mut Log, " + CTX)
 def emit_ok(effect: str = "log", amount: str = "v") -> str:
     """Returns a statement that emits EVENT. The statement reads `ctx.caller()`, so its body needs
     the Ctx effect."""
@@ -144,7 +147,7 @@ def emit_ok(effect: str = "log", amount: str = "v") -> str:
 OTHER = "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[selector = 0x12]\n    Put { a: u256 },\n}\n"
 CALL_FIELDS = FIELD_A + "    mut t: Address\n"
 CALL = "call: mut Call"
-CALL_CTX = CALL + ", ctx: Ctx"
+CALL_CTX = CALL + ", " + CTX
 def call_arm(body: str) -> ContractCase:
     return replace(set_arm(body, CALL_FIELDS), items=OTHER, effects=CALL)
 groups: dict[TestName, list[Case]] = {
@@ -287,6 +290,9 @@ TestName("effects"): [
     err(ContractCase("        Get {} -> u256 {\n            |let a: u256 = 1\n            a\n        }\n        Set { v } { }\n"), "N_SHADOWS_FIELD"),
     err(ContractCase(ARMS_OK, FIELD_A + "    mut |a: bool\n"), "N_DUPLICATE"),
     err(ContractCase(ARMS_OK, "    mut |a: u256\n", items="const a: u256 = 1\n"), "N_DUPLICATE"),
+    ok(ctx_arm("uses (mut a, ctx) {\n            assert!(ctx.origin() == ctx.coinbase())\n            a = ctx.block_number() + ctx.chainid() + ctx.gasprice() + ctx.prevrandao() + ctx.gaslimit() + ctx.basefee() + ctx.blobbasefee()\n        }")),
+    err(ctx_arm("uses (ctx) { assert!(|ctx.timestamp() == 0) }"), "N_UNKNOWN_NAME"),
+    err(ctx_arm("uses (ctx) { assert!(ctx.chainid() == |ctx.caller()) }"), "T_MISMATCH"),
 ],
 TestName("maps"): [
     ok(set_arm("uses (mut m, mut f) {\n            m[Address::zero()] += v\n            f[v] = !f[m[Address::zero()] + 1]\n        }", MAPS)),
@@ -305,7 +311,7 @@ TestName("events"): [
     ok(log_arm("uses (mut log, ctx) { " + emit_ok() + " }")),
     ok(log_arm("uses (mut log) {\n            let to = Address::zero()\n            log.emit(E { amount: v + 1, to })\n        }")),
     ok(replace(log_arm("{ }"), init="    init() uses (mut log, ctx) { " + emit_ok(amount="1") + " }\n")),
-    ok(replace(log_arm("uses (mut l2, ctx) { " + emit_ok("l2") + " }"), effects="log: mut Log, l2: mut Log, ctx: Ctx")),
+    ok(replace(log_arm("uses (mut l2, ctx) { " + emit_ok("l2") + " }"), effects="log: mut Log, l2: mut Log, " + CTX)),
     ok(log_arm("uses (mut log) { log.emit(D {}) }", EVENT + event("D"))),
     err(log_arm("uses (log, ctx) { |" + emit_ok() + " }"), "E_NOT_MUT"),
     err(log_arm("uses (ctx) { |" + emit_ok() + " }"), "E_NOT_IN_USES"),
@@ -339,7 +345,7 @@ TestName("msg_calls"): [
     warn(call_arm("uses (|mut call) { }"), "E_UNUSED_USE"),
     err(call_arm("uses (t, call) { |t.call(O::Put { a: v }) }"), "E_NOT_MUT"),
     err(call_arm("uses (t) { |t.call(O::Put { a: v }) }"), "E_NOT_IN_USES"),
-    err(replace(call_arm("uses (t) { |t.call(O::Put { a: v }) }"), effects="ctx: Ctx"), "E_NOT_IN_USES"),
+    err(replace(call_arm("uses (t) { |t.call(O::Put { a: v }) }"), effects=CTX), "E_NOT_IN_USES"),
     err(call_arm("uses (mut call) { |t.call(O::Put { a: v }) }"), "E_NOT_IN_USES"),
     err(replace(call_arm("{ }"), effects=CALL + ", |c2: mut Call"), "N_DUPLICATE"),
     err(call_arm("uses (mut call) { |v.call(O::Put { a: v }) }"), "T_MISMATCH"),
@@ -464,9 +470,9 @@ fn side_tables() {{
     let recv = c.ast.list_at(c.ast.node(k).recvs(), 0)
     let get = c.ast.list_at(c.ast.node(recv).list(), 0)
     let tail = c.ast.node(c.ast.node(get).body()).value()
-    assert!(c.resolved(tail) == c.ast.list_at(fields, 0))
+    assert!(c.declaration(tail) == c.ast.list_at(fields, 0))
     assert!(c.ty(tail) == TY_U256)
-    assert!(c.resolved(get) == c.ast.list_at(c.ast.node(c.resolved(recv)).list(), 0))
+    assert!(c.variant_of(get) == c.ast.list_at(c.ast.node(c.msg_of(recv)).list(), 0))
 }}
 
 // Fields narrower than a slot share one, in declaration order from the low end (SPEC §6).

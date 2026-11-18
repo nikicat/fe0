@@ -1,4 +1,4 @@
-// expect: P002 13:15
+// expect: P002 13:19
 // fe: accepts
 // Fe0 reads an entry only as `m[k]` (SPEC §3.3), although Fe also has `m.get(k)`.
 msg M {

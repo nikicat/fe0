@@ -218,7 +218,8 @@ Each expression leaves exactly one word on the stack (unit-typed ones leave noth
 | `!b` | `ISZERO`. `~a` is `NOT`. `+a` emits only `a` |
 | `assert!(c)` | `c ISZERO JUMPI panic_01` |
 | `assert!(c, "m")` | `JUMPI` past an inline block that `MSTORE`s `Error(string)` and `REVERT`s |
-| `ctx.caller()`, `ctx.address()`, `Address::zero()` | `CALLER`, `ADDRESS`, `PUSH0` |
+| `ctx.m()` | The instruction of `m`, such as `CALLER` for `caller` and `NUMBER` for `block_number` ([ADR 0017](adr/0017-caller.md#update-nov-17)) |
+| `Address::zero()` | `PUSH0` |
 | `m[k]` | eval k, `PUSH0 MSTORE`, `PUSHn slot PUSH1 0x20 MSTORE`, `PUSH1 0x40 PUSH0 KECCAK256 SLOAD` |
 | `m[k] = v` | eval v, then k's slot as for `m[k]`, then `SSTORE`. Fe evaluates `v` first (SPEC §4) |
 | `m[k] op= v` | eval v, k's slot, then `SWAP1 DUP2 SLOAD SWAP1`, the operator, `SWAP1 SSTORE` |

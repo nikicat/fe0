@@ -72,3 +72,15 @@ calls another method of `ctx`, gets an error.
   saved 310 bytes.
 - Lexing `::` as one token cost 244 bytes in the lexer. So the lexer keeps two `:` tokens, and
   the parser checks that they touch.
+
+## Update (Nov 17)
+- **Every `Ctx` method without arguments that returns `u256` or `Address`, except `gas`.** Fe0
+  adds all such methods of Fe's `Ctx` beside `caller` and `address` (SPEC §6, "The caller").
+  `gas` stays out, because the Fe build and the Fe0 build of one program have different gas
+  left, so the differential test cannot compare them.
+- **The parser reads any `ctx.m()`, and the checker resolves `m`.** The parser no longer
+  matches `caller` and `address`, which made it 116 bytes smaller (22,578). The checker looks
+  `m` up in a chain of tests and keeps the instruction for code generation. The Checker grew by
+  442 bytes (22,535), and Back shrank by 7 (Fe 26.6.0, `-O s`).
+- A table of the methods instead of the chain made the Checker 1,605 bytes larger: a constant
+  array stores every field of every element as a 32-byte word.

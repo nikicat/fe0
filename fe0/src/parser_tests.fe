@@ -448,12 +448,10 @@ impl Printer {
                 self.node(n.message())
             }
             self.put(")")
-        } else if k == NODE_CALLER {
-            self.put("(caller ")
-            self.sym(n.name())
-            self.put(")")
-        } else if k == NODE_SELF_ADDRESS {
-            self.put("(address ")
+        } else if k == NODE_CTX_READ {
+            self.put("(")
+            self.sym(n.method())
+            self.put(" ")
             self.sym(n.name())
             self.put(")")
         } else if k == NODE_EMIT {
@@ -646,8 +644,8 @@ fn unary_and_primaries() {
 
 #[test]
 fn fixed_forms() {
-    // `ctx.caller()`, `ctx.address()` and `Address::zero()` are whole expressions (ADR 0017,
-    // ADR 0020). Spaces may come between their tokens, except between the colons.
+    // `ctx.m()` and `Address::zero()` are whole expressions (ADR 0017, ADR 0020). Spaces may come
+    // between their tokens, except between the colons.
     tail_is(
         "fn f() { ctx.caller() == Address::zero() }",
         "(== (caller ctx) (zero))",
@@ -657,7 +655,7 @@ fn fixed_forms() {
     rejects("fn f() { ctx.address }", P_EXPECTED_TOKEN, 21)
     tail_is("fn f() { Address :: zero() }", "(zero)")
     rejects("fn f() { Address: :zero() }", P_EXPECTED_TOKEN, 18)
-    rejects("fn f() { ctx.origin() }", P_EXPECTED_TOKEN, 13)
+    tail_is("fn f() { ctx.origin() }", "(origin ctx)")
     rejects("fn f() { ctx.caller(1) }", P_EXPECTED_TOKEN, 20)
     rejects("fn f() { Address::new() }", P_EXPECTED_TOKEN, 18)
     rejects("fn f() { ctx.caller }", P_EXPECTED_TOKEN, 20)

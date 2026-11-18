@@ -420,6 +420,19 @@ fn effects() {
         N_DUPLICATE,
         133,
     )
+    accepts(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut a, ctx) {\n            assert!(ctx.origin() == ctx.coinbase())\n            a = ctx.block_number() + ctx.chainid() + ctx.gasprice() + ctx.prevrandao() + ctx.gaslimit() + ctx.basefee() + ctx.blobbasefee()\n        }\n    }\n}\n",
+    )
+    rejects(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (ctx) { assert!(ctx.timestamp() == 0) }\n    }\n}\n",
+        N_UNKNOWN_NAME,
+        229,
+    )
+    rejects(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (ctx) { assert!(ctx.chainid() == ctx.caller()) }\n    }\n}\n",
+        T_MISMATCH,
+        246,
+    )
 }
 
 #[test]
@@ -831,10 +844,10 @@ fn side_tables() {
     let recv = c.ast.list_at(c.ast.node(k).recvs(), 0)
     let get = c.ast.list_at(c.ast.node(recv).list(), 0)
     let tail = c.ast.node(c.ast.node(get).body()).value()
-    assert!(c.resolved(tail) == c.ast.list_at(fields, 0))
+    assert!(c.declaration(tail) == c.ast.list_at(fields, 0))
     assert!(c.ty(tail) == TY_U256)
     assert!(
-        c.resolved(get) == c.ast.list_at(c.ast.node(c.resolved(recv)).list(), 0),
+        c.variant_of(get) == c.ast.list_at(c.ast.node(c.msg_of(recv)).list(), 0),
     )
 }
 
