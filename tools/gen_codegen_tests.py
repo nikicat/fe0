@@ -481,9 +481,7 @@ use std::abi::DynString
 
 ERRORS = FeSource("""
 fn fails(_ s: own DynString) -> Diag {
-    let out = difftest::compiled(s)
-    assert!(out.code.len() == 0)
-    out.err.unwrap()
+    difftest::compiled(s).unwrap_err()
 }
 
 #[test]

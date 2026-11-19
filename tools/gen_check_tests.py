@@ -43,6 +43,17 @@ class PointedSource:
         return FeSource(src)
 
 
+class Helper(Enum):
+    """The function of check_tests.fe that checks a case. Its value is the function's name."""
+
+    ACCEPTS = "accepts"
+    WARNS = "warns"
+    REJECTS = "rejects"
+
+    def call(self, *args: object) -> FeLine:
+        return FeLine(f"    {self.value}({', '.join(map(str, args))})")
+
+
 @dataclass(frozen=True)
 class Accepts:
     """A case that the checker accepts without warnings."""
@@ -50,14 +61,7 @@ class Accepts:
     src: FeSource
 
     def line(self) -> FeLine:
-        return FeLine(f"    accepts({lit(self.src)})")
-
-
-class Helper(Enum):
-    """The function of check_tests.fe that checks a diagnosed case."""
-
-    WARNS = "warns"
-    REJECTS = "rejects"
+        return Helper.ACCEPTS.call(lit(self.src))
 
 
 @dataclass(frozen=True)
@@ -70,7 +74,7 @@ class Diagnosed:
     code: FeName
 
     def line(self) -> FeLine:
-        return FeLine(f"    {self.helper.value}({lit(self.pointed.src)}, {self.code}, {self.pointed.at})")
+        return self.helper.call(lit(self.pointed.src), self.code, self.pointed.at)
 
 
 Case = Accepts | Diagnosed
@@ -85,14 +89,12 @@ def ok(src: str | ContractCase) -> Accepts:
 
 
 def warn(src: str | ContractCase, code: str) -> Diagnosed:
-    """Returns a case that the checker warns about with the diagnostic `code`. The diagnostic
-    points at the byte that `|` marks in `src`."""
+    """Returns a case that the checker warns about with the diagnostic `code`."""
     return Diagnosed(Helper.WARNS, PointedSource.parse(text(src)), FeName(code))
 
 
 def err(src: str | ContractCase, code: str) -> Diagnosed:
-    """Returns a case that the checker rejects with the diagnostic `code`. The diagnostic
-    points at the byte that `|` marks in `src`."""
+    """Returns a case that the checker rejects with the diagnostic `code`."""
     return Diagnosed(Helper.REJECTS, PointedSource.parse(text(src)), FeName(code))
 
 
@@ -105,8 +107,9 @@ ARMS_OK = GET_OK + "        Set { v } uses (mut a) { a = v }\n"
 MAPS = FIELD_A + "    mut m: StorageMap<Address, u256>\n    mut f: StorageMap<u256, bool>\n"
 @dataclass(frozen=True)
 class ContractCase:
-    """A program of `items`, MSG and `msgs`, then contract K, which receives M with the arms
-    `arms`. Its `uses` clause is left out when `effects` is empty."""
+    """A program of `items`, MSG and `msgs`, then contract K, whose recv block opens with
+    `recv_head` and holds the arms `arms`. Its `uses` clause is left out when `effects` is
+    empty."""
 
     arms: str
     fields: str = FIELD_A
@@ -116,11 +119,12 @@ class ContractCase:
     recvs: str = ""
     effects: str = ""
     items: str = ""
+    recv_head: str = "recv M"
 
     def source(self) -> str:
         uses = f"uses ({self.effects}) " if self.effects else ""
         return (self.items + MSG + self.msgs + "contract K " + uses + "{\n" + self.fields + self.init
-                + "    recv M {\n" + self.arms + "    }\n" + self.recvs + "}\n")
+                + "    " + self.recv_head + " {\n" + self.arms + "    }\n" + self.recvs + "}\n")
 def set_arm(body: str, fields: str = FIELD_A) -> ContractCase:
     """Returns the contract whose arms are GET_OK and a Set arm with the text `body` after
     `Set { v } `."""
@@ -133,12 +137,13 @@ def indexed(field: str) -> str:
     return "#[indexed]\n    " + field
 RECV_N = "    recv N {\n        O {} { }\n    }\n"
 CTX = "ctx: Ctx"
+LOG = "log: mut Log"
 def ctx_arm(body: str) -> ContractCase:
     return replace(set_arm(body), effects=CTX)
 # The event that the events cases emit.
 EVENT = event("E", indexed("to: Address"), "amount: u256")
 def log_arm(body: str, items: str = EVENT) -> ContractCase:
-    return replace(set_arm(body), items=items, effects="log: mut Log, " + CTX)
+    return replace(set_arm(body), items=items, effects=LOG + ", " + CTX)
 def emit_ok(effect: str = "log", amount: str = "v") -> str:
     """Returns a statement that emits EVENT. The statement reads `ctx.caller()`, so its body needs
     the Ctx effect."""
@@ -311,7 +316,7 @@ TestName("events"): [
     ok(log_arm("uses (mut log, ctx) { " + emit_ok() + " }")),
     ok(log_arm("uses (mut log) {\n            let to = Address::zero()\n            log.emit(E { amount: v + 1, to })\n        }")),
     ok(replace(log_arm("{ }"), init="    init() uses (mut log, ctx) { " + emit_ok(amount="1") + " }\n")),
-    ok(replace(log_arm("uses (mut l2, ctx) { " + emit_ok("l2") + " }"), effects="log: mut Log, l2: mut Log, " + CTX)),
+    ok(replace(log_arm("uses (mut l2, ctx) { " + emit_ok("l2") + " }"), effects=LOG + ", l2: mut Log, " + CTX)),
     ok(log_arm("uses (mut log) { log.emit(D {}) }", EVENT + event("D"))),
     err(log_arm("uses (log, ctx) { |" + emit_ok() + " }"), "E_NOT_MUT"),
     err(log_arm("uses (ctx) { |" + emit_ok() + " }"), "E_NOT_IN_USES"),
@@ -374,14 +379,14 @@ TestName("selectors"): [
 ],
 TestName("messages"): [
     ok(ContractCase("        Set { v: w } uses (mut a) { a = w }\n" + GET_OK)),
-    err(ContractCase(GET_OK).source().replace("    recv M", "    |recv M"), "N_MISSING_ARM"),
+    err(ContractCase(GET_OK, recv_head="|recv M"), "N_MISSING_ARM"),
     err(ContractCase(ARMS_OK + "        |Get {} -> u256 { 1 }\n"), "N_DUPLICATE"),
     err(ContractCase(ARMS_OK + "        |Put {} { }\n"), "N_UNKNOWN_VARIANT"),
     err(ContractCase("        |Get {} uses (a) { }\n        Set { v } uses (mut a) { a = v }\n"), "T_MISMATCH"),
     err(ContractCase(GET_OK + "        Set { |w } { }\n"), "N_UNKNOWN_FIELD"),
     err(ContractCase(GET_OK + "        |Set {} { }\n"), "N_MISSING_BIND"),
     err(ContractCase(GET_OK + "        Set { |v: a } { }\n"), "N_SHADOWS_FIELD"),
-    err("fn N() {}\n" + ContractCase("", "").source().replace("recv M", "|recv N"), "N_NOT_A_MSG"),
+    err("fn N() {}\n" + ContractCase("", "", recv_head="|recv N").source(), "N_NOT_A_MSG"),
     err(ContractCase(ARMS_OK, recvs="    |recv M {\n" + ARMS_OK + "    }\n"), "N_DUPLICATE"),
     err(set_arm("|{ true }"), "T_MISMATCH"),
 ],
@@ -420,19 +425,19 @@ fn passes(_ s: own DynString) -> CheckOutput {{
 }}
 
 // Asserts that the checker accepts `s` without warnings.
-fn accepts(_ s: own DynString) {{
+fn {Helper.ACCEPTS.value}(_ s: own DynString) {{
     assert!(passes(s).warns.len() == 0)
 }}
 
 // Asserts that the checker accepts `s` with one warning, of `code` at byte `pos`.
-fn warns(_ s: own DynString, _ code: DiagCode, _ pos: usize) {{
+fn {Helper.WARNS.value}(_ s: own DynString, _ code: DiagCode, _ pos: usize) {{
     let c = passes(s)
     assert!(c.warns.len() == 1)
     assert!(c.warns[0].code == code)
     assert!(c.warns[0].pos() == Pos::at(pos))
 }}
 
-fn rejects(_ s: own DynString, _ code: DiagCode, _ pos: usize) {{
+fn {Helper.REJECTS.value}(_ s: own DynString, _ code: DiagCode, _ pos: usize) {{
     let d = checked(s).err.unwrap()
     assert!(d.code == code)
     assert!(d.pos() == Pos::at(pos))
@@ -460,7 +465,7 @@ fn side_tables() {{
     // f has three frame slots: p, x and y.
     let f = c.ast.list_at(items, 1)
     assert!(c.frame_slots(f) == 3)
-    let k = c.ast.list_at(items, 3)
+    let k = c.the_contract
     let fields = c.ast.node(k).list()
     let b = c.ast.list_at(fields, 1)
     assert!(c.storage_place(b).slot() == 1)
@@ -470,9 +475,9 @@ fn side_tables() {{
     let recv = c.ast.list_at(c.ast.node(k).recvs(), 0)
     let get = c.ast.list_at(c.ast.node(recv).list(), 0)
     let tail = c.ast.node(c.ast.node(get).body()).value()
-    assert!(c.declaration(tail) == c.ast.list_at(fields, 0))
+    assert!(c.declaration(tail).node_id() == c.ast.list_at(fields, 0))
     assert!(c.ty(tail) == TY_U256)
-    assert!(c.variant_of(get) == c.ast.list_at(c.ast.node(c.msg_of(recv)).list(), 0))
+    assert!(c.variant_of(get).node_id() == c.ast.list_at(c.ast.node(c.msg_of(recv).node_id()).list(), 0))
 }}
 
 // Fields narrower than a slot share one, in declaration order from the low end (SPEC §6).

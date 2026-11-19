@@ -383,8 +383,8 @@ the CLI prints them, so the on-chain compiler does not pay for them in bytecode.
 Inside the lexer, the parser and the checker, a function that can fail returns
 `Result<Diag, T>`, or `Result<Diag, ()>` when it has no value. Callers pass the error on
 with `?`. These functions use `Result` itself, not a result type of their own, because a `?`
-after each call is the shortest way to stop at the first error. Only the phase entry points
-differ: they report the error in a field instead
+after each call is the shortest way to stop at the first error. The entry points of the lexer,
+the parser and the checker differ: they report the error in a field instead
 ([ADR 0011](adr/0011-error-field-not-result.md)).
 
 | Phase | Examples |

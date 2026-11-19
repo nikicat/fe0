@@ -110,8 +110,7 @@ const FP: MemAddr = MemAddr { a: 0x40 }
 const FRAMES: MemAddr = MemAddr { a: 0x80 }
 const WORD: Size = Size { n: 32 }
 
-// Offsets in a frame: the caller's FP is at 0, then the return address, then parameters and
-// locals.
+// Offsets in a frame (DESIGN.md §6.1, "Frames").
 const RET_ADDR: FrameOff = FrameOff { o: 32 }
 const FRAME_HEAD: FrameOff = FrameOff { o: 64 }
 
@@ -177,19 +176,8 @@ const ALL_STUBS: [Stub; 5] = [
     REVERT_RETURNDATA,
 ]
 
-// The deploy code of a program: the initcode, then the runtime code (DESIGN.md §6.5). On error,
-// `err` holds the first error and `code` is empty.
-pub struct Output { pub code: MemVec<u8>, pub err: Option<Diag> }
-
-impl Output {
-    // Returns the output of a build that failed with `d`.
-    fn failed(_ d: Diag) -> Output {
-        Output { code: MemVec::new(), err: Option::Some(d) }
-    }
-}
-
 // What `compile` returns.
-pub struct Compiled { pub out: Output, pub warns: MemVec<Diag> }
+pub struct Compiled { pub out: Result<Diag, MemVec<u8>>, pub warns: MemVec<Diag> }
 
 // The kind of body being generated, which decides how it leaves.
 enum BodyKind {
@@ -650,9 +638,9 @@ impl Gen {
         self.op(OP_SHR)
     }
 
-    // The selector of ARM `arm`: that of the msg variant it handles.
+    // Returns the selector of the msg variant that ARM `arm` handles.
     fn selector_of(self, _ arm: NodeId) -> Selector {
-        Selector { v: self.c.ast.word_value(self.c.variant_of(arm)) }
+        Selector { v: self.c.ast.word_value(self.c.variant_of(arm).node_id()) }
     }
 
     // The ARMs of every RECV of contract `c`, in order, each with a new label.
@@ -675,14 +663,14 @@ impl Gen {
     // Emits ARM `a`, which decodes its arguments into its frame and runs its body.
     fn arm(mut self, _ a: NodeId) {
         let n = self.node(a)
-        let fields = self.node(self.c.variant_of(a)).list()
+        let fields = self.node(self.c.variant_of(a).node_id()).list()
         self.begin(a, BodyKind::Arm)
         self.require_calldata(selector_and_words(self.len(fields)))
         var k: usize = 0
         while k < self.len(n.list()) {
             let b = self.elem(n.list(), k)
             self.push(
-                arg_offset(self.index_of(fields, self.c.field_of(b))).word(),
+                arg_offset(self.index_of(fields, self.c.field_of(b).node_id())).word(),
             )
             self.op(OP_CALLDATALOAD)
             self.body.depth += 1
@@ -764,9 +752,9 @@ impl Gen {
         if k == NODE_INT {
             self.push(self.c.ast.word_value(i))
         } else if k == NODE_BOOL {
-            self.push(if n.is_true() { 1 } else { 0 })
+            self.push(flag(n.is_true()))
         } else if k == NODE_NAME {
-            let d = self.c.declaration(i)
+            let d = self.c.declaration(i).node_id()
             self.load(d)
             return LEAVES_WORD
         } else if k == NODE_BINARY {
@@ -944,16 +932,16 @@ impl Gen {
     fn dest_offset(self, _ dest: ArgDest, _ a: NodeId, _ k: usize) -> FrameOff {
         match dest {
             ArgDest::Params(params, next) => self.local_offset(self.elem(params, k)).past(next),
-            ArgDest::LogWords => self.log_offset(self.c.log_word(self.c.field_of(a))),
+            ArgDest::LogWords => self.log_offset(self.c.log_word(self.c.field_of(a).node_id())),
             ArgDest::CallArgs(fields) => self.call_arg_offset(
-                self.index_of(fields, self.c.field_of(a)),
+                self.index_of(fields, self.c.field_of(a).node_id()),
             ),
         }
     }
 
     // Emits CALL `i`, by the calling convention of DESIGN.md §6.2.
     fn call(mut self, _ i: NodeId) -> Leaves {
-        let f = self.c.callee(i)
+        let f = self.c.callee(i).node_id()
         let args = self.node(i).list()
         let params = self.node(f).list()
         // The callee's frame starts where this body's ends.
@@ -1113,7 +1101,7 @@ impl Gen {
     // `x = e` or `x op= e`.
     fn assign(mut self, _ i: NodeId) {
         let n = self.node(i)
-        let d = self.c.declaration(n.place())
+        let d = self.c.declaration(n.place()).node_id()
         if n.op() == O_ASSIGN {
             self.value(n.value())
         } else {
@@ -1147,14 +1135,16 @@ impl Gen {
     fn entry_slot(mut self, _ i: NodeId) {
         self.value(self.node(i).key())
         self.store_at(SCRATCH)
-        self.push(self.c.storage_place(self.c.map_field(i)).slot())
+        self.push(
+            self.c.storage_place(self.c.declaration(i).node_id()).slot(),
+        )
         self.store_at(SCRATCH.after(WORD))
         self.on_scratch(OP_KECCAK256, words(2))
     }
 
     // Emits `log.emit(E { … })` as one LOGn (SPEC §6, "Events").
     fn emit(mut self, _ i: NodeId) {
-        let e = self.c.event_of(i)
+        let e = self.c.event_of(i).node_id()
         let args = self.node(i).list()
         self.store_args(args, ArgDest::LogWords)
         // LOGn takes the offset on top, then the size, topic 0, topic 1 and the later topics.
@@ -1202,7 +1192,7 @@ impl Gen {
     // Nov 14).
     fn msg_call(mut self, _ i: NodeId) -> Leaves {
         let n = self.node(i)
-        let v = self.c.variant_of(i)
+        let v = self.c.variant_of(i).node_id()
         let fields = self.node(v).list()
         let args = n.list()
         // The order of evaluation is in SPEC §4.
@@ -1289,30 +1279,31 @@ fn bitwise(_ op: Tok) -> Op {
     } else if op == O_SHL { OP_SHL } else { OP_SHR }
 }
 
-// Generates the deploy code of `c`.
-pub fn generate(_ c: own Checked) -> Output {
+// Returns the deploy code of `c`: the initcode, then the runtime code (DESIGN.md §6.5). Errors
+// with G_NO_CONTRACT when `c` has no contract, and with G_CODE_TOO_LARGE when the code is too big.
+pub fn generate(_ c: own Checked) -> Result<Diag, MemVec<u8>> {
     var g = Gen::new(c)
     let the_contract = g.c.the_contract
     if the_contract.is_none() {
-        return Output::failed(diag(G_NO_CONTRACT, SOURCE_START))
+        return Result::Err(diag(G_NO_CONTRACT, SOURCE_START))
     }
     g.runtime(the_contract)
     let runtime = g.section()
     g.initcode(the_contract, bytes(runtime.len()))
     let init = g.section()
     if runtime.too_large() || init.too_large() {
-        return Output::failed(diag(G_CODE_TOO_LARGE, g.node(the_contract).pos()))
+        return Result::Err(diag(G_CODE_TOO_LARGE, g.node(the_contract).pos()))
     }
     var code = init.code
     code.extend_from_slice(runtime.code.as_slice())
-    Output { code, err: Option::None }
+    Result::Ok(code)
 }
 
 // Compiles the program that `input` holds.
 pub fn compile() -> Compiled uses (input: mut Source) {
     let checked = check(parse())
     let out = match checked.err {
-        Option::Some(d) => Output::failed(d),
+        Option::Some(d) => Result::Err(d),
         Option::None => generate(checked.program),
     }
     Compiled { out, warns: checked.warns }

@@ -101,7 +101,8 @@ source ──Source effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec
   - Under `fe test`, `io::text` gives a `Source` over a string.
   - The compiler core has no idea which one it is running under.
 - **Errors:** the first error ends the compile ([ADR 0006](adr/0006-no-error-recovery.md)).
-  Each phase reports it in an `err` field ([ADR 0011](adr/0011-error-field-not-result.md)).
+  The lexer, the parser and the checker report it in an `err` field
+  ([ADR 0011](adr/0011-error-field-not-result.md)).
 - **Code generation:** EVM opcodes straight from the AST, with locals in memory frames
   ([ADR 0007](adr/0007-codegen-from-ast.md), DESIGN.md §6).
 - **On chain:** one contract per phase, plus a `Compiler` that calls them in turn and deploys

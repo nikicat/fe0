@@ -53,15 +53,16 @@ impl Reporter {
             self.print_diag(c.warns[i], Severity::Warning)
             i += 1
         }
-        match c.out.err {
-            Option::Some(d) => {
-                self.print_diag(d, Severity::Error)
-                return REJECTED
+        match c.out {
+            Result::Ok(code) => {
+                println!(DeployCode { bytes: code })
+                COMPILED
             },
-            Option::None => {},
+            Result::Err(d) => {
+                self.print_diag(d, Severity::Error)
+                REJECTED
+            },
         }
-        println!(DeployCode { bytes: c.out.code })
-        COMPILED
     }
 
     // Prints `d` as `<stdin>:line:col: CODE message`, with its severity before the code.

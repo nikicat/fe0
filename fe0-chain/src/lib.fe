@@ -91,9 +91,10 @@ pub contract Checker {
 pub contract Back {
     recv BackMsg {
         Generate { ir } -> Bytes {
-            let out = generate(from_words(ir))
-            fail_on(out.err)
-            Bytes::from_payload(source: out.code.as_slice())
+            match generate(from_words(ir)) {
+                Result::Ok(code) => Bytes::from_payload(source: code.as_slice()),
+                Result::Err(d) => revert_error(CompileError::of(d)),
+            }
         }
     }
 }

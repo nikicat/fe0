@@ -1,7 +1,8 @@
 // Support for differential tests, which build one program with Fe0 and with the official
 // compiler and check that both builds behave the same. DESIGN.md §10 describes the harness.
 
-use ingot::codegen::{Output, compile}
+use ingot::codegen::compile
+use ingot::diag::Diag
 use ingot::io::{Source, text}
 use std::abi::DynString
 use std::evm::{Call, CallOutcome, Create, RawOps, revert_error}
@@ -48,21 +49,19 @@ fn fits_chain(initcode_len: usize, runtime: Address) -> bool uses (evm: Evm) {
     initcode_len <= MAX_INITCODE && evm.extcodesize(runtime) <= MAX_RUNTIME
 }
 
-// Fe0's build of `s`.
-pub fn compiled(_ s: own DynString) -> Output {
+// Returns Fe0's deploy code for `s`, or the first error when Fe0 rejects `s`.
+pub fn compiled(_ s: own DynString) -> Result<Diag, MemVec<u8>> {
     with (Source = text(s)) {
         compile().out
     }
 }
 
-// Fe0's deploy code for `s`. Errors with CompileError when Fe0 rejects `s`.
+// Returns Fe0's deploy code for `s`. Errors with CompileError when Fe0 rejects `s`.
 pub fn ours(_ s: own DynString) -> MemVec<u8> {
-    let out = compiled(s)
-    match out.err {
-        Option::Some(d) => revert_error(CompileError::of(d)),
-        Option::None => {},
+    match compiled(s) {
+        Result::Ok(code) => code,
+        Result::Err(d) => revert_error(CompileError::of(d)),
     }
-    out.code
 }
 
 // Checks that Fe0's deploy code for `s` is the code that `hex` spells in lowercase hex, as the
@@ -86,7 +85,7 @@ pub fn same_code(_ s: own DynString, _ hex: DynString) {
 // Checks that Fe0 rejects `s` with the error `expected`. Otherwise errors with the CompileError
 // that Fe0 gave, or with Accepted when Fe0 accepted `s`.
 pub fn rejects(_ s: own DynString, _ expected: CompileError) {
-    match compiled(s).err {
+    match compiled(s).err() {
         Option::Some(d) => {
             let got = CompileError::of(d)
             if got != expected {

@@ -55,7 +55,10 @@ pub contract CompileProbe {
     recv ProbeMsg {
         Run { src } -> u256 {
             with (Source = bytes(src)) {
-                compile().out.code.len() as u256
+                match compile().out {
+                    Result::Ok(code) => code.len() as u256,
+                    Result::Err(_) => 0,
+                }
             }
         }
     }

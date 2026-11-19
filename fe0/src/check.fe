@@ -160,12 +160,12 @@ impl StoragePlace {
         (self.offset * 8) as u256
     }
 
-    // Whether the field has the slot to itself, so that it is read and written whole.
+    // Checks whether the field has the slot to itself, so that it is read and written whole.
     pub fn whole(self) -> bool {
         self.offset == 0 && self.ends_slot
     }
 
-    // Whether another field may hold bytes above this one in its slot.
+    // Checks whether another field may hold bytes above this one in its slot.
     pub fn shared_above(self) -> bool {
         !self.ends_slot
     }
@@ -256,17 +256,71 @@ fn ctx_method(_ name: Spelling) -> Option<CtxMethod> {
     Option::None
 }
 
+// A node of the kind that `K` names. A slot of a node may hold a node of any kind, which is
+// a convention and not a type (ADR 0005). So the side tables of `Checked` name the kind in
+// the type (task T4qdcy).
+pub struct Id<K> { n: NodeId }
+
+impl<K> Copy for Id<K> {}
+
+impl<K> Id<K> {
+    pub fn node_id(self) -> NodeId {
+        self.n
+    }
+
+    fn is_none(self) -> bool {
+        self.n.is_none()
+    }
+}
+
+// A node that declares a name: a PARAM, LET or BIND, a contract FIELD, or an item.
+pub struct Decl {}
+
+// A FIELD: a field of a variant, of an event or of the contract.
+pub struct Field {}
+
+// A VARIANT of a msg.
+pub struct Variant {}
+
+pub struct Event {}
+
+pub struct Msg {}
+
+// A FN.
+pub struct Callee {}
+
+trait Item {
+    fn kind() -> Kind
+}
+
+impl Item for Event {
+    fn kind() -> Kind {
+        NODE_EVENT
+    }
+}
+
+impl Item for Msg {
+    fn kind() -> Kind {
+        NODE_MSG
+    }
+}
+
+// The FIELD list of a VARIANT, an EVENT or the contract. Lists mix kinds (ADR 0005), so this
+// type is what makes a lookup in it return an `Id<Field>`.
+struct Fields { l: ListId }
+
+impl Copy for Fields {}
+
 // The checked program: the AST and the side tables that code generation reads.
 pub struct Checked {
     pub ast: Ast,
     // The type of every expression node, and of every node that declares a name: CONST, PARAM,
     // contract FIELD, LET and BIND.
     types: MemVec<Ty>,
-    // The node that each node refers to, read through the methods below. What it refers to
-    // depends on the node's kind, so that the checker keeps one table, as with `slots`.
+    // The node that each node refers to, read through the methods below.
     res: MemVec<NodeId>,
-    // One number per node, written and read through the methods below. Its meaning depends
-    // on the node's kind, so that the checker keeps one table, not one per meaning.
+    // One number per node, written and read through the methods below. It is one side table
+    // indexed by node (DESIGN.md §3), so its meaning depends on the node's kind.
     slots: MemVec<usize>,
     // The storage place of each contract field, by FieldIndex.
     places: MemVec<StoragePlace>,
@@ -310,38 +364,32 @@ impl Checked {
         self.types[i.index()]
     }
 
-    // Returns the node that declares the name of NAME node `i`: a CONST, PARAM, FIELD, LET or
-    // BIND.
-    pub fn declaration(self, _ i: NodeId) -> NodeId {
-        self.res[i.index()]
+    // Returns the node that declares the name of NAME or INDEX node `i`. For an INDEX it is a
+    // contract FIELD, since only a contract field may be a map (SPEC §6, "Maps").
+    pub fn declaration(self, _ i: NodeId) -> Id<Decl> {
+        Id { n: self.res[i.index()] }
     }
 
-    // Returns the map FIELD that INDEX node `i` names.
-    pub fn map_field(self, _ i: NodeId) -> NodeId {
-        self.res[i.index()]
+    // Returns the FIELD that BIND, USE or ARG node `i` names.
+    pub fn field_of(self, _ i: NodeId) -> Id<Field> {
+        Id { n: self.res[i.index()] }
     }
 
-    // Returns the FIELD that BIND, USE or ARG node `i` names: a field of a variant, of an event
-    // or of the contract.
-    pub fn field_of(self, _ i: NodeId) -> NodeId {
-        self.res[i.index()]
+    pub fn event_of(self, _ emit: NodeId) -> Id<Event> {
+        Id { n: self.res[emit.index()] }
     }
 
-    pub fn event_of(self, _ emit: NodeId) -> NodeId {
-        self.res[emit.index()]
+    pub fn callee(self, _ call: NodeId) -> Id<Callee> {
+        Id { n: self.res[call.index()] }
     }
 
-    pub fn callee(self, _ call: NodeId) -> NodeId {
-        self.res[call.index()]
-    }
-
-    pub fn msg_of(self, _ recv: NodeId) -> NodeId {
-        self.res[recv.index()]
+    pub fn msg_of(self, _ recv: NodeId) -> Id<Msg> {
+        Id { n: self.res[recv.index()] }
     }
 
     // Returns the VARIANT that ARM or MSG_CALL node `i` handles or calls.
-    pub fn variant_of(self, _ i: NodeId) -> NodeId {
-        self.res[i.index()]
+    pub fn variant_of(self, _ i: NodeId) -> Id<Variant> {
+        Id { n: self.res[i.index()] }
     }
 
     // Returns the value of CONST node `d`.
@@ -462,17 +510,19 @@ struct Body {
     loops: usize,
 }
 
-// The type of the operand and the result of unary operator `op`.
+// Returns the type of both the operand and the result of unary operator `op`.
 fn unary_ty(_ op: Tok) -> Ty {
     if op == O_BANG { TY_BOOL } else { TY_U256 }
 }
 
-// Whether binary operator `op` is `==` or `!=`, whose operands may have any one type.
+// Checks whether binary operator `op` is `==` or `!=`. The operands of these two operators may
+// have any one type.
 fn is_equality(_ op: Tok) -> bool {
     op == O_EQ || op == O_NE
 }
 
-// The type of the operands of binary operator `op`, other than `==` and `!=`.
+// Returns the type of the operands of binary operator `op`, for any `op` other than `==` and
+// `!=`.
 fn operand_ty(_ op: Tok) -> Ty {
     if op == O_ANDAND || op == O_OROR {
         TY_BOOL
@@ -481,35 +531,12 @@ fn operand_ty(_ op: Tok) -> Ty {
     }
 }
 
-// The type of the result of binary operator `op`.
 fn result_ty(_ op: Tok) -> Ty {
     if op == O_ANDAND || op == O_OROR || op.is_comparison() {
         TY_BOOL
     } else {
         TY_U256
     }
-}
-
-// Whether argument `arg`, whose value is `value`, has the label parameter `param` asks for
-// (SPEC §5.4).
-fn label_ok(_ arg: Node, _ value: Node, _ param: Node) -> bool {
-    if param.is_positional() {
-        return arg.name() == NO_SYM
-    }
-    arg_label(arg, value) == param.name()
-}
-
-// Returns the label of argument `arg`, whose value is `value`. An argument without a label whose
-// value is a name has that name as its label, as `{ x }` stands for `{ x: x }` (SPEC §5.4).
-fn arg_label(_ arg: Node, _ value: Node) -> Sym {
-    if arg.name() == NO_SYM && value.kind == NODE_NAME {
-        return value.name()
-    }
-    arg.name()
-}
-
-fn bit(_ b: bool) -> u256 {
-    if b { 1 } else { 0 }
 }
 
 impl Checker {
@@ -533,11 +560,18 @@ impl Checker {
         self.c.types.set(i.index(), t.or_u256())
     }
 
-    fn set_res(mut self, _ i: NodeId, _ d: NodeId) {
+    // Records what node `i` refers to. The kind of `d` is the kind that a reader of `res`
+    // returns for `i`. The body is not generic: a copy per kind made Checker 171 bytes larger
+    // (Fe 26.6.0, -O s, Nov 19).
+    fn set_res<K>(mut self, _ i: NodeId, _ d: Id<K>) {
+        self.set_res_raw(i, d.n)
+    }
+
+    fn set_res_raw(mut self, _ i: NodeId, _ d: NodeId) {
         self.c.res.set(i.index(), d)
     }
 
-    // The node in list `l` named `sym`, or NO_NODE.
+    // Returns the node in list `l` named `sym`, or NO_NODE when no node has that name.
     fn find(self, _ l: ListId, _ sym: Sym) -> NodeId {
         var k: usize = 0
         while k < self.len(l) {
@@ -563,13 +597,25 @@ impl Checker {
         Result::Ok(())
     }
 
-    // Whether one of the first `n` nodes in list `l` has the same key `by` as node `i`.
+    // Checks whether one of the first `n` nodes in list `l` has the same key `by` as node `i`.
     // ponytail: every caller compares each node with all earlier ones. That is O(n²) in a list's
     // length, and O(n²) in all received variants across msgs. Lists and msgs are short.
     fn seen(self, _ i: NodeId, _ l: ListId, _ n: usize, _ by: Key) -> bool {
         var j: usize = 0
         while j < n {
             if self.same_key(self.elem(l, j), i, by) {
+                return true
+            }
+            j += 1
+        }
+        false
+    }
+
+    // Checks whether one of the first `n` ARGs of list `l` names FIELD `f`.
+    fn names_field(self, _ l: ListId, _ n: usize, _ f: Id<Field>) -> bool {
+        var j: usize = 0
+        while j < n {
+            if self.c.field_of(self.elem(l, j)).n == f.n {
                 return true
             }
             j += 1
@@ -585,33 +631,52 @@ impl Checker {
         self.node(a).name() == self.node(b).name()
     }
 
-    // The contract FIELD named `sym`, or NO_NODE.
-    fn field(self, _ sym: Sym) -> NodeId {
+    // Returns the contract FIELD named `sym`, or NO_NODE when no field has that name.
+    fn field(self, _ sym: Sym) -> Id<Field> {
         if self.c.the_contract.is_none() {
-            return NO_NODE
+            return Id { n: NO_NODE }
         }
-        self.find(self.node(self.c.the_contract).list(), sym)
+        self.field_in(Fields { l: self.node(self.c.the_contract).list() }, sym)
     }
 
-    // The item named `sym`, or NO_NODE.
+    // Returns the FIELD in `fields` named `sym`, or NO_NODE when no field has that name.
+    fn field_in(self, _ fields: Fields, _ sym: Sym) -> Id<Field> {
+        Id { n: self.find(fields.l, sym) }
+    }
+
+    fn variant_fields(self, _ v: Id<Variant>) -> Fields {
+        Fields { l: self.node(v.n).list() }
+    }
+
+    fn event_fields(self, _ e: Id<Event>) -> Fields {
+        Fields { l: self.node(e.n).list() }
+    }
+
+    fn variants(self, _ m: Id<Msg>) -> ListId {
+        self.node(m.n).list()
+    }
+
+    // Returns the VARIANT of msg `m` named `sym`, or NO_NODE when no variant has that name.
+    fn variant(self, _ m: Id<Msg>, _ sym: Sym) -> Id<Variant> {
+        Id { n: self.find(self.variants(m), sym) }
+    }
+
+    // Returns the item named `sym`, or NO_NODE when no item has that name.
     fn item(self, _ sym: Sym) -> NodeId {
         self.find(self.c.ast.items, sym)
     }
 
-    // Returns the item named `sym`, which node `i` uses as a `kind`. Errors at `i` with
+    // Returns the item named `sym`, which node `i` uses as a `K`. Errors at `i` with
     // N_UNKNOWN_NAME when no item is named `sym`, and with `wrong` when it is of another kind.
-    fn item_of(self, _ sym: Sym, _ kind: Kind, _ i: NodeId, _ wrong: DiagCode) -> Result<
-        Diag,
-        NodeId,
-    > {
+    fn item_of<K: Item>(self, _ sym: Sym, _ i: NodeId, _ wrong: DiagCode) -> Result<Diag, Id<K>> {
         let d = self.item(sym)
         if d.is_none() {
             return Result::Err(self.at(N_UNKNOWN_NAME, i))
         }
-        if self.node(d).kind != kind {
+        if self.node(d).kind != K::kind() {
             return Result::Err(self.at(wrong, i))
         }
-        Result::Ok(d)
+        Result::Ok(Id { n: d })
     }
 
     fn local(self, _ sym: Sym) -> NodeId {
@@ -625,24 +690,24 @@ impl Checker {
         NO_NODE
     }
 
-    // The node that declares `sym` where it is used: a local, a field or an item, or
-    // NO_NODE.
+    // Returns the node that declares `sym` where it is used, or NO_NODE when nothing does. The
+    // node is a local, a field or an item.
     fn lookup(self, _ sym: Sym) -> NodeId {
         let l = self.local(sym)
         if !l.is_none() { return l }
         let f = self.field(sym)
-        if !f.is_none() { return f }
+        if !f.is_none() { return f.n }
         self.item(sym)
     }
 
-    // The node that declares the name of NAME, CALL, CTX_READ or INDEX `i`. Errors
-    // with N_UNKNOWN_NAME when nothing declares it.
-    fn resolve(self, _ i: NodeId) -> Result<Diag, NodeId> {
+    // Returns the node that declares the name of NAME, CALL, CTX_READ or INDEX `i`. Errors with
+    // N_UNKNOWN_NAME when nothing declares it.
+    fn resolve(self, _ i: NodeId) -> Result<Diag, Id<Decl>> {
         let d = self.lookup(self.node(i).name())
         if d.is_none() {
             return Result::Err(self.at(N_UNKNOWN_NAME, i))
         }
-        Result::Ok(d)
+        Result::Ok(Id { n: d })
     }
 
     // Declares the parameter or local `sym` in the next frame slot. Errors with N_SHADOWS_FIELD,
@@ -701,7 +766,7 @@ impl Checker {
                 return Result::Err(self.at(E_UNKNOWN_FIELD, u))
             }
             self.set_res(u, f)
-            let i = self.c.field_index(f)
+            let i = self.c.field_index(f.n)
             read = read.add(i)
             write = if self.node(u).is_mut() {
                 write.add(i)
@@ -728,7 +793,7 @@ impl Checker {
         var k: usize = 0
         while k < self.len(l) {
             let u = self.elem(l, k)
-            if !self.body.grant.used.has(self.c.field_index(self.c.field_of(u))) {
+            if !self.body.grant.used.has(self.c.field_index(self.c.field_of(u).node_id())) {
                 self.warns.push(self.at(E_UNUSED_USE, u))
             }
             k += 1
@@ -745,7 +810,8 @@ impl Checker {
         Result::Ok(())
     }
 
-    // The one CONTRACT item, or NO_NODE. Errors with N_TWO_CONTRACTS at the second one.
+    // Returns the one CONTRACT item, or NO_NODE when the program has none. Errors with
+    // N_TWO_CONTRACTS at the second one.
     fn find_contract(self) -> Result<Diag, NodeId> {
         let items = self.c.ast.items
         var found = NO_NODE
@@ -863,23 +929,23 @@ impl Checker {
         if k == NODE_INT {
             v.v = self.c.ast.word_value(i)
         } else if k == NODE_BOOL {
-            v = Val { v: bit(n.is_true()), ty: TY_BOOL }
+            v = Val { v: flag(n.is_true()), ty: TY_BOOL }
         } else if k == NODE_NAME {
             // This is item_of written out. Calling item_of here made Checker 79 bytes larger
             // (Fe 26.6.0, -O s, Nov 15).
-            let d = self.item(n.name())
+            let d: Id<Decl> = Id { n: self.item(n.name()) }
             if d.is_none() {
                 return Result::Err(self.at(N_UNKNOWN_NAME, i))
             }
-            if self.node(d).kind != NODE_CONST {
+            if self.node(d.n).kind != NODE_CONST {
                 return Result::Err(self.at(C_NOT_CONST, i))
             }
             // Constants are evaluated in source order, so a later one has no type yet.
-            if self.c.ty(d) == TY_NONE {
+            if self.c.ty(d.n) == TY_NONE {
                 return Result::Err(self.at(N_FORWARD_CONST, i))
             }
             self.set_res(i, d)
-            v = Val { v: self.c.word_of(d), ty: self.c.ty(d) }
+            v = Val { v: self.c.word_of(d.n), ty: self.c.ty(d.n) }
         } else if k == NODE_UNARY {
             let a = self.eval(n.operand())?
             v.ty = self.fit(n.operand(), a.ty, unary_ty(n.op()))?
@@ -904,7 +970,7 @@ impl Checker {
         let b = self.eval(n.rhs())?
         let ty = self.binary_ty(i, a.ty, b.ty)?
         if is_equality(op) {
-            return Result::Ok(Val { v: bit((a.v == b.v) == (op == O_EQ)), ty })
+            return Result::Ok(Val { v: flag((a.v == b.v) == (op == O_EQ)), ty })
         }
         let x = a.v
         let y = b.v
@@ -944,13 +1010,13 @@ impl Checker {
         } else if op == O_CARET {
             r = x ^ y
         } else if op == O_LT {
-            r = bit(x < y)
+            r = flag(x < y)
         } else if op == O_GT {
-            r = bit(x > y)
+            r = flag(x > y)
         } else if op == O_LE {
-            r = bit(x <= y)
+            r = flag(x <= y)
         } else if op == O_GE {
-            r = bit(x >= y)
+            r = flag(x >= y)
         }
         Result::Ok(Val { v: r, ty })
     }
@@ -1085,7 +1151,7 @@ impl Checker {
 
     // Returns the VARIANT list of the msg that checked RECV `r` receives.
     fn received(self, _ r: NodeId) -> ListId {
-        self.node(self.c.msg_of(r)).list()
+        self.variants(self.c.msg_of(r))
     }
 
     // Checks RECV `r` and each of its arms against the msg it names. Errors as `item_of` does,
@@ -1093,14 +1159,14 @@ impl Checker {
     // arm.
     fn recv(mut self, _ r: NodeId) -> Result<Diag, ()> {
         let n = self.node(r)
-        let m = self.item_of(n.name(), NODE_MSG, r, N_NOT_A_MSG)?
+        let m: Id<Msg> = self.item_of(n.name(), r, N_NOT_A_MSG)?
         self.set_res(r, m)
-        let variants = self.node(m).list()
+        let variants = self.variants(m)
         self.unique(n.list())?
         var k: usize = 0
         while k < self.len(n.list()) {
             let a = self.elem(n.list(), k)
-            let v = self.find(variants, self.node(a).name())
+            let v = self.variant(m, self.node(a).name())
             if v.is_none() {
                 return Result::Err(self.at(N_UNKNOWN_VARIANT, a))
             }
@@ -1116,18 +1182,18 @@ impl Checker {
     }
 
     // Checks ARM `a` of VARIANT `v` (SPEC §6, "Messages and dispatch").
-    fn arm(mut self, _ a: NodeId, _ v: NodeId) -> Result<Diag, ()> {
+    fn arm(mut self, _ a: NodeId, _ v: Id<Variant>) -> Result<Diag, ()> {
         let n = self.node(a)
-        if n.ty() != self.node(v).ty() {
+        if n.ty() != self.node(v.n).ty() {
             return Result::Err(self.at(T_MISMATCH, a))
         }
-        let fields = self.node(v).list()
+        let fields = self.variant_fields(v)
         self.unique(n.list())?
         self.begin(n.ty(), n.use_list())?
         var k: usize = 0
         while k < self.len(n.list()) {
             let b = self.elem(n.list(), k)
-            let f = self.find(fields, self.node(b).name())
+            let f = self.field_in(fields, self.node(b).name())
             if f.is_none() {
                 return Result::Err(self.at(N_UNKNOWN_FIELD, b))
             }
@@ -1135,10 +1201,10 @@ impl Checker {
                 return Result::Err(self.at(N_DUPLICATE, b))
             }
             self.set_res(b, f)
-            self.declare(self.node(b).local(), b, self.node(f).ty())?
+            self.declare(self.node(b).local(), b, self.node(f.n).ty())?
             k += 1
         }
-        if self.len(n.list()) != self.len(fields) {
+        if self.len(n.list()) != self.len(fields.l) {
             return Result::Err(self.at(N_MISSING_BIND, a))
         }
         self.finish(a, n.body())
@@ -1211,10 +1277,10 @@ impl Checker {
     // as what `i` refers to. When that node is a FIELD, also records a read of the contract
     // field. Errors as `resolve` does, and with E_NOT_IN_USES when the body's `uses` does not
     // grant the field.
-    fn read(mut self, _ i: NodeId) -> Result<Diag, NodeId> {
+    fn read(mut self, _ i: NodeId) -> Result<Diag, Id<Decl>> {
         let d = self.resolve(i)?
-        if self.node(d).kind == NODE_FIELD {
-            self.access(d, self.body.grant.read, self.at(E_NOT_IN_USES, i))?
+        if self.node(d.n).kind == NODE_FIELD {
+            self.access(d.n, self.body.grant.read, self.at(E_NOT_IN_USES, i))?
         }
         self.set_res(i, d)
         Result::Ok(d)
@@ -1222,10 +1288,10 @@ impl Checker {
 
     fn name(mut self, _ i: NodeId) -> Result<Diag, Ty> {
         let d = self.read(i)?
-        if !self.c.ty(d).is_value() {
+        if !self.c.ty(d.n).is_value() {
             return Result::Err(self.at(N_NOT_A_VALUE, i))
         }
-        Result::Ok(self.c.ty(d))
+        Result::Ok(self.c.ty(d.n))
     }
 
     // Returns the type of CTX_READ `i` and records the instruction that `Checked.ctx_op` returns.
@@ -1247,17 +1313,17 @@ impl Checker {
     // with T_MISMATCH when that declaration is not an effect of type `want`.
     fn effect(mut self, _ i: NodeId, _ want: Ty) -> Result<Diag, NodeId> {
         let d = self.read(i)?
-        if self.c.ty(d) != want {
+        if self.c.ty(d.n) != want {
             return Result::Err(self.at(T_MISMATCH, i))
         }
-        Result::Ok(d)
+        Result::Ok(d.n)
     }
 
     // Checks the key of INDEX `i`, whose name `m` declares, and returns the type of the map's
     // values. Errors with T_MISMATCH when `m` is not a map or the key does not fit the map's key
     // type.
-    fn entry(mut self, _ i: NodeId, _ m: NodeId) -> Result<Diag, Ty> {
-        let t = self.c.ty(m)
+    fn entry(mut self, _ i: NodeId, _ m: Id<Decl>) -> Result<Diag, Ty> {
+        let t = self.c.ty(m.n)
         if !t.is_map() {
             return Result::Err(self.at(T_MISMATCH, i))
         }
@@ -1272,9 +1338,9 @@ impl Checker {
         let n = self.node(i)
         let log = self.effect(i, TY_LOG)?
         self.access(log, self.body.grant.write, self.at(E_NOT_MUT, i))?
-        let e = self.item_of(n.event(), NODE_EVENT, i, T_MISMATCH)?
+        let e: Id<Event> = self.item_of(n.event(), i, T_MISMATCH)?
         self.set_res(i, e)
-        self.labeled_args(i, self.node(e).list())
+        self.labeled_args(i, self.event_fields(e))
     }
 
     // Checks MSG_CALL `i` (SPEC §6, "Calls") and returns the variant's return type, or unit when
@@ -1284,8 +1350,8 @@ impl Checker {
         self.want(self.node(i).target(), TY_ADDRESS)?
         let v = self.called_variant(i)?
         self.set_res(i, v)
-        self.labeled_args(i, self.node(v).list())?
-        Result::Ok(self.node(v).ty().or_unit())
+        self.labeled_args(i, self.variant_fields(v))?
+        Result::Ok(self.node(v.n).ty().or_unit())
     }
 
     // Checks that the body of MSG_CALL `i` may write the contract's `Call` effect. Errors with
@@ -1302,42 +1368,37 @@ impl Checker {
 
     // Returns the VARIANT that `M::V` of MSG_CALL `i` names. Errors as `item_of` does, with
     // N_NOT_A_MSG when `M` is not a msg, and with N_UNKNOWN_VARIANT when `M` has no variant `V`.
-    fn called_variant(self, _ i: NodeId) -> Result<Diag, NodeId> {
+    fn called_variant(self, _ i: NodeId) -> Result<Diag, Id<Variant>> {
         let n = self.node(i)
-        let m = self.item_of(n.msg_name(), NODE_MSG, i, N_NOT_A_MSG)?
-        let v = self.find(self.node(m).list(), n.variant())
+        let m: Id<Msg> = self.item_of(n.msg_name(), i, N_NOT_A_MSG)?
+        let v = self.variant(m, n.variant())
         if v.is_none() {
             return Result::Err(self.at(N_UNKNOWN_VARIANT, i))
         }
         Result::Ok(v)
     }
 
-    // Matches each labeled ARG of EMIT or MSG_CALL `i` to the FIELD of list `fields` that its
-    // label names, and checks its value against the field's type. Errors with N_UNKNOWN_FIELD or
-    // N_DUPLICATE at a bad argument, as `want` does, and with N_MISSING_FIELD when a field has
-    // no value.
-    fn labeled_args(mut self, _ i: NodeId, _ fields: ListId) -> Result<Diag, ()> {
+    // Records the FIELD of list `fields` that each labeled ARG of EMIT or MSG_CALL `i` names, and
+    // checks the ARG's value against the field's type. Errors with N_UNKNOWN_FIELD or N_DUPLICATE
+    // at a bad argument, as `want` does, and with N_MISSING_FIELD when a field has no value.
+    fn labeled_args(mut self, _ i: NodeId, _ fields: Fields) -> Result<Diag, ()> {
         let args = self.node(i).list()
         var k: usize = 0
         while k < self.len(args) {
             let a = self.elem(args, k)
-            let value = self.node(a).value()
-            let f = self.find(fields, arg_label(self.node(a), self.node(value)))
+            let arg = self.c.ast.arg(a)
+            let f = self.field_in(fields, arg.label())
             if f.is_none() {
                 return Result::Err(self.at(N_UNKNOWN_FIELD, a))
             }
-            var j: usize = 0
-            while j < k {
-                if self.c.field_of(self.elem(args, j)) == f {
-                    return Result::Err(self.at(N_DUPLICATE, a))
-                }
-                j += 1
+            if self.names_field(args, k, f) {
+                return Result::Err(self.at(N_DUPLICATE, a))
             }
             self.set_res(a, f)
-            self.want(value, self.node(f).ty())?
+            self.want(arg.value(), self.node(f.n).ty())?
             k += 1
         }
-        if k != self.len(fields) {
+        if k != self.len(fields.l) {
             return Result::Err(self.at(N_MISSING_FIELD, i))
         }
         Result::Ok(())
@@ -1379,27 +1440,28 @@ impl Checker {
     // Checks the arguments of CALL `i` against the parameters of its function (SPEC §5.4).
     fn call(mut self, _ i: NodeId) -> Result<Diag, Ty> {
         let n = self.node(i)
-        let f = self.resolve(i)?
-        if self.node(f).kind != NODE_FN {
+        let d = self.resolve(i)?
+        if self.node(d.n).kind != NODE_FN {
             return Result::Err(self.at(N_NOT_A_FUNCTION, i))
         }
+        let f: Id<Callee> = Id { n: d.n }
         self.set_res(i, f)
-        let params = self.node(f).list()
+        let params = self.node(f.n).list()
         let args = n.list()
         if self.len(args) != self.len(params) {
             return Result::Err(self.at(T_ARG_COUNT, i))
         }
         var k: usize = 0
         while k < self.len(args) {
-            let a = self.node(self.elem(args, k))
+            let a = self.c.ast.arg(self.elem(args, k))
             let p = self.node(self.elem(params, k))
-            if !label_ok(a, self.node(a.value()), p) {
+            if !a.fits(p) {
                 return Result::Err(self.at(N_BAD_LABEL, self.elem(args, k)))
             }
             self.want(a.value(), p.ty())?
             k += 1
         }
-        Result::Ok(self.node(f).ty().or_unit())
+        Result::Ok(self.node(f.n).ty().or_unit())
     }
 
     // Checks IF `i` and its `else if` chain. Returns the type of the whole chain, which every IF
@@ -1539,14 +1601,14 @@ impl Checker {
         let n = self.node(i)
         let p = n.place()
         let d = self.resolve(p)?
-        let target = self.node(d)
+        let target = self.node(d.n)
         let t = if self.node(p).kind == NODE_INDEX {
             self.entry(p, d)?
         } else {
-            self.c.ty(d)
+            self.c.ty(d.n)
         }
         if target.kind == NODE_FIELD && t.is_value() {
-            self.access(d, self.body.grant.write, self.at(E_NOT_MUT, i))?
+            self.access(d.n, self.body.grant.write, self.at(E_NOT_MUT, i))?
         } else if target.kind != NODE_LET || !target.as_let().is_var() {
             // An effect or a whole map is no more assignable than a `let`, even when `uses`
             // names it `mut`.

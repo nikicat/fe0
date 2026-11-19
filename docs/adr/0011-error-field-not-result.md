@@ -1,4 +1,4 @@
-# 11. Phases report errors in an `err` field, not a `Result`
+# 11. The lexer, the parser and the checker report errors in an `err` field, not a `Result`
 
 - Date: 2026-11-04
 - Status: accepted
@@ -33,3 +33,9 @@ spike-sizes/ measure this at `-O s`.
 
 Each phase contract must be at most 24,576 bytes ([0014](0014-contract-per-phase.md)). The
 decision stands, now for its size.
+
+## Update (2026-11-19, Fe 26.6.0)
+Code generation returns `Result<Diag, MemVec<u8>>`. It has no partial data to keep on error,
+and its old `Output { code, err }` could hold code and an error at once. The `Result` made Back
+136 bytes smaller and CompileProbe 85 bytes smaller (-O s). The lexer, the parser and the
+checker keep their `err` fields.
