@@ -14,7 +14,7 @@ Marks used below:
 - **[✓]** — confirmed by a probe. The probes are in `spike-*/`, and the ADRs in `docs/adr/`
   summarise what they found. The programs in `corpus/` and `corpus/reject/` are probes too (§8).
 
-Reference toolchain: Fe 26.6.0 ([ADR 0015](adr/0015-move-to-26-6-0.md)). `tools/spikes.sh`
+Reference toolchain: Fe 26.7.0 ([ADR 0022](adr/0022-move-to-26-7-0.md)). `tools/spikes.sh`
 reruns the probes on it.
 
 ---
@@ -33,9 +33,9 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 | Decimal integer | `[0-9]+(_[0-9]+)*` | The value must fit in 256 bits |
 | Hex integer | `0[xX][0-9a-fA-F]+` | No `_` separators. Must fit in 256 bits |
 | String | `"` … `"` with escapes `\" \\ \n \r \t` | Only allowed as the message of `assert!`, and at most 31 bytes after decoding. Fe accepts longer messages **[✓]**; Fe0 v1 restricts them so `Error(string)` stays one data word |
-| Punctuation | `( ) { } [ ] : , -> # .` | `;` is not a token: Fe 26.6.0 rejects it after a statement, even at the end of a line **[✓]**. `::` appears only in `Address::zero()` and in the `M::V` of a call (§6, "Calls"), as two `:` with no space between them. Fe reads `::` as one token and rejects `: :` **[✓]** |
+| Punctuation | `( ) { } [ ] : , -> # .` | `;` is not a token: Fe rejects it after a statement, even at the end of a line **[✓]**. `::` appears only in `Address::zero()` and in the `M::V` of a call (§6, "Calls"), as two `:` with no space between them. Fe reads `::` as one token and rejects `: :` **[✓]** |
 | Operators | `+ - * / % ~ ! ^ & \| && \|\| < > = == !=` | |
-| Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside, and rejects spaced forms. Fe 26.6.0 rejects `x + = 1` too **[✓]** |
+| Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside, and rejects spaced forms. Fe rejects `x + = 1` too **[✓]** |
 
 - **No block comments.** Fe's compiler lexer has none, even though the tree-sitter grammar does.
 - **Doc comments.** A comment that starts with `///`, including `////`, is a doc comment. It may
@@ -453,7 +453,7 @@ contract Counter {
   - Supporting them means appending values to the runtime code at deploy time, which is a
     stretch goal.
 - The `mut` fields fill storage in declaration order, from slot 0, **non-`mut` fields not
-  counted** **[✓]**. Fe 26.6.0 packs them as Solidity does (#1826):
+  counted** **[✓]**. Fe packs them as Solidity does (#1826):
   - a `u256` takes 32 bytes, an `Address` 20 and a `bool` 1;
   - a field goes in the bytes of the current slot that follow the previous field, counted from
     the low end, when it fits there. Otherwise it starts the next slot;
@@ -476,9 +476,8 @@ contract Counter {
 - An arm binding with the same name as a field in `uses` is an error. Fe reports this ("a name
   that an effect binds and that a parameter … also binds").
 - Fe accepts *unused* `uses` entries **[✓]**, so Fe0 reports them only as warnings.
-- A field may be listed more than once, as in `uses (v, mut v)`. Its last entry decides whether
-  the body may assign it, as in Fe **[✓]**. Fe rejects an assignment after `uses (mut v, v)`
-  (`8-0018`). The probes are `corpus/uses_twice.fe` and `corpus/reject/uses_mut_then_read.fe`.
+- A field listed twice, as in `uses (v, mut v)`, is an error (`N001` at the second entry). Fe
+  rejects it too (`3-0093`) **[✓]**. The probe is `corpus/reject/uses_twice.fe`.
 
 This check is the point of Fe0.
 
@@ -511,9 +510,8 @@ grant a storage field.
   **[✓]**. It accepts such a local **[✓]**.
 - A `Ctx` effect may be written `mut Ctx`, and it means the same as `Ctx`, as in Fe **[✓]**.
   The probe is `corpus/two_effects.fe`.
-- Fe0 rejects the same effect name declared twice (`N001`). Fe accepts it, even for two kinds
-  of effect under one name, such as `a: Ctx, a: mut Log` **[✓]**. Fe0 keeps the stricter rule
-  ([ADR 0001](adr/0001-strict-subset.md#update-nov-17)).
+- The same effect name declared twice is an error (`N001`). Fe rejects it too (`3-0093`)
+  **[✓]**. The probe is `corpus/reject/ctx_duplicate_effect.fe`.
 - Only a `Ctx` effect has the methods above (`T001`). Fe rejects `owner.caller()` on an `Address`
   field too, because `Address` has no such method (`2-0010`) **[✓]**. The probe is
   `corpus/reject/ctx_not_an_effect.fe`.
@@ -797,9 +795,7 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 | `StorageMap` of `u256`, `bool` and `Address` | ✅ | §6 |
 | Maps elsewhere, maps of maps, `StorageMap` methods | ❌ | §3.3 |
 | `uses` checks on `init` and arms | ✅ | §6 |
-| A field listed twice in the `uses` of `init` or an arm | ✅ the last entry decides | §6 |
 | `mut Ctx` | ✅ | §6 |
-| The same effect name declared twice in a contract's `uses` | ◐ rejected | §6 |
 | `Log` and `Call` granted without `mut` | ◐ rejected | §6 |
 | `uses` on free functions | ❌ free functions are pure | §5.5 |
 | `Ctx` methods without arguments that return `u256` or `Address`, except `gas()` | ✅ | §6 |

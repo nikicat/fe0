@@ -20,17 +20,24 @@ import random
 import re
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, NewType
 
 import cli_check
-from fegen import ROOT, ByteOffset, FeSource, LineCol
+from fegen import FE, ROOT, ByteOffset, FeSource, LineCol
 from gen import Gen
 
 FE_STMTS: Path = ROOT / "tools/fe-stmts"
 FE_STMTS_TARGET: Path = ROOT / "out/fe-stmts"
 FE_STMTS_EXE: Path = FE_STMTS_TARGET / "release/fe-stmts"
+FE_STMTS_MANIFEST: Path = FE_STMTS / "Cargo.toml"
+FE_STMTS_LOCK: Path = FE_STMTS / "Cargo.lock"
+# A release of Fe, such as `26.7.0`.
+FeVersion = NewType("FeVersion", str)
+# The first line of `fe --version`, such as `fe 26.7.0 (e6e6342b2)`.
+FE_VERSION = re.compile(r"fe (?P<version>\S+) ")
 # The first line of a reject program names the error Fe0 gives, such as `// expect: T004 4:5`.
 EXPECT = re.compile(r"// expect: (?P<letter>[A-Z])\d{3} ")
 # Fe0's lexer and parser report errors with these letters. Other errors come later, from a
@@ -145,10 +152,40 @@ def reflow(source: FeSource, rng: random.Random) -> FeSource:
     return FeSource(out.decode())
 
 
+def fe_version() -> FeVersion:
+    """Returns the release of the fe binary. Errors with ValueError when `fe --version` prints
+    no release."""
+    out = subprocess.run([FE, "--version"], check=True, capture_output=True, text=True).stdout
+    m = FE_VERSION.match(out)
+    if m is None:
+        raise ValueError(f"{FE} --version prints no release: {out.strip()}")
+    return FeVersion(m["version"])
+
+
+def locked_parser_version() -> FeVersion:
+    """Returns the release of fe-parser that FE_STMTS_LOCK locks. Errors with ValueError when
+    the lock has no fe-parser."""
+    lock = tomllib.loads(FE_STMTS_LOCK.read_text())
+    version = next((p["version"] for p in lock["package"] if p["name"] == "fe-parser"), None)
+    if version is None:
+        raise ValueError(f"{FE_STMTS_LOCK} locks no fe-parser")
+    return FeVersion(version)
+
+
+def check_parser_version() -> None:
+    """Checks that tools/fe-stmts parses with the parser of the fe binary's release, which
+    .devcontainer/Containerfile pins. Exits with a message when the two releases differ."""
+    fe, parser = fe_version(), locked_parser_version()
+    if fe != parser:
+        sys.exit(f"{FE} is Fe {fe}, but {FE_STMTS_LOCK.relative_to(ROOT)} locks fe-parser"
+                 f" {parser}: pin the same release in .devcontainer/Containerfile and"
+                 f" {FE_STMTS_MANIFEST.relative_to(ROOT)}")
+
+
 def fe_stmts() -> Path:
     """Builds tools/fe-stmts and returns its executable. Errors when the build fails."""
     subprocess.run(["cargo", "build", "--quiet", "--release", "--manifest-path",
-                    str(FE_STMTS / "Cargo.toml"), "--target-dir", str(FE_STMTS_TARGET)],
+                    str(FE_STMTS_MANIFEST), "--target-dir", str(FE_STMTS_TARGET)],
                    check=True)
     return FE_STMTS_EXE
 
@@ -251,6 +288,7 @@ def main() -> None:
     ap.add_argument("--seeds", type=int, default=500,
                     help="the number of generated programs (default 500)")
     args = ap.parse_args()
+    check_parser_version()
     exe = fe_stmts()
     programs = corpus() + generated(args.seeds, ROOT / "out/newline-check")
     rejected = rejected_reflows(programs)

@@ -62,7 +62,7 @@ pub const NODE_NONE: Kind = Kind { code: 0 }
 // Items and their parts.
 // const: name, ty, value.
 pub const NODE_CONST: Kind = Kind { code: 1 }
-// fn: name, ty (the return type), list of PARAMs, use_list (always EMPTY_LIST), body BLOCK.
+// fn: name, ty (the return type), list of PARAMs, body BLOCK.
 pub const NODE_FN: Kind = Kind { code: 2 }
 // param: name, ty, is_positional (written `_ name`).
 pub const NODE_PARAM: Kind = Kind { code: 3 }

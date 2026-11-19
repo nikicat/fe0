@@ -6,6 +6,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-# The parser of the Fe release that .devcontainer/Containerfile pins. Change both together.
-fe-parser = { git = "https://github.com/argotorg/fe", tag = "v26.6.0" }
+# The parser of the Fe release that .devcontainer/Containerfile pins. tools/newline_check.py
+# fails when the two differ.
+fe-parser = { git = "https://github.com/argotorg/fe", tag = "v26.7.0" }
 rowan = "0.16.1"

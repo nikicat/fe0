@@ -24,12 +24,11 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
   matrix), Fe0 spec link.
 - The README's build and test section covers the native CLI: `fe build --backend native -e
   executable --out-dir out/cli fe0-cli`, then `out/cli/fe0_cli < program.fe`, its exit codes
-  (0, 1, 2) and `tools/cli_check.py`. On an AArch64 Linux host it needs the patched Fe of
-  WORKAROUNDS.md.
+  (0, 1, 2) and `tools/cli_check.py`.
 - Declaration: pre-existing work (everything before commit of Nov 3, see git log), reused code
   (none), AI assistance (most work AI-assisted, verified by probes and tests).
 - Redeploy every phase contract and Compiler from the submitted commit with `tools/deploy.py`
   and browser-web3-signer, then update docs/DEMO.md and `deployments/42161.json`. The Nov 14
   deployment already differs from main (since fb9d801).
 - Make the repo public (Apache-2.0 LICENSE is in place), record the exact commit SHA and
-  `fe 26.6.0`. The README explains the move from 26.5.1 (ADR 0015).
+  `fe 26.7.0`. The README explains the moves from 26.5.1 (ADRs 0015 and 0022).

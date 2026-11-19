@@ -84,3 +84,11 @@ calls another method of `ctx`, gets an error.
   442 bytes (22,535), and Back shrank by 7 (Fe 26.6.0, `-O s`).
 - A table of the methods instead of the chain made the Checker 1,605 bytes larger: a constant
   array stores every field of every element as a 32-byte word.
+
+## Update (Nov 19)
+- **The `Spelling` arguments cost nothing on Fe 26.7.0, which has #1978**
+  ([ADR 0022](0022-move-to-26-7-0.md)). Passing the words as plain `u256` constants instead
+  made the Parser 1 byte larger (17,064 bytes, not 17,063; `-O s`). The Parser is the only
+  phase that passes them. `spells<N>` was not measured again. It takes a word of one fixed
+  length `N`, and `Parser.effect` passes words of two different lengths.
+- The table of the methods still makes the Checker larger, by 1,227 bytes (Fe 26.7.0, `-O s`).

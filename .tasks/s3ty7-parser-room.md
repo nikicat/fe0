@@ -18,8 +18,8 @@ in SPEC.md §10 costs Parser bytes. Free room before spending it, in measured st
 Done means each step is in with its saving recorded, or dropped with its measured reason.
 
 ## Decisions
-- Stay on Fe 26.6.0 (ADR 0015). Free room with tables first (step 2). Move to the next Fe
-  release that has #1978 when it ships.
+- Move to the next Fe release that has #1978 when it ships. Fe 26.7.0 has it, and we moved on
+  Nov 19 (ADR 0022).
 
 ## State
 Step 1 done (Nov 17, Fe 26.6.0, `-O s`). The Parser's runtime is 22,694 bytes, with 22,054
@@ -65,6 +65,15 @@ fe0-chain built with master at `-O s`, with no change to our code:
 Step 4 is in the working tree: the parser reads any `ctx.m()`, and the checker resolves `m`
 (ADR 0017, update of Nov 17). The Parser is 22,578 bytes, 1,998 under the limit.
 
+On Fe 26.7.0 the Parser is 17,063 bytes, 7,513 under the limit, with no change to our code
+(Nov 19, `-O s`). Inlining `empty_call`, which no longer saves bytes, and dropping a dead
+guard in `Parser.binary` took it to 17,014 bytes, 7,562 under the limit (Nov 19).
+
+The three shapes of argotorg/fe#1964 in docs/WORKAROUNDS.md were measured again on 26.7.0
+(Nov 19). Two still cost bytes. The accessor `Span.start()` is now free. That entry has the
+figures.
+
 ## Next
-Step 3 (bracket and newline work in the Lexer contract) only if room runs out before the next
-Fe release.
+Steps 3 and 5 only if room runs out again. For the Checker, try keeping `Checker.at` out of
+line: a plain `pos: Pos` in `Diag` or `Node` stopped it from inlining and made the Checker 717
+bytes smaller (Fe 26.7.0, -O s, Nov 19; docs/WORKAROUNDS.md).

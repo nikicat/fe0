@@ -39,4 +39,4 @@ Each phase is its own contract, and a `Compiler` contract calls them in turn
   functions in the IR. Update, Nov 15: keyword matching no longer uses `word<N>`. The lexer
   looks up one packed word per identifier in tables (DESIGN.md §2), and one-byte punctuation
   in a byte table. The punctuation table alone cut 364 bytes. Together they cut the Lexer
-  contract's runtime code from 7,685 to 6,031 bytes on Fe 26.6.0 at `-O s` (DESIGN.md §8).
+  contract's runtime code from 7,685 to 6,031 bytes on Fe 26.6.0 at `-O s`.

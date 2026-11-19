@@ -23,9 +23,9 @@ RUN set -e; arch=$(dpkg --print-architecture); \
     uv python install --default --preview-features python-install-default "$PYTHON"
 
 # Fe's release build, pinned here for CI and the dev container alike
-ARG FE=v26.6.0
-ARG FE_SHA256_amd64=697081cb9265bd1be7a5d33e6bb0c8559ee5ff542abab9a046540fc151b4edaa
-ARG FE_SHA256_arm64=011caa8a297763b3c1540048beb92bea047f0868eabe0ea1b4822e99d945fe26
+ARG FE=v26.7.0
+ARG FE_SHA256_amd64=4ef2b818e260f0ba0b0af4bd78468dda589dc4949503fffaef25d8188e5107d5
+ARG FE_SHA256_arm64=8410974317f84d419203cf1e78644865579f0886e32c84d865c9f8e95f804dbe
 RUN set -e; arch=$(dpkg --print-architecture); \
     curl -fsSLo /usr/local/bin/fe "https://github.com/argotorg/fe/releases/download/$FE/fe_linux_$arch"; \
     eval echo \"\$FE_SHA256_$arch  /usr/local/bin/fe\" | sha256sum -c -; \

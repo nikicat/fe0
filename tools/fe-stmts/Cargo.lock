@@ -54,8 +54,8 @@ checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "fe-parser"
-version = "26.6.0"
-source = "git+https://github.com/argotorg/fe?tag=v26.6.0#5b3f96af2ab10df11bf847551f4b81d1fe481110"
+version = "26.7.0"
+source = "git+https://github.com/argotorg/fe?tag=v26.7.0#e6e6342b252082f3fd8af5b9f763cb13296bf0a1"
 dependencies = [
  "derive_more",
  "logos",

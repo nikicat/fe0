@@ -44,3 +44,13 @@ program does not compile with Fe0, and SPEC.md §10 lists them.
 - **The same effect name declared twice stays rejected (`N001`).** Fe accepts it, even for two
   kinds of effect under one name, such as `a: Ctx, a: mut Log`. Fe0 would need Checker bytes
   to resolve such a name, for a program nobody writes.
+
+## Update (Nov 19, Fe 26.7.0)
+Fe 26.7.0 rejects a name that two `uses` entries bind (`3-0093`, argotorg/fe#1987). Fe0 now
+rejects it too, because every program Fe0 accepts must compile with Fe (the Decision above).
+
+- **A field listed twice is now rejected (`N001`).** The Nov 17 update accepted it, with the last
+  entry deciding `mut`. The check made the Checker contract 58 bytes larger, from 21,312 to
+  21,370 bytes (Fe 26.7.0, `-O s`).
+- **Fe0's rule for an effect name declared twice is no longer stricter than Fe's.** Fe rejects
+  such a name too.

@@ -70,7 +70,7 @@ impl core::ops::Eq for Power {
 }
 
 impl Power {
-    // The power one step tighter, which the right operand of a left-associative operator needs.
+    // Returns the power one level tighter.
     fn tighter(self) -> Power {
         Power { level: self.level + 1 }
     }
@@ -81,7 +81,7 @@ impl Power {
     }
 }
 
-// The power of a token that is not a binary operator.
+// The power of a token that is not a binary operator. It binds more loosely than every operator.
 pub const NOT_BINARY: Power = Power { level: 0 }
 
 // The power of `||`, the loosest binary operator.
@@ -90,7 +90,7 @@ const LOOSEST: Power = Power { level: 1 }
 // The power of the comparisons, which don't chain (SPEC.md §3.2).
 const CMP_POWER: Power = Power { level: 3 }
 
-// Returns the binding power of a token, or `NOT_BINARY` for a token that is not a binary operator.
+// Returns the binding power of a token, or `NOT_BINARY`.
 pub fn binding_power(_ t: Tok) -> Power {
     if t == O_OROR {
         return LOOSEST
@@ -474,8 +474,9 @@ impl Parser {
 
     // Parses rule `field` (SPEC.md §3.1). When `maps` is true, the type may also be a map, as
     // rule `cfield` allows. `indexed` marks the field of an event that `#[indexed]` precedes.
-    // smell: only an event's field uses `indexed`. Kept: an Ast setter instead made ParseProbe
-    // 261 bytes larger (Nov 12). Fix when a setter costs no more than the argument.
+    // smell: only an event's field uses `indexed`. Kept: an Ast setter instead made the Parser
+    // 259 bytes larger (Fe 26.7.0, -O s, Nov 19). Fix when a setter costs no more than the
+    // argument.
     fn field(mut self, maps: bool, indexed: bool) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let name = self.ident()?
@@ -754,9 +755,7 @@ impl Parser {
     }
 
     fn expr(mut self) -> Result<Diag, NodeId> {
-        // Passing the constant LOOSEST here instead costs about 650 bytes of bytecode
-        // (argotorg/fe#1964, see docs/WORKAROUNDS.md).
-        self.binary(NOT_BINARY.tighter())
+        self.binary(LOOSEST)
     }
 
     // Precedence climbing over the operators that bind at least as tightly as `min`.
@@ -765,7 +764,7 @@ impl Parser {
         var lhs = self.unary()?
         while true {
             let power = binding_power(self.peek())
-            if !power.binds_at_least(min) || power == NOT_BINARY {
+            if !power.binds_at_least(min) {
                 break
             }
             if self.reads_as_generics() {
@@ -976,7 +975,9 @@ impl Parser {
     fn zero(mut self) -> Result<Diag, NodeId> {
         let pos = self.bump().span.start
         self.path_sep()?
-        self.empty_call(W_ZERO)?
+        self.expect_word(W_ZERO)?
+        self.expect(P_LPAREN)?
+        self.expect(P_RPAREN)?
         Result::Ok(self.ast.add_node(Node::new_zero_address(pos)))
     }
 
@@ -988,15 +989,6 @@ impl Parser {
         let key = self.expr()?
         self.expect(P_RBRACKET)?
         Result::Ok(self.ast.add_node(Node::new_index(pos, map, key)))
-    }
-
-    // Reads `w ( )`, the end of rule `zero`. It stays a function with one caller because inlining
-    // it made the Parser 67 bytes larger (Fe 26.6.0, Nov 18).
-    fn empty_call(mut self, _ w: Spelling) -> Result<Diag, ()> {
-        self.expect_word(w)?
-        self.expect(P_LPAREN)?
-        self.expect(P_RPAREN)?
-        Result::Ok(())
     }
 
     // SPEC.md §3.1, `IDENT "(" [ args ] ")"` in rule `primary`, with rule `args`.

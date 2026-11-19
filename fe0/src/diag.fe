@@ -106,7 +106,7 @@ pub const P_RECORD_LITERAL: DiagCode = DiagCode { raw: 2012 }
 
 // Two declarations of one name: items and contract fields, or within one list of parameters,
 // variants, fields, binds, arms or `recv` blocks. Also one field given twice in an emit or a call,
-// and a second `Call` effect in the contract.
+// one field listed twice in a `uses`, and a second `Call` effect in the contract.
 pub const N_DUPLICATE: DiagCode = DiagCode { raw: 3001 }
 pub const N_UNKNOWN_NAME: DiagCode = DiagCode { raw: 3002 }
 // A name used as a value when `Ty.is_value` says it is not one.

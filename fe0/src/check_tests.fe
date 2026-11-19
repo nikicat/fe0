@@ -379,13 +379,15 @@ fn effects() {
         E_UNKNOWN_FIELD,
         165,
     )
-    accepts(
+    rejects(
         "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (a, mut a) { a = v }\n    }\n}\n",
+        N_DUPLICATE,
+        201,
     )
     rejects(
         "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut a, a) { a = v }\n    }\n}\n",
-        E_NOT_MUT,
-        210,
+        N_DUPLICATE,
+        205,
     )
     rejects(
         "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut a) { a = v }\n    }\n}\nfn f() -> u256 { a }",

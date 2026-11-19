@@ -19,8 +19,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # The checks run in the dev container, so its Containerfile is the one place that pins
-      # Fe and the other tools. The image is cached in GHCR. Only pushes to main update it.
+      # The checks run in the dev container, so its Containerfile pins the fe binary and the
+      # other tools. The image is cached in GHCR. Only pushes to main update it.
       - uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3.1900000450
         with:
           imageName: ghcr.io/${{ github.repository }}/devcontainer

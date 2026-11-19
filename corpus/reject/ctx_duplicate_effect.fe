@@ -1,5 +1,4 @@
-// expect: N001 8:28
-// fe: accepts
+// expect: N001 7:28
 // A contract may not declare the same `Ctx` effect twice (SPEC §6, "The caller").
 msg M {
     #[selector = 1]

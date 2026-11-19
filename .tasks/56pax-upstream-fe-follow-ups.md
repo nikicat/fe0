@@ -54,6 +54,5 @@ sent upstream or dropped with a reason, and the fork is dropped (below). Finding
   `launcher_source(tests)`, and pass the suite settings as one value.
 
 ## Drop the fork
-- #1989 is merged but in no release yet (the latest is v26.6.0, Nov 10). When a release we
-  use includes it, build with that release on AArch64, drop our fork's branch
-  `native-aarch64-linux-v26.6.0`, and remove the AArch64 entry from docs/WORKAROUNDS.md.
+- Fe 26.7.0 (Nov 18) includes #1989, and we build with it (ADR 0022). Delete our fork's branch
+  `native-aarch64-linux-v26.6.0`.
