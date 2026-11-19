@@ -148,7 +148,7 @@ pub struct DeployCode { bytes: MemVec<u8> }
 
 impl DeployCode {
     // Takes pieces that `Asm.finish` has run on. Finishing them here instead made Back 696 bytes
-    // larger (Fe 26.6.0, -O s, Nov 19).
+    // larger (Fe 26.6.0, -O s).
     pub fn of(init: own Asm, runtime: Asm) -> DeployCode {
         var bytes = init.code
         bytes.extend_from_slice(runtime.code.as_slice())

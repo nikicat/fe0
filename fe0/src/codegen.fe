@@ -7,10 +7,14 @@ use ingot::ast::*
 use ingot::check::{
     Callee,
     Checked,
+    Const,
+    Decl,
     Field,
+    Fields,
     FIRST_LOG_WORD,
     FrameSlot,
     Id,
+    decl,
     LogWord,
     StoragePlace,
     check,
@@ -159,9 +163,9 @@ enum ArgDest {
     Params(ListId, Size),
     // The words of the log data, past the frame. Each argument is a field init of an event.
     LogWords,
-    // The calldata of an external call, past the frame. Each argument is a field init of the
-    // variant whose fields are the list.
-    CallArgs(ListId),
+    // The calldata of an external call, past the frame. The Fields are the called variant's, and
+    // each argument initializes one of them (SPEC §6, "Calls").
+    CallArgs(Fields),
 }
 
 impl Copy for ArgDest {}
@@ -520,13 +524,14 @@ impl Gen {
         self.op(OP_ADD)
     }
 
-    // The offset in the frame of local, parameter or bind `d`.
-    fn local_offset(self, _ d: NodeId) -> FrameOff {
+    // Returns the offset from FP of the local, parameter or bind that `d` declares
+    // (DESIGN.md §6.1).
+    fn local_offset(self, _ d: Id<Decl>) -> FrameOff {
         slot_offset(self.c.frame_slot(d))
     }
 
-    // Pops the top word into the variable that node `d` declares: a local or a contract field.
-    fn store(mut self, _ d: NodeId) {
+    // Pops the top word into the variable that `d` declares: a local or a contract field.
+    fn store(mut self, _ d: Id<Decl>) {
         match self.c.narrow<Field>(d) {
             Option::Some(f) => self.store_field(self.c.storage_place(f)),
             Option::None => {
@@ -570,18 +575,17 @@ impl Gen {
         }
     }
 
-    // Pushes the value of the name that node `d` declares: a constant, a field or a local.
-    fn load(mut self, _ d: NodeId) {
-        if self.node(d).kind == NODE_CONST {
-            self.push(self.c.word_of(d))
-        } else {
-            match self.c.narrow<Field>(d) {
+    // Pushes the value of the name that `d` declares: a constant, a field or a local.
+    fn load(mut self, _ d: Id<Decl>) {
+        match self.c.narrow<Const>(d) {
+            Option::Some(c) => self.push(self.c.word_of(c)),
+            Option::None => match self.c.narrow<Field>(d) {
                 Option::Some(f) => self.load_field(self.c.storage_place(f)),
                 Option::None => {
                     self.fp_plus(self.local_offset(d))
                     self.op(OP_MLOAD)
                 },
-            }
+            },
         }
         self.body.depth += 1
     }
@@ -617,11 +621,11 @@ impl Gen {
     }
 
     // The runtime code: the dispatcher (DESIGN.md §6.4), the arms and what they call.
-    fn runtime(mut self, _ c: NodeId) {
+    fn runtime(mut self) {
         self.non_payable()
         self.load_selector()
-        let cases = self.cases(c)
-        // ponytail: a linear chain of EQs; sort and bisect, like Fe, if gas matters.
+        let cases = self.cases()
+        // ponytail: a linear chain of EQs (DESIGN.md §6.4).
         var i: usize = 0
         while i < cases.len() {
             let case = cases[i]
@@ -657,10 +661,10 @@ impl Gen {
         Selector { v: self.c.selector(self.c.variant_of(arm)) }
     }
 
-    // The ARMs of every RECV of contract `c`, in order, each with a new label.
-    fn cases(mut self, _ c: NodeId) -> MemVec<Case> {
+    // Returns the ARMs of every RECV of the contract in source order, each with a new label.
+    fn cases(mut self) -> MemVec<Case> {
         var cases: MemVec<Case> = MemVec::new()
-        let recvs = self.node(c).recvs()
+        let recvs = self.c.contract_node().recvs()
         var r: usize = 0
         while r < self.len(recvs) {
             let l = self.node(self.elem(recvs, r)).list()
@@ -679,39 +683,29 @@ impl Gen {
         let n = self.node(a)
         let fields = self.c.variant_fields(self.c.variant_of(a))
         self.begin(a, BodyKind::Arm)
-        self.require_calldata(selector_and_words(self.len(fields)))
+        self.require_calldata(selector_and_words(fields.len(self.c.ast)))
         var k: usize = 0
         while k < self.len(n.list()) {
             let b = self.elem(n.list(), k)
             self.push(
-                arg_offset(self.index_of(fields, self.c.field_of(b))).word(),
+                arg_offset(fields.index_of(self.c.ast, self.c.field_of(b))).word(),
             )
             self.op(OP_CALLDATALOAD)
             self.body.depth += 1
             let ty = self.c.ty(b)
             self.validate(ty)
-            self.store(b)
+            self.store(decl(b))
             k += 1
         }
         self.body_end(n.body())
     }
 
-    // The position of node `i` in list `l`, which holds it.
-    fn index_of(self, _ l: ListId, _ f: Id<Field>) -> usize {
-        var k: usize = 0
-        while self.elem(l, k) != f.node_id() {
-            k += 1
-        }
-        k
-    }
-
-    // The initcode for a runtime of `rt` bytes: checks and copies the constructor arguments,
-    // runs `init`, then returns the runtime code (DESIGN.md §6.5).
-    fn initcode(mut self, _ c: NodeId, _ rt: Size) {
+    // Emits the initcode for a runtime of `rt` bytes (DESIGN.md §6.5).
+    fn initcode(mut self, _ rt: Size) {
         // The end of the initcode, which is where the runtime code starts.
         let end = self.asm.label()
         self.non_payable()
-        let init = self.node(c).init()
+        let init = self.c.contract_node().init()
         if !init.is_none() {
             self.init_args(init, rt, end)
             let exit = self.asm.label()
@@ -750,7 +744,7 @@ impl Gen {
         var k: usize = 0
         while k < self.len(params) {
             let param = self.elem(params, k)
-            self.push(FRAMES.at(self.local_offset(param)).word())
+            self.push(FRAMES.at(self.local_offset(decl(param))).word())
             self.op(OP_MLOAD)
             self.validate(self.node(param).ty())
             self.op(OP_POP)
@@ -766,10 +760,9 @@ impl Gen {
         if k == NODE_INT {
             self.push(self.c.ast.word_value(i))
         } else if k == NODE_BOOL {
-            self.push(flag(n.is_true()))
+            self.push(n.as_bool().word())
         } else if k == NODE_NAME {
-            let d = self.c.declaration(i).node_id()
-            self.load(d)
+            self.load(self.c.declaration(i))
             return LEAVES_WORD
         } else if k == NODE_BINARY {
             self.binary(i)
@@ -945,10 +938,11 @@ impl Gen {
 
     fn dest_offset(self, _ dest: ArgDest, _ a: NodeId, _ k: usize) -> FrameOff {
         match dest {
-            ArgDest::Params(params, next) => self.local_offset(self.elem(params, k)).past(next),
+            ArgDest::Params(params, next) => self.local_offset(decl(self.elem(params, k)))
+                .past(next),
             ArgDest::LogWords => self.log_offset(self.c.log_word(self.c.field_of(a))),
             ArgDest::CallArgs(fields) => self.call_arg_offset(
-                self.index_of(fields, self.c.field_of(a)),
+                fields.index_of(self.c.ast, self.c.field_of(a)),
             ),
         }
     }
@@ -1055,7 +1049,7 @@ impl Gen {
         let k = n.kind
         if k == NODE_LET {
             self.value(n.as_let().value())
-            self.store(i)
+            self.store(decl(i))
         } else if k == NODE_WHILE {
             self.while_stmt(i)
         } else if k == NODE_RETURN {
@@ -1116,7 +1110,7 @@ impl Gen {
     // `x = e` or `x op= e`.
     fn assign(mut self, _ i: NodeId) {
         let n = self.node(i)
-        let d = self.c.declaration(n.place()).node_id()
+        let d = self.c.declaration(n.place())
         if n.op() == O_ASSIGN {
             self.value(n.value())
         } else {
@@ -1148,15 +1142,9 @@ impl Gen {
 
     // Pushes the storage slot of the map entry that INDEX `i` names (SPEC §6, "Maps").
     fn entry_slot(mut self, _ i: NodeId) {
-        self.value(self.node(i).key())
+        self.value(self.node(i).as_index().key())
         self.store_at(SCRATCH)
-        self.push(
-            self.c
-                .storage_place(
-                    self.c.narrow<Field>(self.c.declaration(i).node_id()).unwrap(),
-                )
-                .slot(),
-        )
+        self.push(self.c.storage_place(self.c.field_of(i)).slot())
         self.store_at(SCRATCH.after(WORD))
         self.on_scratch(OP_KECCAK256, words(2))
     }
@@ -1169,7 +1157,7 @@ impl Gen {
         // LOGn takes the offset on top, then the size, topic 0, topic 1 and the later topics.
         // So the last indexed field is pushed first.
         let data = self.c.data_words(e)
-        var w = self.len(self.c.event_fields(e))
+        var w = self.c.event_fields(e).len(self.c.ast)
         let indexed = w - data
         while w > data {
             w -= 1
@@ -1205,11 +1193,10 @@ impl Gen {
 
     // Emits `a.call(M::V { … })` as one CALL (SPEC §6, "Calls"). The calldata layout is in
     // DESIGN.md §6.3.
-    //
-    // It stays one function. Moving the decoding of the return word into its own function made
-    // Back 20 bytes larger. Moving the CALL as well made it 48 bytes larger (Fe 26.6.0, -O s,
-    // Nov 14).
     fn msg_call(mut self, _ i: NodeId) -> Leaves {
+        // Kept as one function. Moving the decoding of the return word into its own function
+        // made Back 20 bytes larger. Moving the CALL as well made it 48 bytes larger
+        // (Fe 26.6.0, -O s).
         let n = self.node(i)
         let v = self.c.variant_of(i)
         let fields = self.c.variant_fields(v)
@@ -1225,7 +1212,7 @@ impl Gen {
         // and the offset and size of the return data to copy, which is none.
         // a -> 0 0 size offset 0 a
         self.push(0)
-        self.push(selector_and_words(self.len(fields)).word())
+        self.push(selector_and_words(fields.len(self.c.ast)).word())
         self.fp_plus(self.call_data())
         self.push(0)
         self.push(0)
@@ -1266,13 +1253,13 @@ impl Gen {
         self.body.depth -= 1
         let ok = self.asm.label()
         self.asm.jumpi(ok)
-        let m = self.node(n.message())
+        let m = self.node(n.message()).as_str()
         // The ABI encoding of a string: its offset, its length, then its bytes padded to a word.
         // A message has at most 31 bytes, so they fit in one word (SPEC §1).
         self.selector_at_scratch(ERROR_SELECTOR)
         self.push(WORD.word())
         self.store_at(revert_word(0))
-        let len = bytes(m.str_len())
+        let len = bytes(m.len())
         self.push(len.word())
         self.store_at(revert_word(1))
         var count: usize = 2
@@ -1306,9 +1293,9 @@ pub fn generate(_ c: own Checked) -> Result<Diag, DeployCode> {
     if the_contract.is_none() {
         return Result::Err(diag(G_NO_CONTRACT, SOURCE_START))
     }
-    g.runtime(the_contract)
+    g.runtime()
     let runtime = g.section()
-    g.initcode(the_contract, bytes(runtime.len()))
+    g.initcode(bytes(runtime.len()))
     let init = g.section()
     if runtime.too_large() || init.too_large() {
         return Result::Err(diag(G_CODE_TOO_LARGE, g.node(the_contract).pos()))

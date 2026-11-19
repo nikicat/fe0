@@ -18,8 +18,9 @@ use ingot::diag::{
 use ingot::io::{Byte, Source}
 use ingot::wire::{Lanes, Reader, Wire, Writer}
 
-// Kind of a token. The lexer makes only the constants below. A Tok from `Tok::from_wire` is
-// only as good as the code it was given.
+// The kind of a token. It is a struct and not an enum, because an enum that crosses a contract
+// boundary costs bytecode in every phase contract (ADR 0014). The lexer makes only the
+// constants below. A Tok from `Tok::from_wire` is only as good as the code it was given.
 pub struct Tok { code: u8 }
 
 impl Copy for Tok {}
@@ -268,8 +269,7 @@ pub const P_DOT: Tok = Tok { code: 50 }
 const PUNCT: [u8; 11] = [b'(', b')', b'{', b'}', b'[', b']', b':', b',', b'_', b'#', b'.']
 // The bytes of the operators that `=` may follow to make their assignment form. Entry k is the
 // byte of `O_PLUS.after(k)` when that operator is one of them, and `_` when it is not, as in
-// PUNCT. `punct` scans this table in the same loop as PUNCT. Two loops, the second over a table
-// of only `+ * % ^`, made Lexer 67 bytes larger (Fe 26.6.0, -O s, Nov 15).
+// PUNCT.
 const ASSIGNABLE: [u8; 11] = [b'+', b'_', b'*', b'_', b'%', b'_', b'_', b'^', b'_', b'_', b'_']
 
 // Operators.
@@ -549,7 +549,7 @@ impl Text {
     }
 
     // Whether span `s` holds the first `s.len` bytes of `b`. Comparing the two spans as slices
-    // made compiling corpus/amm.fe on chain cost 938K more gas (Fe 26.6.0, -O s, Nov 16).
+    // made compiling corpus/amm.fe on chain cost 938K more gas (Fe 26.6.0, -O s).
     fn holds(self, _ s: Span, _ b: MemSlice<u8>) -> bool {
         var k: usize = 0
         while k < s.len {
@@ -790,16 +790,16 @@ impl Lexer {
     }
 
     // Returns the kind of the type name that the token read so far spells, or T_IDENT when it
-    // spells none (SPEC.md §1). `w` is the spelling of that token. This was a method of Spelling,
-    // with the `is_sized_int_name` check in `ident`, and that made Lexer 67 bytes larger (Fe
-    // 26.6.0, -O s, Nov 15).
+    // spells none (SPEC.md §1).
     fn type_kind(self, _ w: Spelling) -> Tok {
+        // As a method of Spelling, with the `is_sized_int_name` check in `ident`, this made Lexer
+        // 67 bytes larger (Fe 26.6.0, -O s).
         let k = w.index_in(TYPE_NAMES)
         if k < TYPE_NAMES.len() {
             return T_U256.after(k)
         }
-        // Putting these three in TYPE_NAMES, as T_TYPE, made Lexer 168 bytes larger (Fe 26.6.0,
-        // -O s, Nov 14).
+        // Putting these three in TYPE_NAMES, as T_TYPE, made Lexer 168 bytes larger
+        // (Fe 26.6.0, -O s).
         if self.text.is_sized_int_name(self.span())
             || w == W_USIZE
             || w == W_ISIZE
@@ -946,6 +946,8 @@ impl Lexer {
     fn punct(mut self) -> Option<Tok> uses (input: mut Source) {
         let c = self.peeked
         self.bump()
+        // One loop scans PUNCT and ASSIGNABLE. Two loops, the second over a table of only
+        // `+ * % ^`, made Lexer 67 bytes larger (Fe 26.6.0, -O s).
         var k: usize = 0
         while k < PUNCT.len() {
             if c.is(PUNCT[k]) {

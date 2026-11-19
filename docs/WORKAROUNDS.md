@@ -70,9 +70,7 @@ master removes nothing before we move to a release that has it.
   and a third is free.
   - A struct field nested in a struct that is stored in bulk or read often. The `Pos` in
     `Diag` costs the Lexer 185 bytes, the `Pos` in `Node` costs the Parser 665, and
-    `Parser.at: TokIdx` costs 24. A `Pos` field in only one of `Diag` and `Node` makes the
-    Checker 717 bytes smaller. A `Pos` field in both makes it 17 bytes larger. The 717 bytes
-    come from the optimizer not inlining `Checker.at` in that build, not from the `Pos`.
+    `Parser.at: TokIdx` costs 24.
   - A vector of one-field structs. A `MemVec<NodeId>` beside a `MemVec<usize>` in `Ast.lists`
     costs the Parser 399 bytes and the Checker 361, and saves Back 91.
   - A small accessor that the optimizer might stop inlining once it has a few callers. This
@@ -102,3 +100,11 @@ master removes nothing before we move to a release that has it.
     `while k < n { …; k += 1 }`).
   - **Remove when:** a release we use builds the six range loops in Back to no more bytes
     than the index loops. Re-measure Back before undoing it.
+
+- **Fe has no cast between a unit-only enum and its variant index.**
+  - **Where it bites:** `Tok` in `fe0/src/lexer.fe`. An `enum Tok` makes each phase contract
+    larger ([ADR 0014](adr/0014-contract-per-phase.md) gives the figures).
+  - **Upstream:** the feature request argotorg/fe#2020 asks for the cast. It is open.
+  - **Workaround:** `Tok` is a struct around a `u8`, with a constant per token kind.
+  - **Remove when:** a release we use has the cast, and an `enum Tok` then builds each phase
+    contract to no more bytes than the struct.

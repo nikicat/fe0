@@ -4,28 +4,21 @@
 - Status: accepted; supersedes [0008](0008-front-back-split.md)
 
 ## Context
-A contract's runtime code may be at most 24,576 bytes. Measured on Fe 26.5.1 (`spike-sizes/`,
-probes that take the source as `bytes` calldata), runtime bytes:
+A contract's runtime code may be at most 24,576 bytes. The phase contracts take about 60 KB in
+all (Fe 26.7.0, `-O s`; DESIGN.md §8 gives each size), so the compiler spans several contracts.
 
-| Probe | `-O 0` | `-O 1` | `-O 2` | `-O s` |
-|---|---|---|---|---|
-| empty (ABI decode only) | | | | 182 |
-| lexer | 18,441 | 7,583 | 7,580 | 7,511 |
-| lexer + parser | 54,014 | 27,365 | 27,301 | 26,456 |
-| lexer + parser + checker | | | | 41,500 |
-| the whole compile, with code generation | | | | 54,668 |
-
-Lexer and parser together are over the limit. On anvil the lexer probe deploys and the lexer +
-parser probe is rejected (status 0). So `Front` of [0008](0008-front-back-split.md) does not
-fit. The parser alone is about 19 KB, the checker about 15 KB and code generation about 13 KB.
+Lexer and parser fit in one contract: a lexer + parser probe takes 21,454 bytes (Fe 26.7.0,
+`-O s`). That leaves about 3.1 KB for the syntax that SPEC.md §10 marks ❌. A Parser contract
+of its own has about 7.5 KB of room.
 
 ## Decision
 Each phase is its own contract, and a `Compiler` contract calls them in turn
-(DESIGN.md §8). Builds use `-O s`.
+(DESIGN.md §8). Builds use `-O s`. This leaves the Parser room to grow, and every
+boundary works alike.
 
 ## Alternatives
-- **Shrink lexer and parser to fit one contract:** 2.5 KB to cut, and the checker would still
-  need a contract of its own.
+- **Lexer and parser in one contract:** fits, and saves one boundary, but leaves the Parser
+  little room to grow.
 
 ## Consequences
 - The Parser contract takes the lexer's tokens (`parse_lexed`), not the source.
@@ -36,3 +29,8 @@ Each phase is its own contract, and a `Compiler` contract calls them in turn
 - Keyword matching uses tables, to keep the Lexer small. The lexer looks up one packed word per
   identifier in a table (DESIGN.md §2), and one-byte punctuation in a byte table. Matching with
   `word<N>` is larger, because Fe instantiates it once per keyword length.
+- A token kind is a `Tok` struct around a `u8`, not an `enum`. An `enum` crosses a contract
+  boundary only through a `match` per variant, and that made each phase contract 1.8 to 2.5 KB
+  larger (Fe 26.6.0, `-O s`). [WORKAROUNDS.md](../WORKAROUNDS.md) says when this can change.
+- The Parser maps tokens to binding powers and token sets with code, not tables. Tables saved
+  311 bytes, but made the code harder to read (Fe 26.6.0, `-O s`).

@@ -292,7 +292,7 @@ impl Printer {
             self.opt(n.body())
             self.put(")")
         } else if k == NODE_PARAM {
-            if n.is_positional() {
+            if n.as_param().is_positional() {
                 self.put("_")
             }
             self.typed(n.name(), n.ty())
@@ -312,7 +312,7 @@ impl Printer {
             self.ty(n.ty())
             self.put(")")
         } else if k == NODE_FIELD {
-            if n.is_indexed() {
+            if n.as_field().is_indexed() {
                 self.put("#")
             }
             self.typed(n.name(), n.ty())
@@ -325,8 +325,8 @@ impl Printer {
             self.put("(contract ")
             self.sym(n.name())
             self.list(n.list())
-            self.opt(n.init())
-            self.list(n.recvs())
+            self.opt(n.as_contract().init())
+            self.list(n.as_contract().recvs())
             self.put(")")
         } else if k == NODE_INIT {
             self.put("(init")
@@ -355,7 +355,7 @@ impl Printer {
                 self.sym(n.local())
             }
         } else if k == NODE_USE {
-            if n.is_mut() {
+            if n.as_use().is_mut() {
                 self.put("mut ")
             }
             self.sym(n.name())
@@ -393,7 +393,7 @@ impl Printer {
             let v = self.ast.word(n.word())
             self.uint(v)
         } else if k == NODE_BOOL {
-            if n.is_true() {
+            if n.as_bool().is_true() {
                 self.put("true")
             } else {
                 self.put("false")
@@ -465,9 +465,9 @@ impl Printer {
             self.put("(msg-call ")
             self.node(n.target())
             self.put(" ")
-            self.sym(n.msg_name())
+            self.sym(n.as_msg_call().msg_name())
             self.put("::")
-            self.sym(n.variant())
+            self.sym(n.as_msg_call().variant())
             self.list(n.list())
             self.put(")")
         } else if k == NODE_ZERO_ADDRESS {
@@ -475,11 +475,11 @@ impl Printer {
         } else if k == NODE_INDEX {
             self.sym(n.name())
             self.put("[")
-            self.node(n.key())
+            self.node(n.as_index().key())
             self.put("]")
         } else if k == NODE_STR {
             self.put("\"")
-            let v = StrValue { word: self.ast.word(n.word()), len: n.str_len() }
+            let v = StrValue { word: self.ast.word(n.word()), len: n.as_str().len() }
             var i: usize = 0
             while i < v.len {
                 self.escaped(v.byte(i))

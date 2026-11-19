@@ -17,9 +17,22 @@ by node, and the AST is never mutated after parsing. `fe0/src/ast.fe` declares t
 ## Alternatives
 - **`unsafe` pointers:** possible, but unsafe code in a compiler meant to be formalized is the
   wrong signal, and it buys nothing for programs of a few KB.
+- **An `enum Node` with a payload per variant:** it breaks the word layout of the arrays, and
+  an enum that crosses a contract boundary costs bytecode in every phase contract
+  ([0014](0014-contract-per-phase.md)).
+- **One type and one array per kind:** a node id would have to carry its kind, and child lists
+  mix kinds. It amounts to rewriting the parser, the checker and code generation.
 
 ## Consequences
 - The arrays serialize trivially as words, which the on-chain split needs
   ([0014](0014-contract-per-phase.md)).
 - What each slot of a node holds is a convention, not a type. Named constructors and
-  accessors (T0016) keep the readers honest.
+  accessors keep the readers honest. An accessor on `Node` means the same for every kind that
+  has it. A kind whose slot `d` holds something other than a body (a flag, an init, a key, a
+  variant or a length) is read through its view, such as `as_let()`. A view may also offer
+  other accessors of its kind, such as `recvs()` and `msg_name()`. A view wraps the node and
+  offers only that kind's accessors.
+- A view does not check the node's kind, because a check would cost bytes in every phase
+  contract. The views cost no bytecode (Fe 26.7.0, `-O s`).
+- The side tables of `Checked` hold node ids, and their readers return typed ids such as
+  `Id<Field>` or `Id<Event>`. So code generation cannot read a field as an event.

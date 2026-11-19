@@ -474,9 +474,6 @@ impl Parser {
 
     // Parses rule `field` (SPEC.md §3.1). When `maps` is true, the type may also be a map, as
     // rule `cfield` allows. `indexed` marks the field of an event that `#[indexed]` precedes.
-    // smell: only an event's field uses `indexed`. Kept: an Ast setter instead made the Parser
-    // 259 bytes larger (Fe 26.7.0, -O s, Nov 19). Fix when a setter costs no more than the
-    // argument.
     fn field(mut self, maps: bool, indexed: bool) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let name = self.ident()?
@@ -486,6 +483,9 @@ impl Parser {
         } else {
             self.ty()?
         }
+        // smell: only an event's field uses `indexed`. Kept, because an Ast setter instead made the
+        // Parser 259 bytes larger (Fe 26.7.0, -O s). Fix when a setter costs no more than the
+        // argument.
         Result::Ok(self.ast.add_node(Node::new_field(pos, name, ty, indexed)))
     }
 

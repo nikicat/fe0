@@ -297,8 +297,9 @@ There is a single pass with no relaxation, because the 2-byte targets keep offse
 
 ## 8. On-chain split (24 KB limit)
 
-Each phase is its own contract, because lexer and parser together already exceed 24,576 bytes
-([ADR 0014](adr/0014-contract-per-phase.md), with the measurements). Builds use `-O s`.
+The compiler does not fit the 24,576-byte limit, so each phase is its own contract
+([ADR 0014](adr/0014-contract-per-phase.md) says why lexer and parser stay apart). Builds use
+`-O s`.
 
 | Contract | Message | Does |
 |---|---|---|
@@ -318,20 +319,19 @@ differs from the ABI that `fe build` writes.
 - **Trust:** a phase contract trusts its input and decodes it without checks. Compiler, its
   intended caller, gives each phase the previous phase's output. A direct caller that sends
   malformed words gets a revert or a wrong result, and only for itself: the phases keep no
-  state, so the call changes nothing on chain. Checks would cost bytes in Parser and Checker,
-  and the Checker sits near the limit.
+  state, so the call changes nothing on chain. Checks would cost bytes in every phase contract.
 - **Measured on Fe 26.7.0 at `-O s`:**
 
   | Contract | Runtime bytes | Deploy gas |
   |---|---|---|
   | Lexer | 5,785 | 1.29M |
   | Parser | 17,014 | 3.73M |
-  | Checker | 21,370 | 4.67M |
-  | Back | 17,231 | 3.78M |
+  | Checker | 19,879 | 4.35M |
+  | Back | 17,202 | 3.77M |
   | Compiler | 1,653 | 0.44M |
 
-  - **Deploying all five costs 13.9M gas.**
-  - **Compiling costs up to 29.2M gas, for `corpus/amm.fe`.**
+  - **Deploying all five costs 13.6M gas.**
+  - **Compiling costs up to 29.3M gas, for `corpus/amm.fe`.**
     - That program is 8,141 bytes of source.
     - Lexing takes about 1,280 gas per byte of source.
       This figure was measured by hand, on Fe 26.6.0.

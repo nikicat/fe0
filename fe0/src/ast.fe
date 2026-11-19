@@ -1,11 +1,10 @@
 // The AST: an arena of nodes that refer to each other by index. ADR 0005 says why.
 //
-// A node is built by its kind's `Node::new_` constructor, which kinds with the same slots share,
-// and read through the accessors after `impl Node`. The comment on each kind below names the
-// accessors that apply to it. A list is read with `Ast.list_len` and `Ast.list_at`.
+// A node is built by its kind's `Node::new_` constructor, or by `Node::leaf` for a kind with no
+// slots. It is read through the accessors after `impl Node`. The comment on each kind below names
+// the accessors that apply to it. A list is read with `Ast.list_len` and `Ast.list_at`.
 //
-// A kind with a typed view, such as LET, is read only through it. The view keeps the flat node
-// storage of ADR 0005 and offers only that kind's accessors (task T4qdcy).
+// Some kinds are read through a typed view, such as `as_let()`. ADR 0005 says which.
 
 use ingot::diag::Diag
 use ingot::lexer::{
@@ -64,18 +63,18 @@ pub const NODE_NONE: Kind = Kind { code: 0 }
 pub const NODE_CONST: Kind = Kind { code: 1 }
 // fn: name, ty (the return type), list of PARAMs, body BLOCK.
 pub const NODE_FN: Kind = Kind { code: 2 }
-// param: name, ty, is_positional (written `_ name`).
+// param: name, ty, and `as_param()` for is_positional.
 pub const NODE_PARAM: Kind = Kind { code: 3 }
 // msg: name, list of VARIANTs.
 pub const NODE_MSG: Kind = Kind { code: 4 }
 // variant: name, ty (the return type), word (the selector), list of FIELDs.
 pub const NODE_VARIANT: Kind = Kind { code: 5 }
-// field of a variant, a contract or an event: name, ty, is_indexed (only an event's field may
-// be indexed). An effect of a contract, such as `ctx: Ctx`, is a contract field of an effect
-// type (Ty.is_effect), so that `uses` grants it as it grants a storage field.
+// field of a variant, a contract or an event: name, ty, and `as_field()` for is_indexed. An
+// effect of a contract, such as `ctx: Ctx`, is a contract field of an effect type (Ty.is_effect),
+// so that `uses` grants it as it grants a storage field.
 pub const NODE_FIELD: Kind = Kind { code: 6 }
-// contract: name, list of FIELDs (its effects first), init (INIT or NO_NODE), recvs (a list
-// of RECVs).
+// contract: name, list of FIELDs (its effects first), and `as_contract()` for init and recvs
+// (a list of RECVs).
 pub const NODE_CONTRACT: Kind = Kind { code: 7 }
 // init: list of PARAMs, use_list (a list of USEs), body BLOCK.
 pub const NODE_INIT: Kind = Kind { code: 8 }
@@ -85,9 +84,9 @@ pub const NODE_RECV: Kind = Kind { code: 9 }
 pub const NODE_ARM: Kind = Kind { code: 10 }
 // bind: name (of the field), local (the same sym as name when written `{ x }`).
 pub const NODE_BIND: Kind = Kind { code: 11 }
-// one entry of `uses (...)`: name (of the field), is_mut.
+// one entry of `uses (...)`: name (of the field), and `as_use()` for is_mut.
 pub const NODE_USE: Kind = Kind { code: 12 }
-// string literal: word (its bytes as a `StrValue.word`), str_len.
+// string literal: word (its bytes as a `StrValue.word`), and `as_str()` for its len.
 pub const NODE_STR: Kind = Kind { code: 13 }
 // `#[event] struct`: name, list of FIELDs.
 pub const NODE_EVENT: Kind = Kind { code: 14 }
@@ -110,7 +109,7 @@ pub const NODE_ASSIGN: Kind = Kind { code: 25 }
 // Give a new kind of any other group a code below NODE_INT.
 // integer literal: word.
 pub const NODE_INT: Kind = Kind { code: 40 }
-// `true` or `false`: is_true.
+// `true` or `false`: `as_bool()` for is_true.
 pub const NODE_BOOL: Kind = Kind { code: 41 }
 // a name of a local, parameter, constant or field: name.
 pub const NODE_NAME: Kind = Kind { code: 42 }
@@ -132,13 +131,13 @@ pub const NODE_ASSERT: Kind = Kind { code: 49 }
 pub const NODE_CTX_READ: Kind = Kind { code: 50 }
 // `Address::zero()`, with no slots.
 pub const NODE_ZERO_ADDRESS: Kind = Kind { code: 51 }
-// an entry of a map, `m[k]`: name (the map), key.
+// an entry of a map, `m[k]`: name (the map), and `as_index()` for key.
 pub const NODE_INDEX: Kind = Kind { code: 52 }
 // `log.emit(E { f: e, … })`: name (the effect), event (the event's name), list of ARGs, each
 // labelled with a field of the event.
 pub const NODE_EMIT: Kind = Kind { code: 53 }
-// `a.call(M::V { f: e, … })`: target (the NAME of the address), msg_name (M), variant (V), list
-// of ARGs, each labelled with a field of the variant.
+// `a.call(M::V { f: e, … })`: target (the NAME of the address), list of ARGs, each labelled with
+// a field of the variant, and `as_msg_call()` for msg_name (M) and variant (V).
 pub const NODE_MSG_CALL: Kind = Kind { code: 54 }
 // A type. A node's ty() holds one written in the source, or TY_NONE when none is written.
 // The checker also uses TY_UNIT, TY_NEVER and TY_INT.
@@ -275,7 +274,7 @@ impl Ty {
 }
 
 // Each accessor reads one fixed slot, and no kind uses two accessors of the same slot. The
-// slots stay private to this file, so only the constructors write them.
+// slots stay private to this file. Only the constructors and `Ast.set_else` write them.
 pub struct Node {
     pub kind: Kind,
     // A plain offset, not a Pos, because a nested struct field costs bytecode (argotorg/fe#1964,
@@ -347,6 +346,12 @@ pub fn is_flag(_ v: usize) -> bool {
 }
 
 impl Node {
+    // smell: repeats the rule of `is_flag`. Kept, because calling it made the Checker 65 bytes
+    // larger (Fe 26.7.0, -O s). Fix when a release inlines it.
+    fn flag_set(self) -> bool {
+        self.d == 1
+    }
+
     // Returns a node of `kind` at `pos` with every other field empty: the sentinel, `break` and
     // `continue`.
     pub fn leaf(_ kind: Kind, _ pos: Pos) -> Node {
@@ -676,16 +681,10 @@ impl Node {
     pub fn event(self) -> Sym {
         Sym { id: self.b }
     }
-    pub fn msg_name(self) -> Sym {
-        Sym { id: self.b }
-    }
     pub fn method(self) -> Sym {
         Sym { id: self.b }
     }
     pub fn use_list(self) -> ListId {
-        ListId { id: self.b }
-    }
-    pub fn recvs(self) -> ListId {
         ListId { id: self.b }
     }
     pub fn otherwise(self) -> NodeId {
@@ -702,44 +701,37 @@ impl Node {
     pub fn body(self) -> NodeId {
         NodeId { id: self.d }
     }
-    pub fn init(self) -> NodeId {
-        NodeId { id: self.d }
-    }
-    pub fn key(self) -> NodeId {
-        NodeId { id: self.d }
-    }
-    pub fn variant(self) -> Sym {
-        Sym { id: self.d }
-    }
-    pub fn str_len(self) -> usize {
-        self.d
-    }
-    // Reads back a flag that `flag` wrote into slot `d`.
-    fn flag_set(self) -> bool {
-        is_flag(self.d)
-    }
-    pub fn is_positional(self) -> bool {
-        self.flag_set()
-    }
-    pub fn is_mut(self) -> bool {
-        self.flag_set()
-    }
-    pub fn is_true(self) -> bool {
-        self.flag_set()
-    }
-    pub fn is_indexed(self) -> bool {
-        self.flag_set()
-    }
-
-    // The caller must know that the node is a LET. A kind check would cost bytes in every phase
-    // contract (task T4qdcy).
+    // An `as_` view does not check the node's kind (ADR 0005). On a node of another kind, its
+    // accessors return that kind's slot values.
     pub fn as_let(self) -> LetNode {
         LetNode { n: self }
     }
+    pub fn as_param(self) -> ParamNode {
+        ParamNode { n: self }
+    }
+    pub fn as_field(self) -> FieldNode {
+        FieldNode { n: self }
+    }
+    pub fn as_use(self) -> UseNode {
+        UseNode { n: self }
+    }
+    pub fn as_bool(self) -> BoolNode {
+        BoolNode { n: self }
+    }
+    pub fn as_str(self) -> StrNode {
+        StrNode { n: self }
+    }
+    pub fn as_contract(self) -> ContractNode {
+        ContractNode { n: self }
+    }
+    pub fn as_index(self) -> IndexNode {
+        IndexNode { n: self }
+    }
+    pub fn as_msg_call(self) -> MsgCallNode {
+        MsgCallNode { n: self }
+    }
 }
 
-// The typed view of a LET node. It changes neither the node storage nor the wire format, and it
-// cost 0 bytes in Parser, Checker and Back (task T4qdcy).
 pub struct LetNode { n: Node }
 
 impl Copy for LetNode {}
@@ -755,7 +747,109 @@ impl LetNode {
         self.n.value()
     }
     pub fn is_var(self) -> bool {
-        is_flag(self.n.d)
+        self.n.flag_set()
+    }
+}
+
+pub struct ParamNode { n: Node }
+
+impl Copy for ParamNode {}
+
+impl ParamNode {
+    pub fn name(self) -> Sym {
+        self.n.name()
+    }
+    pub fn ty(self) -> Ty {
+        self.n.ty()
+    }
+    // Checks whether the parameter is written `_ name`, so that its argument takes no label
+    // (SPEC §5.4).
+    pub fn is_positional(self) -> bool {
+        self.n.flag_set()
+    }
+}
+
+pub struct FieldNode { n: Node }
+
+impl Copy for FieldNode {}
+
+impl FieldNode {
+    // Checks whether the field is marked `#[indexed]`. Only an event's field can be (SPEC §3.1,
+    // rule `efield`).
+    pub fn is_indexed(self) -> bool {
+        self.n.flag_set()
+    }
+}
+
+pub struct UseNode { n: Node }
+
+impl Copy for UseNode {}
+
+impl UseNode {
+    pub fn is_mut(self) -> bool {
+        self.n.flag_set()
+    }
+}
+
+pub struct BoolNode { n: Node }
+
+impl Copy for BoolNode {}
+
+impl BoolNode {
+    pub fn is_true(self) -> bool {
+        self.n.flag_set()
+    }
+    // Returns the literal as a word, 1 for `true` and 0 for `false` (SPEC §6).
+    pub fn word(self) -> u256 {
+        self.n.d as u256
+    }
+}
+
+pub struct StrNode { n: Node }
+
+impl Copy for StrNode {}
+
+impl StrNode {
+    // Returns the length of the string in bytes, after its escapes are decoded.
+    pub fn len(self) -> usize {
+        self.n.d
+    }
+}
+
+pub struct ContractNode { n: Node }
+
+impl Copy for ContractNode {}
+
+impl ContractNode {
+    // Returns the INIT node, or NO_NODE when the contract has none.
+    pub fn init(self) -> NodeId {
+        NodeId { id: self.n.d }
+    }
+    pub fn recvs(self) -> ListId {
+        ListId { id: self.n.b }
+    }
+}
+
+pub struct IndexNode { n: Node }
+
+impl Copy for IndexNode {}
+
+impl IndexNode {
+    pub fn key(self) -> NodeId {
+        NodeId { id: self.n.d }
+    }
+}
+
+pub struct MsgCallNode { n: Node }
+
+impl Copy for MsgCallNode {}
+
+impl MsgCallNode {
+    pub fn msg_name(self) -> Sym {
+        Sym { id: self.n.b }
+    }
+    pub fn variant(self) -> Sym {
+        Sym { id: self.n.d }
     }
 }
 
@@ -780,7 +874,7 @@ impl ArgNode {
     }
 
     // Checks whether the argument has the label that parameter `param` asks for.
-    pub fn fits(self, _ param: Node) -> bool {
+    pub fn fits(self, _ param: ParamNode) -> bool {
         if param.is_positional() {
             return self.n.name() == NO_SYM
         }
@@ -937,7 +1031,7 @@ impl Ast {
         NodeId { id: self.lists[l.id + 1 + i] }
     }
 
-    // Returns the word that node `i` refers to: an integer literal's value or a variant's selector.
+    // Returns the word of INT, VARIANT or STR node `i`.
     pub fn word_value(self, _ i: NodeId) -> u256 {
         self.word(self.node(i).word())
     }
