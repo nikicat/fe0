@@ -58,13 +58,19 @@ they cost too much bytecode, and the reason is written into ADR 0005.
   after it checks the kind. `map_field` is gone: `read` stores an `Id<Decl>` for an INDEX, and
   codegen reads it with `declaration`. Checker 10 bytes larger, Back 14 bytes smaller
   (Fe 26.6.0, -O s, Nov 19).
+- The readers take typed ids: `log_word`, `field_index`, `storage_place`, `access` and
+  codegen's `index_of` an `Id<Field>`; `topic0`, `data_words` and `event_fields` an
+  `Id<Event>`; `selector` and `variant_fields` an `Id<Variant>`; `fn_label` an `Id<Callee>`.
+  `Checked.narrow<K>` turns a `NodeId` into an `Id<K>` after it checks the kind, through the
+  trait `NodeKind`. Codegen's `store` and `load` narrow a declaration to a field with it.
+  Checker 19 bytes smaller, Back 47 bytes larger; a `map_place` reader and a kind check plus
+  `unwrap` each measured larger still (Fe 26.6.0, -O s, Nov 19).
 
 ## Next
-0. Make the readers of a typed id take it, so that callers stop unwrapping: `log_word`,
-   `field_index` and `index_of` an `Id<Field>`, `data_words` and `topic0` an `Id<Event>`,
-   `fn_label` an `Id<Callee>`, and an `Id<Variant>`'s selector and fields. `storage_place`
-   also gets an `Id<Decl>` from `load` and `store`, so it waits for a view that turns a
-   FIELD declaration into an `Id<Field>`. Measure each.
+0. Seven `.node_id()` calls are left in fe0/src/codegen.fe. Each is where a typed id meets
+   code that reads the `Node` record (`node(f)`), walks a raw list (`index_of`), or serves
+   locals too (`load` and `store` take a LET or BIND that codegen reaches without an id).
+   They go as steps 1 and 2 give those kinds views.
 1. A view for each kind whose slot `d` means a flag: USE (`is_mut`), the positional bind
    (`is_positional`), BOOL (`is_true`) and an event's FIELD (`is_indexed`). Then drop
    `Node.flag_set`.

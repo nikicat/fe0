@@ -4,7 +4,17 @@
 
 use ingot::asm::*
 use ingot::ast::*
-use ingot::check::{Checked, FIRST_LOG_WORD, FrameSlot, LogWord, StoragePlace, check}
+use ingot::check::{
+    Callee,
+    Checked,
+    Field,
+    FIRST_LOG_WORD,
+    FrameSlot,
+    Id,
+    LogWord,
+    StoragePlace,
+    check,
+}
 use ingot::diag::*
 use ingot::io::Source
 use ingot::lexer::*
@@ -223,7 +233,7 @@ struct Refs {
     // The label of each FN that the code calls, by node. Every other node's slot is empty.
     fn_labels: MemVec<LabelSlot>,
     // The FNs that the code calls and does not hold yet.
-    todo: MemVec<NodeId>,
+    todo: MemVec<Id<Callee>>,
     // The label of each Stub that the code uses, by index. The others' slots are empty.
     stubs: MemVec<LabelSlot>,
 }
@@ -413,18 +423,19 @@ impl Gen {
     }
 
     // The label of FN `f` in the current piece of code. `functions` emits the FN.
-    fn fn_label(mut self, _ f: NodeId) -> Label {
-        if self.refs.fn_labels[f.index()].is_empty() {
-            self.refs.fn_labels.set(f.index(), self.asm.label().slot())
+    fn fn_label(mut self, _ f: Id<Callee>) -> Label {
+        let k = f.node_id().index()
+        if self.refs.fn_labels[k].is_empty() {
+            self.refs.fn_labels.set(k, self.asm.label().slot())
             self.refs.todo.push(f)
         }
-        self.refs.fn_labels[f.index()].label()
+        self.refs.fn_labels[k].label()
     }
 
     // Emits each FN that the code calls, and each FN that those call.
     fn functions(mut self) {
         while self.refs.todo.len() > 0 {
-            let f = self.refs.todo.pop().unwrap()
+            let f = self.refs.todo.pop().unwrap().node_id()
             let n = self.node(f)
             self.asm.bind(self.refs.fn_labels[f.index()].label())
             self.begin(f, BodyKind::Fn)
@@ -516,11 +527,12 @@ impl Gen {
 
     // Pops the top word into the variable that node `d` declares: a local or a contract field.
     fn store(mut self, _ d: NodeId) {
-        if self.node(d).kind == NODE_FIELD {
-            self.store_field(self.c.storage_place(d))
-        } else {
-            self.fp_plus(self.local_offset(d))
-            self.op(OP_MSTORE)
+        match self.c.narrow<Field>(d) {
+            Option::Some(f) => self.store_field(self.c.storage_place(f)),
+            Option::None => {
+                self.fp_plus(self.local_offset(d))
+                self.op(OP_MSTORE)
+            },
         }
         self.body.depth -= 1
     }
@@ -560,14 +572,16 @@ impl Gen {
 
     // Pushes the value of the name that node `d` declares: a constant, a field or a local.
     fn load(mut self, _ d: NodeId) {
-        let k = self.node(d).kind
-        if k == NODE_CONST {
+        if self.node(d).kind == NODE_CONST {
             self.push(self.c.word_of(d))
-        } else if k == NODE_FIELD {
-            self.load_field(self.c.storage_place(d))
         } else {
-            self.fp_plus(self.local_offset(d))
-            self.op(OP_MLOAD)
+            match self.c.narrow<Field>(d) {
+                Option::Some(f) => self.load_field(self.c.storage_place(f)),
+                Option::None => {
+                    self.fp_plus(self.local_offset(d))
+                    self.op(OP_MLOAD)
+                },
+            }
         }
         self.body.depth += 1
     }
@@ -640,7 +654,7 @@ impl Gen {
 
     // Returns the selector of the msg variant that ARM `arm` handles.
     fn selector_of(self, _ arm: NodeId) -> Selector {
-        Selector { v: self.c.ast.word_value(self.c.variant_of(arm).node_id()) }
+        Selector { v: self.c.selector(self.c.variant_of(arm)) }
     }
 
     // The ARMs of every RECV of contract `c`, in order, each with a new label.
@@ -663,14 +677,14 @@ impl Gen {
     // Emits ARM `a`, which decodes its arguments into its frame and runs its body.
     fn arm(mut self, _ a: NodeId) {
         let n = self.node(a)
-        let fields = self.node(self.c.variant_of(a).node_id()).list()
+        let fields = self.c.variant_fields(self.c.variant_of(a))
         self.begin(a, BodyKind::Arm)
         self.require_calldata(selector_and_words(self.len(fields)))
         var k: usize = 0
         while k < self.len(n.list()) {
             let b = self.elem(n.list(), k)
             self.push(
-                arg_offset(self.index_of(fields, self.c.field_of(b).node_id())).word(),
+                arg_offset(self.index_of(fields, self.c.field_of(b))).word(),
             )
             self.op(OP_CALLDATALOAD)
             self.body.depth += 1
@@ -683,9 +697,9 @@ impl Gen {
     }
 
     // The position of node `i` in list `l`, which holds it.
-    fn index_of(self, _ l: ListId, _ i: NodeId) -> usize {
+    fn index_of(self, _ l: ListId, _ f: Id<Field>) -> usize {
         var k: usize = 0
-        while self.elem(l, k) != i {
+        while self.elem(l, k) != f.node_id() {
             k += 1
         }
         k
@@ -932,18 +946,19 @@ impl Gen {
     fn dest_offset(self, _ dest: ArgDest, _ a: NodeId, _ k: usize) -> FrameOff {
         match dest {
             ArgDest::Params(params, next) => self.local_offset(self.elem(params, k)).past(next),
-            ArgDest::LogWords => self.log_offset(self.c.log_word(self.c.field_of(a).node_id())),
+            ArgDest::LogWords => self.log_offset(self.c.log_word(self.c.field_of(a))),
             ArgDest::CallArgs(fields) => self.call_arg_offset(
-                self.index_of(fields, self.c.field_of(a).node_id()),
+                self.index_of(fields, self.c.field_of(a)),
             ),
         }
     }
 
     // Emits CALL `i`, by the calling convention of DESIGN.md §6.2.
     fn call(mut self, _ i: NodeId) -> Leaves {
-        let f = self.c.callee(i).node_id()
+        let f = self.c.callee(i)
+        let callee = self.node(f.node_id())
         let args = self.node(i).list()
-        let params = self.node(f).list()
+        let params = callee.list()
         // The callee's frame starts where this body's ends.
         let next = self.body.frame
         self.store_args(args, ArgDest::Params(params, next))
@@ -954,7 +969,7 @@ impl Gen {
         self.link_frame(next)
         self.asm.jump(self.fn_label(f))
         self.asm.bind(back)
-        if self.node(f).ty() == TY_NONE {
+        if callee.ty() == TY_NONE {
             return LEAVES_NOTHING
         }
         self.body.depth += 1
@@ -1136,7 +1151,11 @@ impl Gen {
         self.value(self.node(i).key())
         self.store_at(SCRATCH)
         self.push(
-            self.c.storage_place(self.c.declaration(i).node_id()).slot(),
+            self.c
+                .storage_place(
+                    self.c.narrow<Field>(self.c.declaration(i).node_id()).unwrap(),
+                )
+                .slot(),
         )
         self.store_at(SCRATCH.after(WORD))
         self.on_scratch(OP_KECCAK256, words(2))
@@ -1144,13 +1163,13 @@ impl Gen {
 
     // Emits `log.emit(E { … })` as one LOGn (SPEC §6, "Events").
     fn emit(mut self, _ i: NodeId) {
-        let e = self.c.event_of(i).node_id()
+        let e = self.c.event_of(i)
         let args = self.node(i).list()
         self.store_args(args, ArgDest::LogWords)
         // LOGn takes the offset on top, then the size, topic 0, topic 1 and the later topics.
         // So the last indexed field is pushed first.
         let data = self.c.data_words(e)
-        var w = self.len(self.node(e).list())
+        var w = self.len(self.c.event_fields(e))
         let indexed = w - data
         while w > data {
             w -= 1
@@ -1192,14 +1211,14 @@ impl Gen {
     // Nov 14).
     fn msg_call(mut self, _ i: NodeId) -> Leaves {
         let n = self.node(i)
-        let v = self.c.variant_of(i).node_id()
-        let fields = self.node(v).list()
+        let v = self.c.variant_of(i)
+        let fields = self.c.variant_fields(v)
         let args = n.list()
         // The order of evaluation is in SPEC §4.
         self.value(n.target())
         self.store_args(args, ArgDest::CallArgs(fields))
         // The selector goes in the low bytes of the word where the frame ends.
-        self.push(self.c.ast.word_value(v))
+        self.push(self.c.selector(v))
         self.fp_plus(self.past_frame(bytes(0)))
         self.op(OP_MSTORE)
         // CALL takes the gas on top, then the address, the value, the calldata's offset and size,

@@ -289,19 +289,37 @@ pub struct Msg {}
 // A FN.
 pub struct Callee {}
 
-trait Item {
+pub trait NodeKind {
     fn kind() -> Kind
 }
 
-impl Item for Event {
+impl NodeKind for Field {
+    fn kind() -> Kind {
+        NODE_FIELD
+    }
+}
+
+impl NodeKind for Variant {
+    fn kind() -> Kind {
+        NODE_VARIANT
+    }
+}
+
+impl NodeKind for Event {
     fn kind() -> Kind {
         NODE_EVENT
     }
 }
 
-impl Item for Msg {
+impl NodeKind for Msg {
     fn kind() -> Kind {
         NODE_MSG
+    }
+}
+
+impl NodeKind for Callee {
+    fn kind() -> Kind {
+        NODE_FN
     }
 }
 
@@ -392,6 +410,26 @@ impl Checked {
         Id { n: self.res[i.index()] }
     }
 
+    // Returns node `i` as an `Id<K>`, or None when `i` is of another kind.
+    pub fn narrow<K: NodeKind>(self, _ i: NodeId) -> Option<Id<K>> {
+        if self.ast.node(i).kind != K::kind() {
+            return Option::None
+        }
+        Option::Some(Id { n: i })
+    }
+
+    pub fn event_fields(self, _ e: Id<Event>) -> ListId {
+        self.ast.node(e.n).list()
+    }
+
+    pub fn selector(self, _ v: Id<Variant>) -> u256 {
+        self.ast.word_value(v.n)
+    }
+
+    pub fn variant_fields(self, _ v: Id<Variant>) -> ListId {
+        self.ast.node(v.n).list()
+    }
+
     // Returns the value of CONST node `d`.
     pub fn word_of(self, _ d: NodeId) -> u256 {
         self.ast.word(WordId::at(self.slots[d.index()]))
@@ -403,8 +441,8 @@ impl Checked {
     }
 
     // Returns the word of the log data that holds the value of an event's FIELD node `f`.
-    pub fn log_word(self, _ f: NodeId) -> LogWord {
-        LogWord { n: self.slots[f.index()] }
+    pub fn log_word(self, _ f: Id<Field>) -> LogWord {
+        LogWord { n: self.slots[f.n.index()] }
     }
 
     fn set_log_word(mut self, _ f: NodeId, _ w: LogWord) {
@@ -412,17 +450,17 @@ impl Checked {
     }
 
     // Returns topic 0 of EVENT node `e`.
-    pub fn topic0(self, _ e: NodeId) -> u256 {
+    pub fn topic0(self, _ e: Id<Event>) -> u256 {
         self.ast.word(self.event_log(e).topic0)
     }
 
     // Returns the number of words of EVENT node `e`'s log data that hold its data fields.
-    pub fn data_words(self, _ e: NodeId) -> usize {
+    pub fn data_words(self, _ e: Id<Event>) -> usize {
         self.event_log(e).data_words
     }
 
-    fn event_log(self, _ e: NodeId) -> EventLog {
-        self.events[self.slots[e.index()]]
+    fn event_log(self, _ e: Id<Event>) -> EventLog {
+        self.events[self.slots[e.n.index()]]
     }
 
     fn set_event_log(mut self, _ e: NodeId, _ log: EventLog) {
@@ -448,8 +486,8 @@ impl Checked {
         self.slots.set(owner.index(), count)
     }
 
-    fn field_index(self, _ f: NodeId) -> FieldIndex {
-        FieldIndex { n: self.slots[f.index()] }
+    fn field_index(self, _ f: Id<Field>) -> FieldIndex {
+        FieldIndex { n: self.slots[f.n.index()] }
     }
 
     fn set_field_index(mut self, _ f: NodeId, _ i: FieldIndex) {
@@ -466,8 +504,8 @@ impl Checked {
     }
 
     // Returns the storage place of contract FIELD node `f`.
-    pub fn storage_place(self, _ f: NodeId) -> StoragePlace {
-        self.places[self.slots[f.index()]]
+    pub fn storage_place(self, _ f: Id<Field>) -> StoragePlace {
+        self.places[self.slots[f.n.index()]]
     }
 }
 
@@ -494,7 +532,7 @@ struct Checker {
     warns: MemVec<Diag>,
     body: Body,
     // The contract's `Call` effect, or NO_NODE.
-    call_effect: NodeId,
+    call_effect: Id<Field>,
 }
 
 // The state of checking one FN, INIT or ARM body. `begin` replaces it for each body.
@@ -645,11 +683,11 @@ impl Checker {
     }
 
     fn variant_fields(self, _ v: Id<Variant>) -> Fields {
-        Fields { l: self.node(v.n).list() }
+        Fields { l: self.c.variant_fields(v) }
     }
 
     fn event_fields(self, _ e: Id<Event>) -> Fields {
-        Fields { l: self.node(e.n).list() }
+        Fields { l: self.c.event_fields(e) }
     }
 
     fn variants(self, _ m: Id<Msg>) -> ListId {
@@ -668,7 +706,10 @@ impl Checker {
 
     // Returns the item named `sym`, which node `i` uses as a `K`. Errors at `i` with
     // N_UNKNOWN_NAME when no item is named `sym`, and with `wrong` when it is of another kind.
-    fn item_of<K: Item>(self, _ sym: Sym, _ i: NodeId, _ wrong: DiagCode) -> Result<Diag, Id<K>> {
+    fn item_of<K: NodeKind>(self, _ sym: Sym, _ i: NodeId, _ wrong: DiagCode) -> Result<
+        Diag,
+        Id<K>,
+    > {
         let d = self.item(sym)
         if d.is_none() {
             return Result::Err(self.at(N_UNKNOWN_NAME, i))
@@ -766,7 +807,7 @@ impl Checker {
                 return Result::Err(self.at(E_UNKNOWN_FIELD, u))
             }
             self.set_res(u, f)
-            let i = self.c.field_index(f.n)
+            let i = self.c.field_index(f)
             read = read.add(i)
             write = if self.node(u).is_mut() {
                 write.add(i)
@@ -793,7 +834,7 @@ impl Checker {
         var k: usize = 0
         while k < self.len(l) {
             let u = self.elem(l, k)
-            if !self.body.grant.used.has(self.c.field_index(self.c.field_of(u).node_id())) {
+            if !self.body.grant.used.has(self.c.field_index(self.c.field_of(u))) {
                 self.warns.push(self.at(E_UNUSED_USE, u))
             }
             k += 1
@@ -801,7 +842,7 @@ impl Checker {
     }
 
     // Records that the body uses FIELD `f`. Errors with `err` when `allowed` does not hold `f`.
-    fn access(mut self, _ f: NodeId, _ allowed: FieldSet, _ err: Diag) -> Result<Diag, ()> {
+    fn access(mut self, _ f: Id<Field>, _ allowed: FieldSet, _ err: Diag) -> Result<Diag, ()> {
         let i = self.c.field_index(f)
         if !allowed.has(i) {
             return Result::Err(err)
@@ -905,7 +946,7 @@ impl Checker {
             if !self.call_effect.is_none() {
                 return Result::Err(self.at(N_DUPLICATE, f))
             }
-            self.call_effect = f
+            self.call_effect = Id { n: f }
         }
         Result::Ok(())
     }
@@ -1280,7 +1321,11 @@ impl Checker {
     fn read(mut self, _ i: NodeId) -> Result<Diag, Id<Decl>> {
         let d = self.resolve(i)?
         if self.node(d.n).kind == NODE_FIELD {
-            self.access(d.n, self.body.grant.read, self.at(E_NOT_IN_USES, i))?
+            self.access(
+                Id { n: d.n },
+                self.body.grant.read,
+                self.at(E_NOT_IN_USES, i),
+            )?
         }
         self.set_res(i, d)
         Result::Ok(d)
@@ -1311,12 +1356,13 @@ impl Checker {
 
     // Returns the declaration that the name of node `i` refers to. Errors as `read` does, and
     // with T_MISMATCH when that declaration is not an effect of type `want`.
-    fn effect(mut self, _ i: NodeId, _ want: Ty) -> Result<Diag, NodeId> {
+    fn effect(mut self, _ i: NodeId, _ want: Ty) -> Result<Diag, Id<Field>> {
         let d = self.read(i)?
         if self.c.ty(d.n) != want {
             return Result::Err(self.at(T_MISMATCH, i))
         }
-        Result::Ok(d.n)
+        // Only a contract field has an effect's type (SPEC §6, "Contracts and effects").
+        Result::Ok(Id { n: d.n })
     }
 
     // Checks the key of INDEX `i`, whose name `m` declares, and returns the type of the map's
@@ -1608,7 +1654,11 @@ impl Checker {
             self.c.ty(d.n)
         }
         if target.kind == NODE_FIELD && t.is_value() {
-            self.access(d.n, self.body.grant.write, self.at(E_NOT_MUT, i))?
+            self.access(
+                Id { n: d.n },
+                self.body.grant.write,
+                self.at(E_NOT_MUT, i),
+            )?
         } else if target.kind != NODE_LET || !target.as_let().is_var() {
             // An effect or a whole map is no more assignable than a `let`, even when `uses`
             // names it `mut`.
@@ -1649,7 +1699,7 @@ pub fn check(_ ast: own Ast) -> CheckOutput {
         },
         warns: MemVec::new(),
         body: Body { locals: MemVec::new(), frame: 0, grant: NO_GRANT, ret: TY_UNIT, loops: 0 },
-        call_effect: NO_NODE,
+        call_effect: Id { n: NO_NODE },
     }
     if err.is_none() {
         match c.program() {
