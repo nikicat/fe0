@@ -1,5 +1,5 @@
-// Assembles EVM code: opcodes, minimal pushes, and jumps to labels that may be bound later.
-// The design is in DESIGN.md §7.
+// EVM code is assembled in one pass. Every jump pushes a 2-byte target, so offsets stay stable
+// and no relaxation is needed (DESIGN.md §7).
 
 // An EVM opcode. The OP_ constants below are the ones Fe0 emits.
 pub struct Op { code: u8 }
@@ -143,10 +143,41 @@ struct Fixup { operand: CodeOffset, label: Label }
 
 impl Copy for Fixup {}
 
+// The code that creates a contract: the initcode, then the runtime code (DESIGN.md §6.5).
+pub struct DeployCode { bytes: MemVec<u8> }
+
+impl DeployCode {
+    // Takes pieces that `Asm.finish` has run on. Finishing them here instead made Back 696 bytes
+    // larger (Fe 26.6.0, -O s, Nov 19).
+    pub fn of(init: own Asm, runtime: Asm) -> DeployCode {
+        var bytes = init.code
+        bytes.extend_from_slice(runtime.code.as_slice())
+        DeployCode { bytes }
+    }
+
+    pub fn copy_of(_ bytes: MemSlice<u8>) -> DeployCode {
+        var v: MemVec<u8> = MemVec::new()
+        v.extend_from_slice(bytes)
+        DeployCode { bytes: v }
+    }
+
+    pub fn len(self) -> usize {
+        self.bytes.len()
+    }
+
+    pub fn byte(self, _ i: usize) -> u8 {
+        self.bytes[i]
+    }
+
+    pub fn as_slice(self) -> ref MemSlice<u8> {
+        self.bytes.as_slice()
+    }
+}
+
 // One piece of code, such as the initcode or the runtime code. Offsets of its labels start at
 // its first byte.
 pub struct Asm {
-    pub code: MemVec<u8>,
+    code: MemVec<u8>,
     // The offset of each label, by id. No label gets id 0, so that EMPTY_SLOT can use it.
     offsets: MemVec<CodeOffset>,
     fixups: MemVec<Fixup>,

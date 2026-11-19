@@ -3,6 +3,7 @@
 // (docs/adr/0010-source-effect.md).
 
 use core::text::hex
+use fe0::asm::DeployCode
 use fe0::codegen::{Compiled, compile}
 use fe0::diag::{Diag, DiagCode}
 use fe0::io::{Source, bytes}
@@ -55,7 +56,7 @@ impl Reporter {
         }
         match c.out {
             Result::Ok(code) => {
-                println!(DeployCode { bytes: code })
+                println!(HexCode { code })
                 COMPILED
             },
             Result::Err(d) => {
@@ -110,14 +111,14 @@ impl Display for PrintedCode {
     }
 }
 
-// The deploy code of a program. It prints as lowercase hex.
-struct DeployCode { bytes: MemVec<u8> }
+// Deploy code that prints as lowercase hex.
+struct HexCode { code: DeployCode }
 
-impl Display for DeployCode {
+impl Display for HexCode {
     fn fmt(self, _ out: mut MemBuffer) {
         var i: usize = 0
-        while i < self.bytes.len() {
-            write!(mut out, hex(self.bytes[i] as u256, 1))
+        while i < self.code.len() {
+            write!(mut out, hex(self.code.byte(i) as u256, 1))
             i += 1
         }
     }

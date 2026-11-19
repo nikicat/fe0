@@ -186,8 +186,8 @@ const ALL_STUBS: [Stub; 5] = [
     REVERT_RETURNDATA,
 ]
 
-// What `compile` returns.
-pub struct Compiled { pub out: Result<Diag, MemVec<u8>>, pub warns: MemVec<Diag> }
+// Warnings never stop the compile, so they come beside the result (DESIGN.md §9).
+pub struct Compiled { pub out: Result<Diag, DeployCode>, pub warns: MemVec<Diag> }
 
 // The kind of body being generated, which decides how it leaves.
 enum BodyKind {
@@ -1298,9 +1298,9 @@ fn bitwise(_ op: Tok) -> Op {
     } else if op == O_SHL { OP_SHL } else { OP_SHR }
 }
 
-// Returns the deploy code of `c`: the initcode, then the runtime code (DESIGN.md §6.5). Errors
-// with G_NO_CONTRACT when `c` has no contract, and with G_CODE_TOO_LARGE when the code is too big.
-pub fn generate(_ c: own Checked) -> Result<Diag, MemVec<u8>> {
+// Returns the deploy code of `c`. Errors with G_NO_CONTRACT when `c` has no contract, and with
+// G_CODE_TOO_LARGE when the code is too big.
+pub fn generate(_ c: own Checked) -> Result<Diag, DeployCode> {
     var g = Gen::new(c)
     let the_contract = g.c.the_contract
     if the_contract.is_none() {
@@ -1313,9 +1313,7 @@ pub fn generate(_ c: own Checked) -> Result<Diag, MemVec<u8>> {
     if runtime.too_large() || init.too_large() {
         return Result::Err(diag(G_CODE_TOO_LARGE, g.node(the_contract).pos()))
     }
-    var code = init.code
-    code.extend_from_slice(runtime.code.as_slice())
-    Result::Ok(code)
+    Result::Ok(DeployCode::of(init, runtime))
 }
 
 // Compiles the program that `input` holds.

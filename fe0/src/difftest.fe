@@ -1,15 +1,16 @@
 // Support for differential tests, which build one program with Fe0 and with the official
 // compiler and check that both builds behave the same. DESIGN.md §10 describes the harness.
 
+use ingot::asm::DeployCode
 use ingot::codegen::compile
 use ingot::diag::Diag
 use ingot::io::{Source, text}
-use std::abi::DynString
+use std::abi::{Bytes, DynString}
 use std::evm::{Call, CallOutcome, Create, RawOps, revert_error}
 
 // The largest runtime code that a chain accepts (EIP-170). The test EVM does not enforce it.
 const MAX_RUNTIME: u256 = 24576
-// The largest create input (`Payload.initcode`) that a chain accepts (EIP-3860). The test EVM
+// The largest create input (`CreateInput`) that a chain accepts (EIP-3860). The test EVM
 // does not enforce this limit either.
 const MAX_INITCODE: usize = 49152
 // The gas for each call. Both builds get the same, so that only their code can differ.
@@ -43,43 +44,53 @@ pub struct Accepted {}
 #[error]
 pub struct CodeDiffers { pub offset: u256 }
 
-// Checks whether a chain accepts a create input of `initcode_len` bytes, and the runtime code
-// that the create left at `runtime`.
-fn fits_chain(initcode_len: usize, runtime: Address) -> bool uses (evm: Evm) {
-    initcode_len <= MAX_INITCODE && evm.extcodesize(runtime) <= MAX_RUNTIME
+// Checks whether a chain accepts the create input `input`, and the runtime code that it left at
+// `runtime`.
+fn fits_chain(_ input: CreateInput, runtime: Address) -> bool
+uses (evm: Evm)
+{
+    input.bytes.len() <= MAX_INITCODE && evm.extcodesize(runtime) <= MAX_RUNTIME
 }
 
 // Returns Fe0's deploy code for `s`, or the first error when Fe0 rejects `s`.
-pub fn compiled(_ s: own DynString) -> Result<Diag, MemVec<u8>> {
+pub fn compiled(_ s: own DynString) -> Result<Diag, DeployCode> {
     with (Source = text(s)) {
         compile().out
     }
 }
 
 // Returns Fe0's deploy code for `s`. Errors with CompileError when Fe0 rejects `s`.
-pub fn ours(_ s: own DynString) -> MemVec<u8> {
+pub fn ours(_ s: own DynString) -> DeployCode {
     match compiled(s) {
         Result::Ok(code) => code,
         Result::Err(d) => revert_error(CompileError::of(d)),
     }
 }
 
-// Checks that Fe0's deploy code for `s` is the code that `hex` spells in lowercase hex, as the
-// native CLI prints it. Otherwise errors with CodeDiffers, or with CompileError when Fe0 rejects
-// `s`.
+// Checks that Fe0's deploy code for `s` is the code that `hex` spells. Otherwise errors with
+// CodeDiffers, or with CompileError when Fe0 rejects `s`.
 pub fn same_code(_ s: own DynString, _ hex: DynString) {
-    let code = ours(s)
     let want = core::text::decode_hex(hex).unwrap()
+    match first_difference(ours(s), want) {
+        Option::Some(i) => revert_error(CodeDiffers { offset: i as u256 }),
+        Option::None => {},
+    }
+}
+
+// Returns the first offset at which `code` and `want` differ, or None when they are equal. When
+// one is a prefix of the other, the offset is the shorter one's length.
+fn first_difference(_ code: DeployCode, _ want: Bytes) -> Option<usize> {
     var i: usize = 0
     while i < want.len() && i < code.len() {
-        if code[i] != want.byte_at(i) {
-            revert_error(CodeDiffers { offset: i as u256 })
+        if code.byte(i) != want.byte_at(i) {
+            return Option::Some(i)
         }
         i += 1
     }
     if code.len() != want.len() {
-        revert_error(CodeDiffers { offset: i as u256 })
+        return Option::Some(i)
     }
+    Option::None
 }
 
 // Checks that Fe0 rejects `s` with the error `expected`. Otherwise errors with the CompileError
@@ -96,14 +107,12 @@ pub fn rejects(_ s: own DynString, _ expected: CompileError) {
     }
 }
 
-// The official deploy code of a contract. It is the `len` bytes at `offset` in the code of the
-// running test, as `C::init_code_offset()` and `C::init_code_len()` give them.
-pub fn theirs(_ offset: u256, _ len: u256) -> MemVec<u8> uses (evm: mut Evm) {
+// Returns the official build of a program. It is the `len` bytes at `offset` in the test's own
+// code (DESIGN.md §10).
+pub fn theirs(_ offset: u256, _ len: u256) -> DeployCode uses (evm: mut Evm) {
     var buf = MemBuffer::new(len.downcast_unchecked())
     evm.codecopy(dest: mut buf, dest_offset: 0, src_offset: offset, len)
-    var v: MemVec<u8> = MemVec::new()
-    v.extend_from_slice(buf.span())
-    v
+    DeployCode::copy_of(buf.span())
 }
 
 // Bytes sent to a contract, as constructor arguments or as calldata, with a value in wei.
@@ -146,29 +155,33 @@ impl Payload {
     }
 
     // Returns the create input that deploys `code`, with these bytes as its constructor arguments.
-    pub fn initcode(self, _ code: MemVec<u8>) -> MemArray<u8> {
+    fn create_input(self, _ code: DeployCode) -> CreateInput {
         var v: MemVec<u8> = MemVec::new()
         v.extend_from_slice(code.as_slice())
         v.extend_from_slice(self.data.as_slice())
-        v.into_array()
+        CreateInput { bytes: v.into_array() }
     }
 }
 
-// The deploy codes of one program from both compilers.
-pub struct Builds { pub ours: MemVec<u8>, pub theirs: MemVec<u8> }
+// The bytes that a create runs: deploy code, then its constructor arguments.
+struct CreateInput { bytes: MemArray<u8> }
+
+// Both builds of a program deploy the same way, so that only their code can differ
+// (DESIGN.md §10).
+pub struct Builds { pub ours: DeployCode, pub theirs: DeployCode }
 
 impl Builds {
     // Deploys both builds with the constructor arguments `args`, for the case `case`. Errors with
     // CaseDiffers when only one build creates a contract, and with TooLarge when a chain would
     // not accept Fe0's build (`fits_chain`).
     pub fn deploy(self, _ args: Payload, case: u256) -> Deployed uses (evm: mut Evm) {
-        let ours = args.initcode(self.ours)
-        let theirs = args.initcode(self.theirs)
+        let ours = args.create_input(self.ours)
+        let theirs = args.create_input(self.theirs)
         let p = Deployed { ours: create(ours, args.value), theirs: create(theirs, args.value) }
-        if (p.ours.word() == 0) != (p.theirs.word() == 0) {
+        if made(p.ours) != made(p.theirs) {
             revert_error(CaseDiffers { number: case })
         }
-        if !fits_chain(initcode_len: ours.len(), runtime: p.ours) {
+        if !fits_chain(ours, runtime: p.ours) {
             revert_error(TooLarge { number: case })
         }
         p
@@ -180,18 +193,22 @@ impl Builds {
     uses (evm: mut Evm)
     {
         let p = self.deploy(args, case)
-        if p.ours.word() == 0 {
+        if !made(p.ours) {
             revert_error(CaseDiffers { number: case })
         }
         p
     }
 }
 
-// Creates a contract from the create input `initcode` and sends it `value`.
-fn create(_ initcode: MemArray<u8>, _ value: Wei) -> Address
-uses (evm: mut Evm)
-{
-    evm.create_raw(value, init_code: initcode.span())
+// Creates a contract from `input` and sends it `value`.
+fn create(_ input: CreateInput, _ value: Wei) -> Address uses (evm: mut Evm) {
+    evm.create_raw(value, init_code: input.bytes.span())
+}
+
+// Checks whether a create made a contract at `a`. A failed create gives address 0 rather than a
+// revert (DESIGN.md §10).
+fn made(_ a: Address) -> bool {
+    a.word() != 0
 }
 
 // One program deployed from both builds.
@@ -226,15 +243,5 @@ impl Deployed {
 
 // Checks whether both calls succeeded or both failed, with the same return data.
 fn same_returns(_ a: CallOutcome, _ b: CallOutcome) -> bool {
-    if a.success() != b.success() || a.returndata_len() != b.returndata_len() {
-        return false
-    }
-    var i: usize = 0
-    while i < a.returndata_len() {
-        if a.returndata().byte_at(i) != b.returndata().byte_at(i) {
-            return false
-        }
-        i += 1
-    }
-    true
+    a.success() == b.success() && a.returndata() == b.returndata()
 }
