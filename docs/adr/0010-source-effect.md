@@ -5,16 +5,17 @@
 
 ## Context
 The compiler must read source from stdin natively, from calldata on chain and from a string
-under `fe test`. The spike used `std::io::Read`, but master removes character I/O from
-`std::io` (`Read`, `read_char`, `host()`), replacing it with `Stdin` effects.
+under `fe test`. Fe's `std::io` is not stable across releases: Fe 26.5.1, 26.6.0 and 26.7.0
+each read input through a different API.
 
 ## Decision
 `fe0::io::Source` is fe0's own effect with one method, `next_byte`. The core uses only it.
-Adapters in `fe0/src/io.fe` give a `Source` over `Bytes` or a string; the native CLI will give
-one over stdin.
+Adapters in `fe0/src/io.fe` give a `Source` over `Bytes` or a string. The native CLI reads
+stdin into `Bytes` and compiles from a `Source` over them.
 
 ## Alternatives
-- **`std::io::Read`:** works on 26.5.1, but the core would need a port as soon as we left it.
+- **`std::io::Read`:** the core would need a port on each upgrade that changes it. Fe 26.6.0
+  has no `Read` at all, only `Stdin` effects.
 
 ## Consequences
-- The core passes on both 26.5.1 and master. Only the native CLI touches std I/O.
+- Only the native CLI touches std I/O, so a change to `std::io` touches only the CLI.

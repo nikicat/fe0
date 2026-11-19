@@ -104,8 +104,8 @@ pub const T_TYPE: Tok = Tok { code: 6 }
 pub const T_U256: Tok = Tok { code: 7 }
 pub const T_BOOL: Tok = Tok { code: 8 }
 pub const T_ADDRESS: Tok = Tok { code: 9 }
-// The names of the types Fe0 supports, matched as packed words like the keywords (ADR 0014,
-// update of Nov 15). Entry k spells `T_U256.after(k)`.
+// The names of the types Fe0 supports, matched as packed words like the keywords (ADR 0014).
+// Entry k spells `T_U256.after(k)`.
 const TYPE_NAMES: [Spelling; 3] = [
     // u256
     Spelling { packed: 0x75323536 },
@@ -145,8 +145,8 @@ pub const K_FALSE: Tok = Tok { code: 28 }
 pub const K_ASSERT: Tok = Tok { code: 29 }
 pub const K_STRUCT: Tok = Tok { code: 31 }
 
-// The lexer finds a keyword by one packed word per identifier in this table (ADR 0014, update
-// of Nov 15). Entry k spells `K_FN.after(k)`. Code 30 is T_DOC, so its entry is 0, which no
+// The lexer finds a keyword by one packed word per identifier in this table (ADR 0014).
+// Entry k spells `K_FN.after(k)`. Code 30 is T_DOC, so its entry is 0, which no
 // identifier packs to.
 const KEYWORDS: [Spelling; 22] = [
     // fn
@@ -261,8 +261,8 @@ pub const P_ARROW: Tok = Tok { code: 48 }
 pub const P_HASH: Tok = Tok { code: 49 }
 pub const P_DOT: Tok = Tok { code: 50 }
 
-// One-byte punctuation is found in this table, which made Lexer smaller (ADR 0014, update of
-// Nov 15). Entry k is the byte of `P_LPAREN.after(k)`.
+// One-byte punctuation is found in this table, which keeps the Lexer small (ADR 0014).
+// Entry k is the byte of `P_LPAREN.after(k)`.
 // P_ARROW is `->`, so its entry is `_`. `Lexer.token` reads `_` as an identifier before it calls
 // `punct`, and no entry is 0, so a NUL byte matches none.
 const PUNCT: [u8; 11] = [b'(', b')', b'{', b'}', b'[', b']', b':', b',', b'_', b'#', b'.']

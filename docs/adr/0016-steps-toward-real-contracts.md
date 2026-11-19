@@ -12,10 +12,10 @@ does not cover what almost every deployed contract needs:
 - events, which wallets and indexers read;
 - calls to other contracts, for routers and pools that move tokens.
 
-An ERC20 token needs the first three. A pool also needs the fourth. Measurements on Nov 12
-(`tools/gas_compare.py`, task Tsm5t2) show that Fe0's output costs about as much as Fe's for
-storage-bound contracts (1.01 for a token, 1.07 for a pool's swap). So gas does not stop Fe0
-from being used for such contracts. Only the missing features do.
+An ERC20 token needs the first three. A pool also needs the fourth. Fe0's output costs about as
+much gas as Fe's for storage-bound contracts: 1.01 times Fe's for a token and 1.07 for a pool's
+swap (`tools/gas_compare.py`, Fe 26.6.0, [0021](0021-frames-gas-and-depth.md)). So gas does not
+stop Fe0 from being used for such contracts. Only the missing features do.
 
 ## Decision
 Fe0 grows in steps. Each step is one record, one task, and a complete piece of the language: its
@@ -38,9 +38,8 @@ The steps, in order. Each one unlocks something on its own:
 
 **Step 0.** The harness of DESIGN.md §10 runs inside `fe test`. There, every call comes from
 the test contract, so a program cannot be called by two different senders, and logs are not
-visible. Steps 1, 3 and 4 need both. So step 0 extends `tools/gas_compare.py`, which already
-deploys Fe's and Fe0's builds on anvil and sends a call script, into a second differential
-harness. A call script line gains `from=N`, the sender's account index. For each call, the
+visible. Steps 1, 3 and 4 need both. So step 0 makes `tools/gas_compare.py`, which deploys
+Fe's and Fe0's builds on anvil and sends a call script, a second differential harness. A call script line gains `from=N`, the sender's account index. For each call, the
 harness compares the success flag, the return data, the logs and the storage slots the call
 wrote, between the two builds.
 
@@ -51,10 +50,9 @@ wrote, between the two builds.
   without a caller or maps. Maps without a caller give per-key storage that anyone can write.
 
 ## Consequences
-- Each step costs bytes in the parser, checker and code generation contracts. ParseProbe was
-  24,706 bytes on Nov 11 with the lexer inside. The deployed Parser takes tokens, so it has
-  more room, but a step that does not fit must first shrink something (Tbhv52 is one
-  candidate).
+- Each step costs bytes in the parser, checker and code generation contracts. A step that does
+  not fit under 24,576 bytes must first shrink something. DESIGN.md §8 gives each contract's
+  size.
 - SPEC.md §3.3, the list of what Fe0 leaves out, shrinks with each step.
 - [0002](0002-match-official-output.md) still holds: storage layout, ABI and revert data match
   Fe's exactly. For maps and events, that includes Fe's slot hashing and its log topics.

@@ -6,11 +6,10 @@
 ## Context
 The subset rule ([0001](0001-strict-subset.md)) says Fe0's output behaves the same as the
 official compiler's. The differential harness can only check that if "the same" means identical
-bytes. Probing the official compiler (`spike-layout/`, master `d217a51bf`, from `fe test
---trace-evm` and revert payloads) gave:
-- **Storage:** one 32-byte slot per plain field, in declaration order from 0, with no packing.
-  `true` is stored as 1. Fe 26.6.0 packs narrow fields into shared slots (#1826), and Fe0
-  follows it. SPEC §6 has the current rule.
+bytes. Probes of the official compiler (`spike-layout/`, from `fe test --trace-evm` and revert
+payloads) give:
+- **Storage:** fields take slots in declaration order from 0, and narrow fields share a slot
+  (#1826). `true` is stored as 1. SPEC §6 has the rule.
 - **Return data:** standard ABI, one 32-byte word per value.
 - **Panics:** `Panic(0x11)` for overflow and underflow, `Panic(0x12)` for division by zero,
   `Panic(0x01)` for `assert!(false)`, each `0x4e487b71` followed by the code word.

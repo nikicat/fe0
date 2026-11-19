@@ -9,7 +9,7 @@ The unsmell run of Nov 11 on the AArch64 PR branch (`/workspaces/fe-master`,
 branch `native-aarch64-linux`) found smells that the PR does not fix. Each one
 below says where it is, what is wrong and a fix. Each would be its own upstream
 PR. The AArch64 PR, argotorg/fe#1989, was merged on Nov 12. Done means each is
-sent upstream or dropped with a reason, and the fork is dropped (below). Findings and patches: `.git/unsmell/20261111-224656/` in fe-master.
+sent upstream or dropped with a reason. Findings and patches: `.git/unsmell/20261111-224656/` in fe-master.
 
 ## The platform (from code the PR changed)
 - **p1. `Option<Platform>` means two things** (findings x-2, b1-3, b2-3, b3-4).
@@ -52,7 +52,3 @@ sent upstream or dropped with a reason, and the fork is dropped (below). Finding
 - **p9.** `prepare_tests` (crates/fe/src/test/native.rs) builds the C launcher
   source inline between its named steps, and takes 10 parameters. Fix: extract
   `launcher_source(tests)`, and pass the suite settings as one value.
-
-## Drop the fork
-- Fe 26.7.0 (Nov 18) includes #1989, and we build with it (ADR 0022). Delete our fork's branch
-  `native-aarch64-linux-v26.6.0`.

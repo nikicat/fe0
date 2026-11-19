@@ -213,8 +213,8 @@ struct CtxMethod { op: Op, ty: Ty }
 impl Copy for CtxMethod {}
 
 // Returns the method of `Ctx` spelled `name`, or None when Fe0 has no such method (SPEC.md §6,
-// "The caller"). The methods are a chain of tests, not a table, because a table made the Checker
-// larger (docs/adr/0017-caller.md, update of Nov 19).
+// "The caller"). The methods are a chain of tests, not a table, because a table makes the Checker
+// larger (ADR 0017).
 fn ctx_method(_ name: Spelling) -> Option<CtxMethod> {
     if name == W_CALLER {
         return Option::Some(CtxMethod { op: OP_CALLER, ty: TY_ADDRESS })

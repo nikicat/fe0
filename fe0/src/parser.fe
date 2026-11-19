@@ -910,7 +910,7 @@ impl Parser {
 
     // Reads a method call on a name, which is an effect or an address (SPEC.md §3.1, rules
     // `ctx_read`, `emit` and `msg_call`). The parser takes any method name of a `ctx_read`, and
-    // the checker resolves it (ADR 0017, update Nov 17).
+    // the checker resolves it (ADR 0017).
     fn method_form(mut self) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         let receiver = self.ident()?

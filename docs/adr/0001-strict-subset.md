@@ -6,51 +6,45 @@
 ## Context
 The Fe team wants a Fe subset small enough to formalize in Lean, and two judges are Fe core
 developers. A subset that drifts from Fe, or has corners its spec doesn't pin down, would not
-survive their review. Checking SPEC.md draft 0 against the official compiler (`spike-conform/`:
-23 compile-time and 15 run-time probes) found places where Fe is more permissive than the
-draft: forward references between constants, `{` on the next line, locals that shadow fields,
-duplicate `uses` entries, and `init`/`recv` used as names.
+survive their review. Probes against the official compiler (`spike-conform/`) show places
+where Fe is more permissive than a small spec needs to be: forward references between
+constants, locals that shadow fields, and `init`/`recv` used as names. Following Fe in such a
+place means more spec, more tests and, since Fe0 runs on chain, more bytes in the phase
+contracts ([0014](0014-contract-per-phase.md)). Not following it means a Fe program that Fe0
+rejects.
 
 ## Decision
 Every program Fe0 accepts must also be accepted by the official compiler and behave the same.
-Where Fe is more permissive, Fe0 keeps the stricter rule, which the subset rule allows: it
-leaves fewer cases to specify. Where SPEC.md and the compiler disagree, the compiler wins and
-the spec is fixed. Rules not yet confirmed by a probe are marked [V] in SPEC.md.
+Fe0 accepts every program Fe accepts, within the subset, where following Fe costs no bytes in
+the phase contracts. Where it would cost bytes, Fe0 keeps a stricter rule, which the subset
+rule allows. Where SPEC.md and the compiler disagree, the compiler wins and the spec is fixed.
+Rules not yet confirmed by a probe are marked [V] in SPEC.md.
+
+SPEC.md §10 lists every stricter rule. Among them:
+- **Uppercase locals are rejected (`N017`).** Fe rejects a local only when it names a struct,
+  an enum or a variant of Fe's prelude. Matching that rule needs a table of those names in the
+  Checker, and the table made the Checker contract 891 bytes larger (Fe 26.6.0, `-O s`).
+  Uppercase parameters are accepted, as in Fe.
+- **A local or a parameter may not take the name of a field or an item (`N005`, `N018`).** So
+  a name in a body always means one declaration.
+- **A constant may refer only to earlier constants.**
+
+Where Fe is just as strict, so is Fe0. A field listed twice in a `uses` clause and an effect
+name declared twice are both rejected (`N001`), as Fe 26.7.0 rejects them (`3-0093`,
+argotorg/fe#1987). A `Ctx` effect may be written `mut Ctx`, as in Fe.
 
 ## Alternatives
-- **Follow Fe in every permissive case:** more of the spec to write and to test, for programs
-  nobody needs to write.
+- **Follow Fe in every permissive case:** more of the spec to write and to test, and more
+  bytes on chain, for programs nobody needs to write.
+- **Keep a stricter rule even where following Fe is free:** each such rule is a Fe program
+  that Fe0 rejects for no gain.
 - **A Fe-like language with its own rules:** loses the differential oracle
   ([0002](0002-match-official-output.md), [0003](0003-own-corpus-and-generator.md)), and with it
   the main evidence that the compiler is right.
 
 ## Consequences
 - Each reject test also runs `fe check`, which must reject the file too (DESIGN.md §10).
-- Non-`mut` contract fields turned out to be code-backed immutables, not storage, so Fe0 v1
+- In Fe a contract field without `mut` is a code-backed immutable, not storage, so Fe0 v1
   requires `mut` on every field.
-
-## Update (Nov 17)
-The decision is narrower now. Where Fe is more permissive and following it costs nothing in the
-size of the on-chain phase contracts, Fe0 follows Fe. Each stricter rule is a place where a Fe
-program does not compile with Fe0, and SPEC.md §10 lists them.
-
-- **Now as in Fe.** Fe0 accepts a field listed twice in the `uses` of `init` or of an arm, and
-  the last entry decides `mut`. A `Ctx` effect may be written `mut Ctx`. A parameter may start
-  with an uppercase letter.
-- **Uppercase locals stay rejected (`N017`).** Fe rejects a local only when it names a struct,
-  an enum or a variant of Fe's prelude. Matching that rule needs a table of those names in the
-  Checker. The table made the Checker contract 891 bytes larger, from 22,205 to 23,096 bytes
-  (Fe 26.6.0, `-O s`, Nov 17).
-- **The same effect name declared twice stays rejected (`N001`).** Fe accepts it, even for two
-  kinds of effect under one name, such as `a: Ctx, a: mut Log`. Fe0 would need Checker bytes
-  to resolve such a name, for a program nobody writes.
-
-## Update (Nov 19, Fe 26.7.0)
-Fe 26.7.0 rejects a name that two `uses` entries bind (`3-0093`, argotorg/fe#1987). Fe0 now
-rejects it too, because every program Fe0 accepts must compile with Fe (the Decision above).
-
-- **A field listed twice is now rejected (`N001`).** The Nov 17 update accepted it, with the last
-  entry deciding `mut`. The check made the Checker contract 58 bytes larger, from 21,312 to
-  21,370 bytes (Fe 26.7.0, `-O s`).
-- **Fe0's rule for an effect name declared twice is no longer stricter than Fe's.** Fe rejects
-  such a name too.
+- Rejecting a field listed twice in `uses` costs the Checker contract 58 bytes (Fe 26.7.0,
+  `-O s`).

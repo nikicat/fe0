@@ -311,8 +311,8 @@ Probed **[✓]**:
   probes are the other `corpus/reject/line_break_*.fe`. Fe0 rejects them all with `L009`.
 - `tools/newline_check.py` compares how Fe and Fe0 split programs into statements, with Fe's
   own parser. It checks the corpus, the reject programs that Fe0 parses, and generated
-  programs, each also with random line breaks wherever the rule above allows one. On Nov 11,
-  they split all 1,084 programs (60,630 blocks) the same way.
+  programs, each also with random line breaks wherever the rule above allows one. Fe and Fe0
+  split all of them the same way.
 
 ## 4. Expression semantics
 
@@ -375,15 +375,13 @@ ABI-encoded string.
      bind name that names a contract as a pattern, and rejects it (`8-0000`) **[✓]**. It
      reads a `let` or `var` name that names a constant as a pattern too, and rejects it as
      refutable (`8-0101`) **[✓]**. It reads a bind `a: n` for a constant `n` as a pattern
-     too, and rejects it as refutable (`8-0153`) **[✓]**. Fe 26.5.1 accepted that bind. It ran
-     the arm for any value of the field, and `n` in the body was still the constant **[✓]**.
-     Fe accepts a parameter named like any item, and a local named like a function or a msg
-     **[✓]**.
+     too, and rejects it as refutable (`8-0153`) **[✓]**. Fe accepts a parameter named like
+     any item, and a local named like a function or a msg **[✓]**.
    - The name of a local may not start with an uppercase letter (`N017`).
    - Fe's rule for locals is narrower. Fe reads an uppercase local or bind that names a type or
      a variant in scope, such as `let Some` or `x: Option`, as a pattern, and rejects it
      **[✓]**. It accepts any other uppercase local, such as `let Foo` **[✓]**. Fe0 keeps the
-     stricter rule for locals ([ADR 0001](adr/0001-strict-subset.md#update-nov-17)).
+     stricter rule for locals ([ADR 0001](adr/0001-strict-subset.md)).
    - Fe accepts every uppercase parameter, even `_ Option: u256` **[✓]**, and so does Fe0. The
      probe is `corpus/uppercase_params.fe`.
 3. **Constants** are evaluated at compile time with the §4 semantics. Overflow is a compile-time
@@ -489,7 +487,7 @@ grant a storage field.
   field (`E116`). Fe rejects such a body too, because `ctx` is an undefined name there
   (`8-0012`) **[✓]**.
 - `ctx.address()` is the address of the contract itself, which a pool needs to ask a token for
-  its own balance ([ADR 0020](adr/0020-external-calls.md#update-nov-14)). In `init`, it is the
+  its own balance ([ADR 0020](adr/0020-external-calls.md)). In `init`, it is the
   address of the contract being created. It needs `ctx` in the body's `uses` as
   `ctx.caller()` does, and Fe rejects a body without it the same way (`8-0012`) **[✓]**. Fe
   accepts `log.address()` on a `Log` effect **[✓]**, and Fe0 rejects it (`T001`).
@@ -516,7 +514,7 @@ grant a storage field.
   field too, because `Address` has no such method (`2-0010`) **[✓]**. The probe is
   `corpus/reject/ctx_not_an_effect.fe`.
 - Fe0 takes the methods of Fe's `Ctx` that take no arguments and return `u256` or `Address`,
-  except `gas()` ([ADR 0017](adr/0017-caller.md#update-nov-17)). `timestamp()`, `value()` and
+  except `gas()` ([ADR 0017](adr/0017-caller.md)). `timestamp()`, `value()` and
   `selfbalance()` return types that Fe0 lacks. Fe0 also leaves out the methods that take
   arguments, such as `balance(a)` and `blockhash(n)`. Fe accepts
   `ctx.gas()` and `ctx.blockhash(1)` **[✓]**.
@@ -724,13 +722,7 @@ the harness runs them.
 
 ## 9. Open questions
 
-Answered by the probes in `spike-conform/` (Oct 28): shifts by 256 or more, left-to-right
-evaluation order, `uses` duplicates and unused entries, and extra calldata bytes. Also answered
-(Oct 28): `init` with missing or malformed arguments, and `Address` storage alignment.
-
-The newline rule of §3.4 was answered on Nov 11, by `tools/newline_check.py`. It found that Fe
-reads some line breaks inside parentheses differently, and Fe0's rule became narrower. No
-question is open.
+No question is open. Each answer is in the section that owns its rule.
 
 ## 10. Fe0 and Fe at a glance
 

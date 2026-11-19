@@ -1,8 +1,8 @@
 # Demo: the Fe0 compiler on Arbitrum One
 
 Fe0 runs on chain as five contracts. Four of them each run one phase of the compiler, and
-Compiler calls them in turn (DESIGN.md §8). They were deployed on Nov 14, 2026, with
-`tools/deploy.py`. `deployments/42161.json` records the addresses.
+Compiler calls them in turn (DESIGN.md §8). `tools/deploy.py` deployed them, and
+`deployments/42161.json` records the addresses.
 
 | Contract | Address |
 |---|---|

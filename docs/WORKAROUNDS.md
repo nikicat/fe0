@@ -56,10 +56,9 @@ master removes nothing before we move to a release that has it.
 
 - **`fe fmt` breaks long lines into code that Fe does not parse.** It moves a binary operator
   such as `<` or `<<` to the start of the next line. The parser then rejects that line with
-  "line-start `<` is ambiguous" (`1-0001`), even though `fe fmt` exits with 0. The random
-  generator (DESIGN.md §11) found it.
+  "line-start `<` is ambiguous" (`1-0001`), even though `fe fmt` exits with 0.
   - **Reproduction:** a `let y: bool = …` whose comparison is longer than the line width.
-  - **Upstream:** The bug is still in 26.7.0. The open PR argotorg/fe#1523 targets this
+  - **Upstream:** the bug is in 26.7.0. The open PR argotorg/fe#1523 targets this
     class of bug, but we have not tested it. Our reproduction is in a comment on that PR.
   - **Workaround:** `tools/embed.py` writes the program modules of its batch ingots without
     formatting them.
@@ -67,36 +66,33 @@ master removes nothing before we move to a release that has it.
     parses.
 
 - **Some one-field structs cost bytecode at `-O s`** (argotorg/fe#1964). A one-field struct
-  such as `Pos` or `NodeId` is usually free. The three shapes below cost bytes on 26.6.0. Two
-  of them still cost bytes on 26.7.0 (`-O s`, Nov 19).
-  - A struct field nested in a struct that is stored in bulk or read often. On 26.6.0 a `Pos`
-    field cost 31 bytes in `Diag` and 105 in `Node`, and `Parser.at: TokIdx` cost 338. On
-    26.7.0 the `Pos` in `Diag` costs the Lexer 185 bytes, the `Pos` in `Node` costs the Parser
-    665, and `Parser.at: TokIdx` costs 24. A `Pos` field in only one of `Diag` and `Node` makes
-    the Checker 717 bytes smaller. A `Pos` field in both makes it 17 bytes larger. The 717
-    bytes come from the optimizer no longer inlining `Checker.at`, not from the `Pos`.
-  - A small accessor that the optimizer stops inlining once it has a few callers. On 26.6.0
-    `Checked.storage_slot` cost 240 bytes, and `Span.start()` cost 208. On 26.7.0
-    `Span.start()` costs nothing in any contract. `Span.start` stays a field, because an
-    accessor that only returns the field adds nothing.
-  - A vector of one-field structs. On 26.6.0 a `MemVec<NodeId>` beside a `MemVec<usize>` cost
-    280 bytes in `Ast.lists`. On 26.7.0 it costs the Parser 399 bytes and the Checker 361, and
-    saves Back 91.
+  such as `Pos` or `NodeId` is usually free. On Fe 26.7.0 at `-O s`, two shapes cost bytes,
+  and a third is free.
+  - A struct field nested in a struct that is stored in bulk or read often. The `Pos` in
+    `Diag` costs the Lexer 185 bytes, the `Pos` in `Node` costs the Parser 665, and
+    `Parser.at: TokIdx` costs 24. A `Pos` field in only one of `Diag` and `Node` makes the
+    Checker 717 bytes smaller. A `Pos` field in both makes it 17 bytes larger. The 717 bytes
+    come from the optimizer not inlining `Checker.at` in that build, not from the `Pos`.
+  - A vector of one-field structs. A `MemVec<NodeId>` beside a `MemVec<usize>` in `Ast.lists`
+    costs the Parser 399 bytes and the Checker 361, and saves Back 91.
+  - A small accessor that the optimizer might stop inlining once it has a few callers. This
+    shape is free: `Span.start()` costs nothing in any contract. `Span.start` stays a field,
+    because an accessor that only returns the field adds nothing.
   - **Workaround:** `Node` and `Diag` store a plain offset and rebuild the `Pos` in `pos()`.
     `Parser.at` stays a plain number. `Ast.lists` keeps each list as its length followed by
     its NodeIds in one `MemVec<usize>`.
-  - **Upstream:** #1978, "Pass one-scalar constants as values", closed #1964 and is in 26.7.0.
-    It made a fourth shape, the constant-argument shape, free. In that shape a constant struct
-    is passed as an argument ([ADR 0022](adr/0022-move-to-26-7-0.md)). No open issue covers
-    the two shapes above that still cost bytes.
+  - **Upstream:** #1964 is closed by #1978, "Pass one-scalar constants as values", which is
+    in 26.7.0. It makes a fourth shape free, the constant-argument shape, in which a constant
+    struct is passed as an argument ([ADR 0022](adr/0022-move-to-26-7-0.md)). No open issue
+    covers the two shapes above that cost bytes.
   - **Remove when:** a release we use builds each shape to no more bytes than its workaround.
 
 - **A range `for` costs bytecode at `-O s` when its body makes calls.** A loop such as
   `for k in 0..self.len(l)`, whose body calls methods that are not inlined, compiles to more
-  code than a `while` loop over the same index. Writing six of the list walks in Back as range
-  loops made Back 344 bytes larger (Fe 26.6.0, -O s, Nov 14). In a loop whose body makes no
-  calls, `-O s` removes the difference.
-  - **Probe (Nov 16):** a loop that only adds numbers is 125 bytes either way at `-O s` (at
+  code than a `while` loop over the same index. Six of the list walks in Back, written as
+  range loops, make Back 344 bytes larger (measured on Fe 26.6.0 at `-O s`). In a loop whose
+  body makes no calls, `-O s` removes the difference.
+  - **Probe (Fe 26.6.0):** a loop that only adds numbers is 125 bytes either way at `-O s` (at
     `-O 0` the range loop is 1,768 bytes and the `while` loop 1,663). A loop on `mut self` whose
     body calls a method is 516 bytes as a `while` loop and 533 as a range loop at `-O s`.
   - **Where it bites:** the walks over a list or a table in fe0 whose bodies make calls, such

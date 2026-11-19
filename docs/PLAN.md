@@ -2,7 +2,7 @@
 
 Fe Builders Challenge 2026. Build window Nov 3–24 (UTC), register by Nov 17.
 
-## 0. Scope: confirmed in scope (Oct 27, by email from the Fe team)
+## 0. Scope, as confirmed by the Fe team
 
 - The "pure compiler contributions" clause only excludes changes to the Rust codebases
   (fe, sonatina). The wording will be clarified and the judges told.
@@ -11,30 +11,15 @@ Fe Builders Challenge 2026. Build window Nov 3–24 (UTC), register by Nov 17.
 - The Fe team has half-seriously considered a rewrite of Fe in Fe, and separately a
   **Fe subset suitable for formalizing in Lean**. Fe0's spec should be written with that in
   mind: small, explicit semantics, no undefined corners.
-- Native-pipeline improvements land on master in the next few days, and they suggest
-  experimenting with a master build.
-  - The submission still needs a *release* of 26.5.0 or later; hopefully one is cut before
-    Nov 3. Pin the exact version in the README.
+- The submission must use a *release* of Fe 26.5.0 or later, with the exact version pinned in
+  the README.
 
-## 1. Spike results (Oct 27, Fe 26.5.0, pre-window, throwaway)
+## 1. Pre-window work
 
-`spike-lexer/`: a ~180-line lexer that reads source through the `std::io::Read` effect.
-
-- **The same code runs natively and on the EVM.** The native build gets `with (Read = host())`,
-  and `fe test` gets an `ArrayReader` over a byte array. Both work, and no compiler bugs were hit.
-- **Native speed:** a 42 KB std file lexes in about 5 ms.
-- **EVM gas:** about 803k gas per 1 KB of source at -O1/-O2 (784 gas/byte), and 1.42M at -O0.
-- **Bytecode size:** the lexer plus a dispatcher is 3.1 KB of runtime code. The window's lexer
-  is 7.5 KB, and with the parser it is over the 24 KB limit
-  ([ADR 0014](adr/0014-contract-per-phase.md)).
-- The language idioms learned are in WORKAROUNDS.md.
-
-**Rerun on master** (`d217a51bf`, Oct 27; built at `~/src/fe/target/release/fe` with
-`--features cranelift`):
-- Results are identical: the test passes, gas is 802,865 per KB at -O1/-O2, runtime code is
-  3,144 bytes, and the native output matches.
-- `--version` still says 26.5.0, so the native-pipeline improvements the Fe team mentioned have
-  not landed yet. We watched master by hand until Nov 11 (T0012).
+This plan and eight probe directories were written before the build window, on Oct 27 and 28:
+`spike-conform/`, `spike-deps/`, `spike-keccak/`, `spike-layout/`, `spike-lexer/`,
+`spike-limits/`, `spike-native/` and `spike-spec/`. So were the ADRs dated before Nov 3. The
+submission declares them as pre-existing work.
 
 ## 2. How the official compiler is built (for reference)
 
@@ -122,8 +107,8 @@ source ──Source effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec
      behaviour and storage reads.
    - So every test also exercises the compiler running on chain.
 3. **Corpus:** about 40 Fe0 programs written for this project (arithmetic, control flow,
-   storage, effects, ABI), seeded by the `spike-conform/` probes. The official fixtures fit Fe0
-   too rarely to be the corpus ([ADR 0003](adr/0003-own-corpus-and-generator.md)).
+   storage, effects, ABI). The official fixtures fit Fe0 too rarely to be the corpus
+   ([ADR 0003](adr/0003-own-corpus-and-generator.md)).
 4. **Negative tests:** programs that must be rejected (effect violations, type errors), with
    the expected error code and position.
 5. **Native round trip:** `fefe < P.fe` produces hex, which is compared byte for byte with the
@@ -137,8 +122,8 @@ source ──Source effect──▶ lexer ─▶ parser ─▶ arena AST (MemVec
 
 ## 6. Schedule
 
-Registered as project FE-001 on Oct 28. Work items live in `.tasks/`, with due dates and
-dependencies. A milestone is reached when its "done means" holds, checked by CI where it can be.
+Registered as project FE-001. Work items live in `.tasks/`, with due dates and dependencies.
+A milestone is reached when its "done means" holds, checked by CI where it can be.
 
 | Due | Milestone | Tasks | Done means |
 |---|---|---|---|
@@ -159,16 +144,16 @@ Likelihood and impact are rated H, M or L.
 
 | # | Risk | L | I | Mitigation |
 |---|---|---|---|---|
-| 1 | **Toolchain drift between master and the release.** We experiment on master (as the Fe team advises), but the submission must pin a *release* of 26.5.0 or later. Features or fixes we rely on might exist only on master | H | H | Frozen on Fe 26.5.1 ([ADR 0009](adr/0009-freeze-on-26-5-1.md)), then moved on Nov 11 to Fe 26.6.0 ([ADR 0015](adr/0015-move-to-26-6-0.md)) and on Nov 19 to Fe 26.7.0 ([ADR 0022](adr/0022-move-to-26-7-0.md)) |
+| 1 | **Toolchain drift between master and the release.** The submission must pin a *release* of Fe 26.5.0 or later. A fix or feature we need might exist only on master | H | H | Pinned to Fe 26.7.0 ([ADR 0022](adr/0022-move-to-26-7-0.md)). The earlier pins, [ADR 0009](adr/0009-freeze-on-26-5-1.md) and [ADR 0015](adr/0015-move-to-26-6-0.md), are superseded |
 | 2 | **Language churn mid-window.** Fe changes fast; 26.5 alone changed reference semantics. A release during Nov 3–24 could break our code or invite a costly upgrade | M | M | No further upgrade mid-window unless a blocking bug needs it ([ADR 0022](adr/0022-move-to-26-7-0.md)) |
 | 3 | **Compiler bugs, especially in the native backend.** The Fe team expects us to hit some ("as I suspect you will"). The native backend is experimental | H | M | Keep the core target-agnostic, so the EVM path under `fe test` is always the primary oracle and the native build is a bonus. Reduce each bug to a minimal example and file it; fix it upstream if it's cheap (welcome, and good for usefulness); keep `WORKAROUNDS.md` |
 | 4 | **Experts on the jury.** Two judges are Fe core developers with a personal interest in Fe-in-Fe and a Lean-formalizable subset. Claims of correctness or "strict subset" will be scrutinised | M | H | Claim only what the tests show. Write a precise Fe0 spec (grammar and semantics) and a frank limitations section. Every difference from Fe found by testing is either fixed or documented |
 | 5 | **The idea is pre-empted or leaks.** The Fe team has considered Fe-in-Fe itself, and another contestant could choose something similar | L | M | Keep it private until submission (no public Zulip posts or public repo pushes before Nov 24; make the repo public at submission). Our differentiators are the on-chain compile-and-deploy and effect checking |
-| 6 | **24 KB contract size limit.** Measured Nov 4: lexer and parser together are 26.5 KB at `-O s` | H | M | One contract per phase ([ADR 0014](adr/0014-contract-per-phase.md)). If a phase alone outgrows 24 KB, shrink it, starting with keyword matching |
-| 7 | **Gas for compiling on chain.** Lexing costs about 0.8M gas per KB; a full compile is guessed at 5–10× that (8–16M for a 2 KB program). EVM memory costs grow quadratically | M | M | Measured Nov 7: 3.4–5.6M gas to compile a 1.1–1.7 KB program. Compiles run as a free read-only call (`eth_call`), and only the output's deployment is a transaction (T0009) |
+| 6 | **24 KB contract size limit.** The lexer and the parser together are larger than 24 KB at `-O s` | H | M | One contract per phase ([ADR 0014](adr/0014-contract-per-phase.md)). DESIGN.md §8 gives the size of each. If a phase alone outgrows 24 KB, shrink it, starting with keyword matching |
+| 7 | **Gas for compiling on chain.** A compile costs millions of gas, and EVM memory costs grow quadratically | M | M | Compiles run as a free read-only call (`eth_call`), and only the output's deployment is a transaction (T0009). DESIGN.md §8 gives the measured costs |
 | 8 | **Storage layout or ABI mismatch with official Fe** | M | M | Differential tests catch it; mirror the official dispatcher (`mir/src/runtime/synthetic.rs:745`) |
-| 9 | **Scope creep.** Fe0 features, the Lean angle, SP1, fuzzing | H | H | Freeze Fe0 before Nov 3. The Lean subset is mentioned in the README only, with no formal work. Stretch items (SP1, fuzzing, events, `StorageMap`) only after the differential tests are green, and in that order |
+| 9 | **Scope creep.** Fe0 features, the Lean angle, SP1, fuzzing | H | H | Fe0 grows only in the steps of [ADR 0016](adr/0016-steps-toward-real-contracts.md), each one complete before the next. The Lean subset is mentioned in the README only, with no formal work. Stretch items (SP1, fuzzing, events, `StorageMap`) only after the differential tests are green, and in that order |
 | 10 | **Judges can't reproduce the native build.** Fe 26.7.0 builds native code only on x86-64 Linux, AArch64 Linux and AArch64 macOS | M | L | The reproducible demo is `fe test` (EVM, works on every platform) plus an Arbitrum One deployment. Native instructions state which platforms are supported |
-| 11 | **Missing the registration deadline** (Nov 17, firm) | L | H | Register as soon as the toolchain is frozen, by Nov 10 at the latest |
-| 12 | **Pre-window work counted against us.** Only work done in the window is judged | L | M | Treat the Oct 27 spike as throwaway. Declare it and the plan as pre-existing work in the submission |
+| 11 | **Missing the registration deadline** (Nov 17, firm) | L | H | Registered as project FE-001 |
+| 12 | **Pre-window work counted against us.** Only work done in the window is judged | L | M | The pre-window probes are throwaway. The submission declares them and the plan as pre-existing work (§1) |
 | 13 | **SP1 stretch is blocked.** The `sp1` feature is opt-in and not in the release binaries, and input support is unclear | M | L | Strictly a stretch goal; dropping it costs nothing in the core plan |

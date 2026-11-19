@@ -139,9 +139,8 @@ Constants are evaluated before any body, in source order (`Checker.program`).
 - **Events** (SPEC §6, "Events"): `Checker.event_item` gives each field of an event its word of
   the log data (`Checked.log_word`). It records the event's `EventLog`: topic 0, which
   `Checker.topic0` builds from the source, and the number of data words (`Checked.topic0`,
-  `Checked.data_words`). Code generation reads only these. The update to
-  [ADR 0019](adr/0019-events.md#update-nov-12) says why it hashes with
-  `std::evm::crypto::keccak256`.
+  `Checked.data_words`). Code generation reads only these.
+  [ADR 0019](adr/0019-events.md) says why it hashes with `std::evm::crypto::keccak256`.
 - **Calls** (SPEC §6, "Calls"): a call does not name its effect, so the checker finds the
   contract's one `Call` effect by its type (`Checker.note_call_effect`), and
   `Checker.use_call_effect` checks the body's grant of it. The address is a NAME node, checked
@@ -218,7 +217,7 @@ Each expression leaves exactly one word on the stack (unit-typed ones leave noth
 | `!b` | `ISZERO`. `~a` is `NOT`. `+a` emits only `a` |
 | `assert!(c)` | `c ISZERO JUMPI panic_01` |
 | `assert!(c, "m")` | `JUMPI` past an inline block that `MSTORE`s `Error(string)` and `REVERT`s |
-| `ctx.m()` | The instruction of `m`, such as `CALLER` for `caller` and `NUMBER` for `block_number` ([ADR 0017](adr/0017-caller.md#update-nov-17)) |
+| `ctx.m()` | The instruction of `m`, such as `CALLER` for `caller` and `NUMBER` for `block_number` ([ADR 0017](adr/0017-caller.md)) |
 | `Address::zero()` | `PUSH0` |
 | `m[k]` | eval k, `PUSH0 MSTORE`, `PUSHn slot PUSH1 0x20 MSTORE`, `PUSH1 0x40 PUSH0 KECCAK256 SLOAD` |
 | `m[k] = v` | eval v, then k's slot as for `m[k]`, then `SSTORE`. Fe evaluates `v` first (SPEC §4) |
@@ -321,7 +320,7 @@ differs from the ABI that `fe build` writes.
   malformed words gets a revert or a wrong result, and only for itself: the phases keep no
   state, so the call changes nothing on chain. Checks would cost bytes in Parser and Checker,
   and the Checker sits near the limit.
-- **Measured on Fe 26.7.0 at `-O s` (Nov 19):**
+- **Measured on Fe 26.7.0 at `-O s`:**
 
   | Contract | Runtime bytes | Deploy gas |
   |---|---|---|
@@ -335,7 +334,7 @@ differs from the ABI that `fe build` writes.
   - **Compiling costs up to 29.2M gas, for `corpus/amm.fe`.**
     - That program is 8,141 bytes of source.
     - Lexing takes about 1,280 gas per byte of source.
-      This figure was measured once, by hand, on Fe 26.6.0 (Nov 16).
+      This figure was measured by hand, on Fe 26.6.0.
       An `eth_estimateGas` of the Lexer's `lex(bytes)` on `corpus/amm.fe` gave the total.
       The gas of the same transaction to an account with no code was taken off it.
     - No tool measures the cost of the boundaries.
@@ -347,7 +346,7 @@ differs from the ABI that `fe build` writes.
 
 ## 8a. Measured limits of the host (official Fe on the EVM)
 
-Measured Oct 28 on master `d217a51bf` (`spike-limits/`, 30M gas per call):
+Measured on Fe master `d217a51bf` (`spike-limits/`, 30M gas per call):
 
 - **`MemVec` growth is linear:**
   - 237 gas per pushed byte at 1k, 4k and 16k items;
@@ -366,7 +365,7 @@ Measured Oct 28 on master `d217a51bf` (`spike-limits/`, 30M gas per call):
     Compiler) at most 24,576 bytes of runtime code, and Fe0's output for every corpus program
     likewise.
   - The initcode limit (EIP-3860) is not enforced either. 49,153 bytes of initcode deploy
-    fine (measured Nov 6). The harness checks both limits on Fe0's builds (§10, item 6).
+    fine. The harness checks both limits on Fe0's builds (§10, item 6).
   - **A real node does enforce it.** Local `anvil` (Foundry 1.8.4, hardfork BPO1) deploys a
     24,576-byte runtime and rejects 24,577 bytes (status 0).
   - So the final gate is a real node: `tools/chain_check.py` (§8) deploys Fe0's contracts on
@@ -498,7 +497,7 @@ of a program and what the generator guarantees.
 The generator steers clear of a few shapes that Fe rejects or mishandles. Each one is marked
 at the code in `gen.py` that avoids it, with its task id or its WORKAROUNDS.md entry.
 
-**Throughput.** `tools/gen.py -n 25` takes about 15 s on 8 cores (Nov 8).
+**Throughput.** `tools/gen.py -n 25` takes about 15 s on 8 cores.
 [ADR 0003](adr/0003-own-corpus-and-generator.md#measurements) gives the measurements.
 
 Shrinking a failing program is a stretch goal. It would delete lines while the failure stays.
@@ -506,8 +505,8 @@ Shrinking a failing program is a stretch goal. It would delete lines while the f
 ## 12. Hashing (`sol("…")` selectors, a stretch goal)
 
 - `sol("f()")` needs keccak at Fe0's own run time. Fe0 hashes a signature with
-  `std::evm::crypto::keccak256`, as `Checker.topic0` does. The update to
-  [ADR 0019](adr/0019-events.md#update-nov-12) says why `core::keccak` cannot hash it.
+  `std::evm::crypto::keccak256`, as `Checker.topic0` does.
+  [ADR 0019](adr/0019-events.md) says why `core::keccak` cannot hash it.
 - [ADR 0004](adr/0004-literal-selectors-first.md) says why selectors are literal first.
   [ADR 0015](adr/0015-move-to-26-6-0.md) says why hashing needs no `Hasher` effect.
 - Remaining work: parse `sol("…")`, hash the signature, and take its first 4 bytes.

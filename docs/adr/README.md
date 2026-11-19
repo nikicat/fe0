@@ -1,8 +1,9 @@
 # Architecture decision records
 
 One file per decision that had a real alternative: its context, what was decided, what was
-ruled out and what follows from it. A record is not rewritten when the decision changes. A new
-record supersedes it, and the old one says so in its status.
+ruled out and what follows from it. A record states its decision as it stands now. When the
+decision changes, the record is updated to match. When a decision is replaced by another, its
+record is marked superseded and links to its successor.
 
 [DESIGN.md](../DESIGN.md) describes the compiler as it is now and links here for the
 reasons. Decisions dated before Nov 3 were made before the build window (pre-existing work).

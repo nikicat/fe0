@@ -4,38 +4,26 @@
 - Status: accepted
 
 ## Context
-With `lex()` returning `Result<Diag, Lexed>`, extracting the payload failed with the internal
-compiler error IR0600 at `-O 1` and above. The trigger was `?` on a `Result<E, T>` inside a
-`while true` loop, in a function whose own `Result` the caller then matches or unwraps.
+Each phase contract must be at most 24,576 bytes ([0014](0014-contract-per-phase.md)), so the
+way a phase reports an error is a matter of code size. `Ast` is large, and each step that
+moves it through a `Result` costs code.
 
 ## Decision
-`Lexed` and `Ast` carry `err: Option<Diag>`. On error, the arrays hold whatever was built
-before it. Later phases follow the same shape.
+`Lexed`, `Ast` and the checker's output carry `err: Option<Diag>`. On error, the arrays hold
+whatever was built before it.
+
+Code generation returns `Result<Diag, DeployCode>`. It has no partial data to keep on error,
+and a `Result` cannot hold code and an error at once.
 
 ## Alternatives
-- **Keep `Result` and test only at `-O 0`:** deployed code is built optimized, so the failing
-  configuration is the one that matters.
+The probes in `spike-sizes/` measure these on Fe 26.6.0 at `-O s`.
+- **`parse() -> Result<Diag, Ast>`:** adds 733 to 845 bytes to ParseProbe, and about 2,600
+  bytes to CompileProbe.
+- **`lex() -> Result<Diag, Lexed>` alone:** saves 4 bytes in LexProbe. But then `Ast` would
+  need an error case that is built without a `Lexed`, so the change does not pay on its own.
+- **An `err` field on the output of code generation:** costs Back 136 bytes and CompileProbe
+  85 bytes more than the `Result`.
 
 ## Consequences
-- A caller must check `err` before reading the arrays; nothing forces it to.
-- IR0600 is fixed on master, so revisit this only if we leave 26.5.1
-  ([0009](0009-freeze-on-26-5-1.md)).
-
-## Update (2026-11-12, Fe 26.6.0)
-IR0600 is gone in Fe 26.6.0. With `lex()` and `parse()` returning `Result`s, fe0's tests pass
-at `-O 0`, `-O 1` and `-O s`. The fields stay because they make smaller code. The probes in
-spike-sizes/ measure this at `-O s`.
-- `parse() -> Result<Diag, Ast>` adds 733 to 845 bytes to ParseProbe. It adds about 2,600
-  bytes to CompileProbe. `Ast` is large, and each step that moves it through a `Result` costs
-  code.
-- `lex() -> Result<Diag, Lexed>` alone saves 4 bytes in LexProbe. But then `Ast` would need an
-  error case that is built without a `Lexed`. So this change does not pay on its own.
-
-Each phase contract must be at most 24,576 bytes ([0014](0014-contract-per-phase.md)). The
-decision stands, now for its size.
-
-## Update (2026-11-19, Fe 26.6.0)
-Code generation returns `Result<Diag, MemVec<u8>>`. It has no partial data to keep on error,
-and its old `Output { code, err }` could hold code and an error at once. The `Result` made Back
-136 bytes smaller and CompileProbe 85 bytes smaller (-O s). The lexer, the parser and the
-checker keep their `err` fields.
+- A caller must check `err` before reading the arrays of `Lexed`, `Ast` or the checker's
+  output; nothing forces it to.
