@@ -29,27 +29,48 @@ CLI and with `fe check`. CI runs it on a fixed range of seeds, and every finding
 - **Three families of mutation:**
   - **Meaning-preserving:** re-flow whitespace and newlines, add comments, wrap
     subexpressions in parentheses or blocks, rename locals to item names or contextual words,
-    insert unreachable code. Both compilers must accept the mutant. Fe0 must also give the
-    original's bytes when only whitespace or comments changed.
+    insert unreachable code. When both compilers accept the mutant, Fe0 must give the
+    original's bytes if only whitespace, comments or parentheses changed.
   - **Rule-breaking, one rule per mutant:** drop the parentheses that `E.may_take_generics`
     or `E.may_read_as_record` adds, capitalize a local, name a local like a type (`u8` …
     `u256`, `i8` … `i256`), chain a comparison, make a constant cycle, drop `mut` from
     `uses`, use an effect that `uses` does not list, mismatch a type. Both must reject it.
   - **Narrowing probes:** plant the shapes of the 30 `fe: accepts` probes in random
     programs. Fe must accept them and Fe0 must reject them, with the probe's code.
+- **A mutant that both compilers reject is not a finding,** because it says nothing about
+  the subset. The summary counts such mutants for each mutation, so that a mutation that
+  mostly makes invalid programs shows up.
+- **`paren` wraps only integer literals, `true`, `false` and the names the program declares.** A
+  declared name is never a keyword or a type name, so the tool keeps no copy of SPEC.md §1's
+  word lists, and reads no Markdown.
 - **CI:** a fixed seed range of about 200 mutants, about 4 minutes. A real bug that it finds
   gets its own probe in `corpus/reject/` (or a corpus program) and its own task.
 - **Mutations work on the finished text,** not inside gen.py. So the same mutations also
   apply to `corpus/*.fe` and the reject programs, and gen.py stays as it is. A mutation finds
-  its place with a tokenizer of the text. `tools/newline_check.py` has one (`TOKEN`), and it
-  already re-flows generated programs inside parentheses and checks that Fe0 accepts them.
-  mutate.py shares that tokenizer rather than writing a second one.
+  its place with one tokenizer of the text, `tools/fetokens.py`. Every tool that rewrites
+  programs as text uses it, so no tool writes a second one.
 - A peer review proposed the oracle and the meaning-preserving mutations. Each of these found
   a real bug by hand (Tbb99s, Tcz2ax, T929gb, Tawfan).
 
+## State
+- `tools/fetokens.py` holds the tokenizer, and `newline_check.py` imports it. `reflow` moved
+  to `tools/mutate.py`, and newline_check imports it from there.
+- `tools/mutate.py` has four meaning-preserving mutations: `comment`, `space`, `paren` (an
+  operand that is a literal or a declared name) and `reflow`, each expected to give the same
+  bytes.
+- `mutate.py -n 20 --per-program 4`: 324 mutants in 2.5 minutes. Its first findings were one
+  bug, a plain comment line before a variant's or a field's name (SPEC.md §1), now fixed.
+  It has no findings now.
+
 ## Next
-- Move `TOKEN` from newline_check.py to a module that both tools import. Decide whether
-  newline_check's reflow becomes a mutation of mutate.py, and keep its check of Fe's
-  statement split.
-- Write `tools/mutate.py` with the meaning-preserving family first, and run it on a few
-  seeds.
+- Rename locals to item names and contextual words, and insert unreachable code.
+- The rule-breaking family, then the narrowing probes.
+- A CI step on a fixed seed range.
+- `newline_check.py` tells reflowed programs apart by the `_reflowed` file-name suffix, which
+  `generated()` writes and `rejected_reflows()` reads back. Give `Program` a `reflowed` flag
+  (or a kind enum) that `generated()` sets, and filter on it.
+- `fetokens.py` and `mutate.py` copy Fe0's lexer rules by hand: the operators of `_TOKEN`,
+  `BINARY_OPS` (`Tok.is_binary`) and the assignment operators in `BEFORE_OPERAND`. Nothing
+  checks the copy, so an operator added to `fe0/src/lexer.fe` silently changes the places that
+  the tools pick. Add a check that compares the significant tokens of the corpus with Fe0's own
+  token stream. It needs the native CLI to print its tokens, which it cannot yet.

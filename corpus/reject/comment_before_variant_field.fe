@@ -1,0 +1,10 @@
+// expect: P003 7:9
+// A plain comment line may not come last between a doc comment and a field's name (SPEC §1).
+msg M {
+    #[selector = 0x1]
+    Set {
+        u: u256, /// The new value.
+        // At most 100.
+        v: u256,
+    },
+}

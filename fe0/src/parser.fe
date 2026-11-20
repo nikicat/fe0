@@ -224,10 +224,14 @@ impl Parser {
         k == T_NEWLINE || k == P_RBRACE || k == T_EOF
     }
 
-    // Kind of the token before the current one. The parser calls this only after it has read a
+    // Returns the token before the current one. The parser calls this only after it has read a
     // token.
+    fn prev_tok(self) -> Token {
+        self.tok_at(self.at - 1)
+    }
+
     fn prev(self) -> Tok {
-        self.kind_at(self.at - 1)
+        self.prev_tok().kind
     }
 
     // Checks that the current token ends a statement or an item. Errors with P_EXPECTED_END or
@@ -441,6 +445,7 @@ impl Parser {
         self.expect(O_ASSIGN)?
         let selector = self.ast.add_int(self.expect(T_INT)?)?
         self.attr_end()?
+        self.no_comment_before_name()?
         let name = self.ident()?
         var fields = EMPTY_LIST
         if self.eat(P_LBRACE) {
@@ -449,6 +454,23 @@ impl Parser {
         let ret = self.ret_ty()?
         let n = Node::new_variant(hash.span.start, name, selector, fields, ret)
         Result::Ok(self.ast.add_node(n))
+    }
+
+    // Errors with P_EXPECTED_IDENT when a plain comment line comes last before the current
+    // token, after a doc comment or an attribute. Fe rejects it before the name of a variant or a
+    // field (SPEC.md §1).
+    fn no_comment_before_name(self) -> Result<Diag, ()> {
+        let newline = self.prev_tok()
+        let before = self.kind_at(self.at - 2)
+        if newline.kind == T_NEWLINE && (before == T_DOC || before == P_RBRACKET) {
+            match newline.span.comment_line() {
+                Option::Some(pos) => {
+                    return Result::Err(diag(P_EXPECTED_IDENT, pos))
+                },
+                Option::None => {},
+            }
+        }
+        Result::Ok(())
     }
 
     // Reads `# [ w`, the start of an attribute named by the word `w`, and returns the `#`.
@@ -471,6 +493,7 @@ impl Parser {
     // Parses rule `field` (SPEC.md §3.1). When `maps` is true, the type may also be a map, as
     // rule `cfield` allows. `indexed` marks the field of an event that `#[indexed]` precedes.
     fn field(mut self, maps: bool, indexed: bool) -> Result<Diag, NodeId> {
+        self.no_comment_before_name()?
         let pos = self.tok().span.start
         let name = self.ident()?
         self.expect(P_COLON)?
@@ -542,6 +565,7 @@ impl Parser {
         self.expect(P_LBRACE)?
         self.skip_docs()
         while self.at_field() {
+            self.no_comment_before_name()?
             if !self.eat(K_MUT) {
                 return Result::Err(self.err(P_FIELD_NOT_MUT))
             }

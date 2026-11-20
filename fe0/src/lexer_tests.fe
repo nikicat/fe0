@@ -246,6 +246,16 @@ fn newlines_collapse_and_vanish_where_parens_are_innermost() {
     expect("a\r\nb", [T_IDENT, T_NEWLINE, T_IDENT, T_EOF])
 }
 
+#[test]
+fn newline_spans_hold_the_last_comment_line() {
+    assert!(lex_text("a\n\nb").toks[1].span.comment_line().is_none())
+    assert!(
+        lex_text("a // c\nb").toks[1].span.comment_line().is_none(),
+    )
+    let l = lex_text("a\n// c\n\n  // d\nb")
+    assert!(l.toks[1].span.comment_line().unwrap() == Pos::at(10))
+}
+
 // Asserts that `s` fails with L_LINE_BREAK at the line break at byte `pos`.
 fn bad_break(_ s: own DynString, _ pos: usize) {
     let d = lex_err(s)

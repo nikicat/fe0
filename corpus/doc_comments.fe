@@ -5,6 +5,7 @@ msg DocMsg { /// After the `{` of a msg.
     #[selector = 2]
     Get -> u256, /// At the end of a variant's line.
     /// Before the selector.
+    // A plain comment line before a selector.
     #[selector = 1]
     /// After the selector.
     Set { /// After the `{` of a variant's fields.
@@ -12,7 +13,9 @@ msg DocMsg { /// After the `{` of a msg.
         v: u256, /// At the end of a variant field's line.
         w: u256,
     },
-    #[selector = 3]
+    #[selector = 3] // A plain comment at the end of the selector's line.
+    // A plain comment line before a doc comment.
+    /// After a plain comment line.
     Put {},
 }
 
@@ -24,8 +27,10 @@ msg PingMsg {
 /// Before the `#[event]` of an event.
 #[event]
 /// After the `#[event]` of an event.
+// A plain comment line before an event's name.
 struct DocEvent { /// After the `{` of an event.
     /// Before the `#[indexed]` of an event's field.
+    // A plain comment line before `#[indexed]`.
     #[indexed]
     /// After the `#[indexed]` of an event's field.
     a: u256, /// At the end of an event field's line.
@@ -35,6 +40,7 @@ struct DocEvent { /// After the `{` of an event.
 //// Four slashes start a doc comment too.
 
 /// A constant.
+// A plain comment line before an item.
 pub const START: u256 = 7
 
 /// A function.
@@ -48,10 +54,12 @@ contract Doc { /// After the `{` of a contract.
     mut a: u256 /// At the end of a field's line.
     mut b: u256
     /// The constructor.
+    // A plain comment line before `init`.
     init() uses (mut a) {
         a = START
     } /// At the end of the line of `init`.
     /// The receive block.
+    // A plain comment line before `recv`.
     recv DocMsg { /// After the `{` of a recv block.
         /// An arm.
         Set { v, w } uses (mut a) {

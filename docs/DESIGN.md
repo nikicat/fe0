@@ -43,7 +43,13 @@ tools/          embed.py, fegen.py (shared by the generators), gen.py (random pr
                 compiler on chain against the CLI, §8), deploy.py (deploys the compiler on
                 chain and runs its demo), compile_on_chain.py (compiles a program with the
                 deployed compiler), corpus_scan.py, gen_codegen_tests.py and
-                gen_check_tests.py (the unit-test generators), spikes.sh (the spike probes)
+                gen_check_tests.py (the unit-test generators), spikes.sh (the spike probes),
+                fetokens.py (Fe0's tokens as text, for the tools that rewrite programs),
+                mutate.py (mutants of the corpus and generated programs, checked with the
+                native CLI and `fe check`), newline_check.py (Fe's statement split against
+                Fe0's, SPEC §3.4) and fe-stmts/ (Fe's parser, which it calls), node.py and
+                node_check.py (Fe0 against Fe on a node, §10), gas_compare.py (Fe0's gas
+                against Fe's)
 deployments/    the addresses of the deployed compiler, by chain id
 docs/DEMO.md    the demo of the compiler on Arbitrum One
 ```
@@ -68,6 +74,12 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
   it ends a statement. Where it is dropped, the lexer checks that the line ends with `(`, `,`
   or a binary operator (`Tok.may_end_line_in_parens`), or that `)` comes next, and reports
   `L_LINE_BREAK` otherwise.
+  Plain comments make no tokens, so a newline token's span carries the one fact about them
+  that the parser needs. The span runs from the first line break to the first byte of the
+  last plain comment line after it, if there is one (`Span.comment_line`). With it, the
+  parser applies SPEC §1's rule on a plain comment before a name. A comment token would
+  make every parse site that reads a newline skip it, and a flag would change `Token` and its
+  wire format, while the span costs nothing on the wire.
 - **Doc comments** are `T_DOC` tokens, even inside `( )`. `Parser.skip_docs` skips them only
   where SPEC §1 allows them, so a doc comment anywhere else is a syntax error.
 - **Positions:** line and column are computed only when an error is reported, by scanning the
@@ -330,13 +342,13 @@ differs from the ABI that `fe build` writes.
 
   | Contract | Runtime bytes | Deploy gas |
   |---|---|---|
-  | Lexer | 5,719 | 1.28M |
-  | Parser | 17,111 | 3.75M |
+  | Lexer | 5,751 | 1.28M |
+  | Parser | 17,356 | 3.81M |
   | Checker | 20,101 | 4.40M |
   | Back | 17,216 | 3.78M |
   | Compiler | 1,653 | 0.44M |
 
-  - **Deploying all five costs 13.6M gas.**
+  - **Deploying all five costs 13.7M gas.**
   - **Compiling costs up to 28.7M gas, for `corpus/amm.fe`.**
     - That program is 8,141 bytes of source.
     - Lexing takes about 1,240 gas per byte of source.

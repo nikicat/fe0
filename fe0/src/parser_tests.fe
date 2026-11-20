@@ -900,6 +900,76 @@ fn doc_comments() {
 }
 
 #[test]
+fn plain_comment_before_a_name() {
+    // The cases of SPEC.md §1, "A plain comment before a name". The error points at the
+    // comment.
+    rejects(
+        "msg M {\n    #[selector = 1]\n    // c\n    A\n}",
+        P_EXPECTED_IDENT,
+        32,
+    )
+    rejects(
+        "msg M {\n    #[selector = 1]\n// c\n    A\n}",
+        P_EXPECTED_IDENT,
+        28,
+    )
+    rejects(
+        "msg M {\n    #[selector = 1]\n\n    // c\n\n    A\n}",
+        P_EXPECTED_IDENT,
+        33,
+    )
+    rejects(
+        "msg M {\n    #[selector = 1]\n    /// d\n    // c\n    A\n}",
+        P_EXPECTED_IDENT,
+        42,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    // c\n    a: u256,\n}",
+        P_EXPECTED_IDENT,
+        39,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    /// d\n    // c\n    a: u256,\n}",
+        P_EXPECTED_IDENT,
+        34,
+    )
+    rejects(
+        "msg M {\n    #[selector = 1]\n    A {\n        /// d\n        // c\n        v: u256,\n    },\n}",
+        P_EXPECTED_IDENT,
+        58,
+    )
+    rejects(
+        "msg M {\n    #[selector = 1]\n    A {\n        u: u256, /// d\n        // c\n        v: u256,\n    },\n}",
+        P_EXPECTED_IDENT,
+        67,
+    )
+    rejects(
+        "contract C {\n    /// d\n    // c\n    mut a: u256\n}",
+        P_EXPECTED_IDENT,
+        27,
+    )
+    rejects(
+        "contract C { /// d\n    // c\n    mut a: u256\n}",
+        P_EXPECTED_IDENT,
+        23,
+    )
+    parse_text(
+        "msg M {\n    #[selector = 1]\n    // c\n    /// d\n    A\n}",
+    )
+    parse_text("msg M {\n    #[selector = 1] // c\n    A\n}")
+    parse_text(
+        "msg M {\n    /// d\n    // c\n    #[selector = 1]\n    A\n}",
+    )
+    parse_text("#[event]\nstruct E {\n    // c\n    a: u256,\n}")
+    parse_text(
+        "#[event]\n// c\nstruct E {\n    /// d\n    // c\n    #[indexed]\n    a: u256,\n}",
+    )
+    parse_text(
+        "contract C {\n    /// d\n    // c\n    /// e\n    mut a: u256\n}",
+    )
+}
+
+#[test]
 fn errors() {
     assert!(parse_err("let x = 1").code == P_EXPECTED_ITEM)
     assert!(parse_err("fn (").code == P_EXPECTED_IDENT)

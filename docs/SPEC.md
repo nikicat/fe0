@@ -45,11 +45,25 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 | Operators | `+ - * / % ~ ! ^ & \| && \|\| < > = == !=` | |
 | Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside, and rejects spaced forms. Fe rejects `x + = 1` too **[✓]** |
 
+- **A plain comment before a name.** The name of a variant or of a field may not come right
+  after a plain comment line when a doc comment or an attribute comes before that line. A
+  contract field counts from its `mut`. A doc comment after the plain comment line makes it
+  allowed, and so does a plain comment at the end of the line before. Fe rejects the other
+  cases (`1-0001`) **[✓]**:
+  - after a selector, also with a doc comment in between. The probes are
+    `corpus/reject/comment_after_selector.fe` and `corpus/reject/comment_after_selector_doc.fe`;
+  - after `#[indexed]`, or after a doc comment before a field, also one at the end of the line
+    before. The probes are the `corpus/reject/comment_before_*.fe` programs.
+
+  Fe accepts a plain comment line in the same place before an item, `init`, `recv`, an arm, a
+  selector, `#[indexed]` or an event's `struct`, and before a name with no doc comment or
+  attribute ahead of it **[✓]**. Fe0 allows all of these. The probes are
+  `corpus/doc_comments.fe` and, for a field with no doc comment, `corpus/amm.fe`.
 - **No block comments.** Fe's compiler lexer has none, even though the tree-sitter grammar does.
 - **Doc comments.** A comment that starts with `///`, including `////`, is a doc comment. It may
   come only before an item, a contract field, `init`, `recv`, an arm, a variant or a field of a
   variant or of an event. Only newlines and other comments may come between it and what it
-  documents. A doc comment may also stand at the end of the line where a contract field, `init`,
+  documents, except a plain comment line right before a name (above). A doc comment may also stand at the end of the line where a contract field, `init`,
   `recv`, an arm, a variant, a variant's field or an event's field ends. It then documents the
   next of these. It may not stand at the end of the line where an item ends, because only a
   newline or a plain comment may follow an item on its line (§3.1). It may also end the line of

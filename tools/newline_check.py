@@ -27,7 +27,9 @@ from typing import NamedTuple, NewType
 
 import cli_check
 from fegen import FE, ROOT, ByteOffset, FeSource, LineCol
+from fetokens import Kind, Op, Token, tokens
 from gen import Gen
+from mutate import reflow
 
 FE_STMTS: Path = ROOT / "tools/fe-stmts"
 FE_STMTS_TARGET: Path = ROOT / "out/fe-stmts"
@@ -43,11 +45,6 @@ EXPECT = re.compile(r"// expect: (?P<letter>[A-Z])\d{3} ")
 # Fe0's lexer and parser report errors with these letters. Other errors come later, from a
 # program that Fe0 parsed.
 PARSE_LETTERS = {"L", "P"}
-# The tokens that matter here, as Fe0's lexer reads them: comments, string literals (which may
-# hold brackets), line ends, brackets, and any other byte that is not white space.
-TOKEN = re.compile(rb'(?P<comment>//[^\r\n]*)|(?P<string>"(?:[^"\\\r\n]|\\.)*")'
-                   rb"|(?P<newline>\r\n?|\n)|(?P<space>[ \t]+)"
-                   rb"|(?P<open>[({\[])|(?P<close>[)}\]])|(?P<other>.)")
 
 
 class Span(NamedTuple):
@@ -65,11 +62,14 @@ Blocks = dict[ByteOffset, list[Span]]
 class Frame:
     """An open bracket, and for a `{`, the statement it is reading."""
 
-    bracket: bytes
-    offset: ByteOffset
+    bracket: Token
     stmts: list[Span] = field(default_factory=list)
     start: ByteOffset | None = None
     end: ByteOffset = ByteOffset(0)
+
+    @property
+    def is_block(self) -> bool:
+        return self.bracket.symbol == Op.LBRACE
 
     def take(self, start: ByteOffset, end: ByteOffset) -> None:
         """Adds the token at `start`..`end` to the statement this block is reading."""
@@ -93,63 +93,27 @@ def fe0_blocks(source: FeSource) -> Blocks:
     def take(start: ByteOffset, end: ByteOffset) -> None:
         """Adds a token to the statement of the innermost block, which a `(` or `[` inside it
         does not end."""
-        block = next((f for f in reversed(stack) if f.bracket == b"{"), None)
+        block = next((f for f in reversed(stack) if f.is_block), None)
         if block is not None:
             block.take(start, end)
 
-    for m in TOKEN.finditer(source.encode()):
-        start, end = ByteOffset(m.start()), ByteOffset(m.end())
-        if m["newline"] is not None:
-            if stack and stack[-1].bracket == b"{":
-                stack[-1].finish()
-        elif m["open"] is not None:
-            take(start, end)
-            stack.append(Frame(m["open"], start))
-        elif m["close"] is not None:
-            frame = stack.pop()
-            if frame.bracket == b"{":
-                frame.finish()
-                blocks[frame.offset] = frame.stmts
-            take(start, end)
-        elif m["comment"] is None and m["space"] is None:
-            take(start, end)
+    for t in tokens(source.encode()):
+        match t.kind:
+            case Kind.NEWLINE:
+                if stack and stack[-1].is_block:
+                    stack[-1].finish()
+            case Kind.OPEN:
+                take(t.start, t.end)
+                stack.append(Frame(t))
+            case Kind.CLOSE:
+                frame = stack.pop()
+                if frame.is_block:
+                    frame.finish()
+                    blocks[frame.bracket.start] = frame.stmts
+                take(t.start, t.end)
+            case _ if not t.kind.trivia:
+                take(t.start, t.end)
     return blocks
-
-
-# Fe0's binary operators, as `Tok.is_binary` in fe0/src/lexer.fe names them. Inside
-# parentheses, a line may end with one.
-BINARY_OPS = {b"+", b"-", b"*", b"/", b"%", b"&", b"|", b"^", b"<<", b">>", b"<", b">", b"<=",
-              b">=", b"==", b"!=", b"&&", b"||"}
-
-
-def reflow(source: FeSource, rng: random.Random) -> FeSource:
-    """Returns `source` with a line break in about half of the places inside parentheses where
-    Fe0 allows one: after a `(`, a `,` or a binary operator, and before a `)`."""
-    data = source.encode()
-    out = bytearray()
-    stack: list[bytes] = []
-    last = 0
-
-    def maybe_break(at: int, replace: int) -> None:
-        """Puts a line break at `at` in place of `replace` bytes, half of the time."""
-        nonlocal last
-        if stack and stack[-1] == b"(" and rng.random() < 0.5:
-            out.extend(data[last:at] + b"\n")
-            last = at + replace
-
-    for m in TOKEN.finditer(data):
-        if m["open"] is not None:
-            stack.append(m["open"])
-            maybe_break(m.end(), 0)
-        elif m["close"] is not None:
-            maybe_break(m.start(), 0)
-            stack.pop()
-        elif m["space"] is not None:
-            word = data[:m.start()].rsplit(None, 1)[-1]
-            if word.endswith(b",") or word in BINARY_OPS:
-                maybe_break(m.start(), m.end() - m.start())
-    out.extend(data[last:])
-    return FeSource(out.decode())
 
 
 def fe_version() -> FeVersion:

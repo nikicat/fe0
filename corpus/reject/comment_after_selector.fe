@@ -1,0 +1,7 @@
+// expect: P003 5:5
+// A plain comment line may not come last between a selector and its variant's name (SPEC §1).
+msg M {
+    #[selector = 0x1]
+    // The getter.
+    Get -> u256,
+}

@@ -1,0 +1,7 @@
+// expect: P003 5:5
+// A plain comment line may not come last between a doc comment and a contract field (SPEC §1).
+contract C {
+    /// The count.
+    // Starts at zero.
+    mut n: u256
+}

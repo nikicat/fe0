@@ -1,0 +1,9 @@
+// expect: P003 7:5
+// A plain comment line may not come last before a variant's name, even after a doc comment
+// (SPEC §1).
+msg M {
+    #[selector = 0x1]
+    /// The getter.
+    // Reads the count.
+    Get -> u256,
+}

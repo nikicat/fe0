@@ -454,6 +454,21 @@ impl Span {
     pub fn end(self) -> Pos {
         self.start.plus(self.len)
     }
+
+    // Returns where the last plain comment line after this newline token's line break starts,
+    // or None when there is no such line. Only a newline token's span holds this (DESIGN.md §2).
+    pub fn comment_line(self) -> Option<Pos> {
+        if self.len > 1 {
+            return Option::Some(self.end().minus(1))
+        }
+        Option::None
+    }
+
+    // Extends this newline token's span to the first byte of the plain comment line at `at`,
+    // so that `comment_line` returns `at`.
+    fn reach_comment_line(mut self, _ at: Pos) {
+        self.len = at.since(self.start) + 1
+    }
 }
 
 pub struct Token { pub kind: Tok, pub span: Span }
@@ -819,18 +834,14 @@ impl Lexer {
         // Where a line inside parentheses ends with a token that may not end it.
         var bad_break: Option<Pos> = Option::None
         if self.queued.is_none() {
-            match self.skip_trivia() {
-                Option::Some(pos) => {
-                    if !self.open.innermost_is_paren() {
-                        return Result::Ok(
-                            Token { kind: T_NEWLINE, span: Span { start: pos, len: 1 } },
-                        )
-                    }
-                    if !self.last.may_end_line_in_parens() {
-                        bad_break = Option::Some(pos)
-                    }
-                },
-                Option::None => {},
+            let span = self.skip_trivia()
+            if span.len != 0 {
+                if !self.open.innermost_is_paren() {
+                    return Result::Ok(Token { kind: T_NEWLINE, span })
+                }
+                if !self.last.may_end_line_in_parens() {
+                    bad_break = Option::Some(span.start)
+                }
             }
         }
         match self.token() {
@@ -884,14 +895,18 @@ impl Lexer {
         }
     }
 
-    // Skips blanks and comments, and returns the offset of the first line break among them.
-    // A `/` operator or a doc comment that ends the run is read and queued.
-    fn skip_trivia(mut self) -> Option<Pos> uses (input: mut Source) {
-        var newline: Option<Pos> = Option::None
+    // Skips blanks and comments, and queues the `/` operator or the doc comment that ends them.
+    // Returns the span of the newline token that they make, in the form `Span.comment_line`
+    // reads. The span is empty when they hold no line break.
+    fn skip_trivia(mut self) -> Span uses (input: mut Source) {
+        // smell: an empty span stands for "no line break". Kept, because returning Option<Span>
+        // made the Lexer 6,013 bytes against 5,751 (Fe 26.7.0, -O s). Fix when an Option costs no
+        // more than the length check.
+        var newline = Span { start: SOURCE_START, len: 0 }
         while true {
             let c = self.peeked
-            if c.is_newline() && newline.is_none() {
-                newline = Option::Some(self.text.end())
+            if c.is_newline() && newline.len == 0 {
+                newline = Span { start: self.text.end(), len: 1 }
             }
             if c.is(b' ') || c.is(b'\t') || c.is_newline() {
                 self.bump()
@@ -911,6 +926,9 @@ impl Lexer {
                 if doc {
                     self.queued = Option::Some(self.tok(T_DOC))
                     break
+                }
+                if newline.len != 0 {
+                    newline.reach_comment_line(self.start)
                 }
             } else {
                 break

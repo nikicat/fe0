@@ -1,0 +1,9 @@
+// expect: P003 7:5
+// A plain comment line may not come last between `#[indexed]` and its field's name (SPEC §1).
+#[event]
+struct Moved {
+    #[indexed]
+    /// The sender.
+    // Never zero.
+    from: Address,
+}
