@@ -170,18 +170,30 @@ enum ArgDest {
 
 impl Copy for ArgDest {}
 
-// A shared block that reverts. `index` is its slot in `Refs.stubs`.
+// A shared block that reverts. `index` is its slot in `Piece.stubs`.
 struct Stub { index: usize, revert: StubRevert }
 
 impl Copy for Stub {}
 
-const REVERT_EMPTY: Stub = Stub { index: 0, revert: StubRevert::Empty }
-const PANIC_ASSERT: Stub = Stub { index: 1, revert: StubRevert::Panic(PanicCode { c: 0x01 }) }
-const PANIC_OVERFLOW: Stub = Stub { index: 2, revert: StubRevert::Panic(PanicCode { c: 0x11 }) }
-const PANIC_DIV_ZERO: Stub = Stub { index: 3, revert: StubRevert::Panic(PanicCode { c: 0x12 }) }
-const REVERT_RETURNDATA: Stub = Stub { index: 4, revert: StubRevert::ReturnData }
+impl Stub {
+    // Returns the stub at index 0.
+    const fn first(_ revert: StubRevert) -> Stub {
+        Stub { index: 0, revert }
+    }
 
-// Every stub, at its index.
+    // Returns the stub at the index after this one.
+    const fn then(self, _ revert: StubRevert) -> Stub {
+        Stub { index: self.index + 1, revert }
+    }
+}
+
+const REVERT_EMPTY: Stub = Stub::first(StubRevert::Empty)
+const PANIC_ASSERT: Stub = REVERT_EMPTY.then(StubRevert::Panic(PanicCode { c: 0x01 }))
+const PANIC_OVERFLOW: Stub = PANIC_ASSERT.then(StubRevert::Panic(PanicCode { c: 0x11 }))
+const PANIC_DIV_ZERO: Stub = PANIC_OVERFLOW.then(StubRevert::Panic(PanicCode { c: 0x12 }))
+const REVERT_RETURNDATA: Stub = PANIC_DIV_ZERO.then(StubRevert::ReturnData)
+
+// Every stub, once.
 const ALL_STUBS: [Stub; 5] = [
     REVERT_EMPTY,
     PANIC_ASSERT,
@@ -213,6 +225,12 @@ struct Body {
     depth: usize,
 }
 
+impl Body {
+    fn leaves(self) -> Leaves {
+        Leaves::of(self.ret)
+    }
+}
+
 // An enclosing `while`, with the stack depth at its start.
 struct Loop { top: Label, end: Label, depth: usize }
 
@@ -231,28 +249,60 @@ impl Copy for Leaves {}
 const LEAVES_WORD: Leaves = Leaves { word: true }
 const LEAVES_NOTHING: Leaves = Leaves { word: false }
 
-// The initcode and the runtime code each hold their own copy of the functions and stubs they
-// jump to (DESIGN.md §6.2, §6.3, "Stubs").
-struct Refs {
+impl Leaves {
+    fn of(_ ty: Ty) -> Leaves {
+        Leaves { word: ty != TY_UNIT }
+    }
+}
+
+// A piece of code, with its own copy of each FN and stub it jumps to (DESIGN.md §6.2, §6.3,
+// "Stubs").
+struct Piece {
+    asm: Asm,
     // The label of each FN that the code calls, by node. Every other node's slot is empty.
-    fn_labels: MemVec<LabelSlot>,
+    fn_labels: LabelTable,
     // The FNs that the code calls and does not hold yet.
     todo: MemVec<Id<Callee>>,
     // The label of each Stub that the code uses, by index. The others' slots are empty.
-    stubs: MemVec<LabelSlot>,
+    stubs: LabelTable,
 }
 
-impl Refs {
-    fn new(_ nodes: usize) -> Refs {
-        Refs { fn_labels: no_labels(nodes), todo: MemVec::new(), stubs: no_labels(ALL_STUBS.len()) }
+impl Piece {
+    fn new(_ nodes: usize) -> Piece {
+        Piece {
+            asm: Asm::new(),
+            fn_labels: LabelTable::new(nodes),
+            todo: MemVec::new(),
+            stubs: LabelTable::new(ALL_STUBS.len()),
+        }
+    }
+
+    // Checks whether the piece holds stub `s`.
+    fn holds(self, _ s: Stub) -> bool {
+        self.stubs.has(s.index)
+    }
+
+    // Makes the piece hold stub `s`, and returns the stub's label there.
+    fn stub(mut self, _ s: Stub) -> Label {
+        self.stubs.label(mut self.asm, s.index)
+    }
+
+    // Makes the piece hold FN `f`, and returns the FN's label there.
+    fn fn_label(mut self, _ f: Id<Callee>) -> Label {
+        let k = f.node_id().index()
+        // Here, a `LabelTable` method that also says whether the label is new made Back 4 bytes
+        // larger (Fe 26.7.0, -O s).
+        if !self.fn_labels.has(k) {
+            self.todo.push(f)
+        }
+        self.fn_labels.label(mut self.asm, k)
     }
 }
 
 struct Gen {
-    c: Checked,
     // The piece of code being generated: the runtime code, then the initcode.
-    asm: Asm,
-    refs: Refs,
+    piece: Piece,
+    c: Checked,
     body: Body,
     loops: MemVec<Loop>,
 }
@@ -282,26 +332,16 @@ fn arg_offset(_ k: usize) -> CalldataOff {
     CALLDATA_START.after(selector_and_words(k))
 }
 
-// Returns a table of `n` empty label slots.
-fn no_labels(_ n: usize) -> MemVec<LabelSlot> {
-    var t: MemVec<LabelSlot> = MemVec::new()
-    while t.len() < n {
-        t.push(EMPTY_SLOT)
-    }
-    t
-}
-
-// The offset just past the first `n` slots of a frame.
+// Returns the offset just past the first `n` slots of a frame (DESIGN.md §6.1, "Frames").
 fn past_slots(_ n: usize) -> FrameOff {
     FrameOff { o: FRAME_HEAD.o + words(n).n }
 }
 
-// The offset in a frame of slot `slot`.
 fn slot_offset(_ slot: FrameSlot) -> FrameOff {
     past_slots(slot.number())
 }
 
-// The size of a frame of `slots` slots.
+// Returns the size of a frame of `slots` slots, with its two-word head (DESIGN.md §6.1, "Frames").
 fn frame_size(_ slots: usize) -> Size {
     Size { n: past_slots(slots).word() }
 }
@@ -311,8 +351,7 @@ impl Gen {
         let nodes = c.ast.node_count()
         Gen {
             c,
-            asm: Asm::new(),
-            refs: Refs::new(nodes),
+            piece: Piece::new(nodes),
             body: Body { kind: BodyKind::Fn, ret: TY_UNIT, frame: bytes(0), depth: 0 },
             loops: MemVec::new(),
         }
@@ -332,11 +371,11 @@ impl Gen {
     }
 
     fn op(mut self, _ o: Op) {
-        self.asm.op(o)
+        self.piece.asm.op(o)
     }
 
     fn push(mut self, _ v: u256) {
-        self.asm.push(v)
+        self.piece.asm.push(v)
     }
 
     // Pops the top word into memory at `a`.
@@ -347,24 +386,15 @@ impl Gen {
 
     // Starts a new piece of code and returns the finished one before it.
     fn section(mut self) -> Asm {
-        self.refs = Refs::new(self.c.ast.node_count())
-        var done = core::mem::replace(mut self.asm, Asm::new())
-        done.finish()
-        done
-    }
-
-    // The label of `s` in the current piece of code. `stubs_end` emits the stub.
-    fn stub(mut self, _ s: Stub) -> Label {
-        if self.refs.stubs[s.index].is_empty() {
-            self.refs.stubs.set(s.index, self.asm.label().slot())
-        }
-        self.refs.stubs[s.index].label()
+        var done = core::mem::replace(mut self.piece, Piece::new(self.c.ast.node_count()))
+        done.asm.finish()
+        done.asm
     }
 
     // Jumps to the stub `s` when the word on top of the stack is not zero.
     fn jumpi_to(mut self, _ s: Stub) {
-        let l = self.stub(s)
-        self.asm.jumpi(l)
+        let l = self.piece.stub(s)
+        self.piece.asm.jumpi(l)
     }
 
     // Emits each stub that the code jumps to.
@@ -375,9 +405,11 @@ impl Gen {
     }
 
     fn emit_stub(mut self, _ s: Stub) {
-        let slot = self.refs.stubs[s.index]
-        if slot.is_empty() { return }
-        self.asm.bind(slot.label())
+        if !self.piece.holds(s) {
+            return
+        }
+        let l = self.piece.stub(s)
+        self.piece.asm.bind(l)
         match s.revert {
             StubRevert::Empty => self.revert(bytes(0)),
             StubRevert::Panic(code) => {
@@ -414,7 +446,7 @@ impl Gen {
         self.op(OP_REVERT)
     }
 
-    // Returns the first `size` bytes at SCRATCH.
+    // Emits code that returns the first `size` bytes at SCRATCH.
     fn return_memory(mut self, _ size: Size) {
         self.on_scratch(OP_RETURN, size)
     }
@@ -426,22 +458,14 @@ impl Gen {
         self.op(o)
     }
 
-    // The label of FN `f` in the current piece of code. `functions` emits the FN.
-    fn fn_label(mut self, _ f: Id<Callee>) -> Label {
-        let k = f.node_id().index()
-        if self.refs.fn_labels[k].is_empty() {
-            self.refs.fn_labels.set(k, self.asm.label().slot())
-            self.refs.todo.push(f)
-        }
-        self.refs.fn_labels[k].label()
-    }
-
     // Emits each FN that the code calls, and each FN that those call.
     fn functions(mut self) {
-        while self.refs.todo.len() > 0 {
-            let f = self.refs.todo.pop().unwrap().node_id()
+        while self.piece.todo.len() > 0 {
+            let callee = self.piece.todo.pop().unwrap()
+            let f = callee.node_id()
             let n = self.node(f)
-            self.asm.bind(self.refs.fn_labels[f.index()].label())
+            let l = self.piece.fn_label(callee)
+            self.piece.asm.bind(l)
             self.begin(f, BodyKind::Fn)
             self.body_end(n.body())
         }
@@ -464,11 +488,7 @@ impl Gen {
 
     // Emits BLOCK `b` as the whole body, then leaves the body with its value.
     fn body_end(mut self, _ b: NodeId) {
-        if self.body.ret == TY_UNIT {
-            self.discard(b)
-        } else {
-            self.value(b)
-        }
+        self.branch(b, self.body.leaves())
         self.leave()
     }
 
@@ -486,7 +506,7 @@ impl Gen {
 
     // Leaves the body. Its value, if it has one, is on top of the stack.
     fn leave(mut self) {
-        let value = self.body.ret != TY_UNIT
+        let value = self.body.leaves().word
         match self.body.kind {
             BodyKind::Fn => {
                 // The caller expects only the value, so drop the words under it.
@@ -507,7 +527,7 @@ impl Gen {
                     self.op(OP_STOP)
                 }
             },
-            BodyKind::Init(exit) => self.asm.jump(exit),
+            BodyKind::Init(exit) => self.piece.asm.jump(exit),
         }
     }
 
@@ -524,6 +544,21 @@ impl Gen {
         self.op(OP_ADD)
     }
 
+    // Emits code that pops the top word into the frame at `off`. Marked `#[inline(never)]`, it
+    // makes Back 101 bytes larger (Fe 26.7.0, -O s).
+    fn store_frame(mut self, _ off: FrameOff) {
+        self.fp_plus(off)
+        self.op(OP_MSTORE)
+    }
+
+    // Emits code that pushes the word in the frame at `off`. Out of line, it makes Back 3 bytes
+    // smaller (Fe 26.7.0, -O s).
+    #[inline(never)]
+    fn load_frame(mut self, _ off: FrameOff) {
+        self.fp_plus(off)
+        self.op(OP_MLOAD)
+    }
+
     // Returns the offset from FP of the local, parameter or bind that `d` declares
     // (DESIGN.md §6.1).
     fn local_offset(self, _ d: Id<Decl>) -> FrameOff {
@@ -534,10 +569,7 @@ impl Gen {
     fn store(mut self, _ d: Id<Decl>) {
         match self.c.narrow<Field>(d) {
             Option::Some(f) => self.store_field(self.c.storage_place(f)),
-            Option::None => {
-                self.fp_plus(self.local_offset(d))
-                self.op(OP_MSTORE)
-            },
+            Option::None => self.store_frame(self.local_offset(d)),
         }
         self.body.depth -= 1
     }
@@ -581,10 +613,7 @@ impl Gen {
             Option::Some(c) => self.push(self.c.word_of(c)),
             Option::None => match self.c.narrow<Field>(d) {
                 Option::Some(f) => self.load_field(self.c.storage_place(f)),
-                Option::None => {
-                    self.fp_plus(self.local_offset(d))
-                    self.op(OP_MLOAD)
-                },
+                Option::None => self.load_frame(self.local_offset(d)),
             },
         }
         self.body.depth += 1
@@ -632,14 +661,14 @@ impl Gen {
             self.op(OP_DUP1)
             self.push(self.selector_of(case.arm).word())
             self.op(OP_EQ)
-            self.asm.jumpi(case.label)
+            self.piece.asm.jumpi(case.label)
             i += 1
         }
-        self.asm.jump(self.stub(REVERT_EMPTY))
+        self.piece.asm.jump(self.piece.stub(REVERT_EMPTY))
         i = 0
         while i < cases.len() {
             let case = cases[i]
-            self.asm.bind(case.label)
+            self.piece.asm.bind(case.label)
             self.arm(case.arm)
             i += 1
         }
@@ -661,7 +690,8 @@ impl Gen {
         Selector { v: self.c.selector(self.c.variant_of(arm)) }
     }
 
-    // Returns the ARMs of every RECV of the contract in source order, each with a new label.
+    // Adds a new label for each ARM of every RECV of the contract, and returns the ARMs in source
+    // order.
     fn cases(mut self) -> MemVec<Case> {
         var cases: MemVec<Case> = MemVec::new()
         let recvs = self.c.contract_node().recvs()
@@ -670,7 +700,9 @@ impl Gen {
             let l = self.node(self.elem(recvs, r)).list()
             var k: usize = 0
             while k < self.len(l) {
-                cases.push(Case { arm: self.elem(l, k), label: self.asm.label() })
+                cases.push(
+                        Case { arm: self.elem(l, k), label: self.piece.asm.label() },
+                    )
                 k += 1
             }
             r += 1
@@ -703,41 +735,41 @@ impl Gen {
     // Emits the initcode for a runtime of `rt` bytes (DESIGN.md §6.5).
     fn initcode(mut self, _ rt: Size) {
         // The end of the initcode, which is where the runtime code starts.
-        let end = self.asm.label()
+        let end = self.piece.asm.label()
         self.non_payable()
         let init = self.c.contract_node().init()
         if !init.is_none() {
             self.init_args(init, rt, end)
-            let exit = self.asm.label()
+            let exit = self.piece.asm.label()
             self.begin(init, BodyKind::Init(exit))
             self.body_end(self.node(init).body())
-            self.asm.bind(exit)
+            self.piece.asm.bind(exit)
         }
         self.push(rt.word())
-        self.asm.push_label(end)
+        self.piece.asm.push_label(end)
         self.push(SCRATCH.word())
         self.op(OP_CODECOPY)
         self.return_memory(rt)
         self.functions()
         self.stubs_end()
-        self.asm.mark(end)
+        self.piece.asm.mark(end)
     }
 
-    // Checks the arguments of INIT `init`, copies them from the code into its frame and
-    // validates them. They follow the `rt` bytes of runtime code, which start at `end`.
+    // Emits code that copies the arguments of INIT `init` from the code into its frame, and
+    // checks them. They follow the `rt` bytes of runtime code, which start at `end`.
     fn init_args(mut self, _ init: NodeId, _ rt: Size, _ end: Label) {
         let params = self.node(init).list()
         let args = words(self.len(params))
         // Extra bytes after the arguments are ignored.
         self.push(rt.plus(args).word())
-        self.asm.push_label(end)
+        self.piece.asm.push_label(end)
         self.op(OP_ADD)
         self.op(OP_CODESIZE)
         self.op(OP_LT)
         self.jumpi_to(REVERT_EMPTY)
         self.push(args.word())
         self.push(rt.word())
-        self.asm.push_label(end)
+        self.piece.asm.push_label(end)
         self.op(OP_ADD)
         self.push(FRAMES.at(FRAME_HEAD).word())
         self.op(OP_CODECOPY)
@@ -833,17 +865,17 @@ impl Gen {
     // `a && b` or `a || b`: `b` runs only when `a` does not decide the result.
     fn short_circuit(mut self, _ i: NodeId) {
         let n = self.node(i)
-        let end = self.asm.label()
+        let end = self.piece.asm.label()
         self.value(n.lhs())
         self.op(OP_DUP1)
         if n.op() == O_ANDAND {
             self.op(OP_ISZERO)
         }
-        self.asm.jumpi(end)
+        self.piece.asm.jumpi(end)
         self.op(OP_POP)
         self.body.depth -= 1
         self.value(n.rhs())
-        self.asm.bind(end)
+        self.piece.asm.bind(end)
     }
 
     // Replaces the top two words, `a` under `b`, with `a op b`, checked as SPEC §4 says.
@@ -930,8 +962,7 @@ impl Gen {
         var k = self.len(args)
         while k > 0 {
             k -= 1
-            self.fp_plus(self.dest_offset(dest, self.elem(args, k), k))
-            self.op(OP_MSTORE)
+            self.store_frame(self.dest_offset(dest, self.elem(args, k), k))
         }
         self.body.depth -= self.len(args)
     }
@@ -956,13 +987,12 @@ impl Gen {
         // The callee's frame starts where this body's ends.
         let next = self.body.frame
         self.store_args(args, ArgDest::Params(params, next))
-        let back = self.asm.label()
-        self.asm.push_label(back)
-        self.fp_plus(RET_ADDR.past(next))
-        self.op(OP_MSTORE)
+        let back = self.piece.asm.label()
+        self.piece.asm.push_label(back)
+        self.store_frame(RET_ADDR.past(next))
         self.link_frame(next)
-        self.asm.jump(self.fn_label(f))
-        self.asm.bind(back)
+        self.piece.asm.jump(self.piece.fn_label(f))
+        self.piece.asm.bind(back)
         if callee.ty() == TY_NONE {
             return LEAVES_NOTHING
         }
@@ -984,31 +1014,31 @@ impl Gen {
         self.store_at(FP)
     }
 
-    // IF `i` and its `else if` chain, in a loop as the checker reads it.
+    // Emits IF `i` with its `else if` chain, and returns what it leaves on the stack.
     fn if_expr(mut self, _ i: NodeId) -> Leaves {
-        let has_value = self.c.ty(i) != TY_UNIT
+        let leaves = Leaves::of(self.c.ty(i))
         let base = self.body.depth
-        let end = self.asm.label()
+        let end = self.piece.asm.label()
         var at = i
         while true {
             let n = self.node(at)
-            let next = self.asm.label()
+            let next = self.piece.asm.label()
             self.jump_unless(n.cond(), next)
-            self.branch(n.body(), has_value)
+            self.branch(n.body(), leaves)
             self.body.depth = base
-            self.asm.jump(end)
-            self.asm.bind(next)
+            self.piece.asm.jump(end)
+            self.piece.asm.bind(next)
             let e = n.otherwise()
             if e.is_none() { break }
             if self.node(e).kind != NODE_IF {
-                self.branch(e, has_value)
+                self.branch(e, leaves)
                 self.body.depth = base
                 break
             }
             at = e
         }
-        self.asm.bind(end)
-        if !has_value {
+        self.piece.asm.bind(end)
+        if !leaves.word {
             return LEAVES_NOTHING
         }
         self.body.depth = base + 1
@@ -1020,11 +1050,12 @@ impl Gen {
         self.value(cond)
         self.body.depth -= 1
         self.op(OP_ISZERO)
-        self.asm.jumpi(to)
+        self.piece.asm.jumpi(to)
     }
 
-    fn branch(mut self, _ b: NodeId, _ has_value: bool) {
-        if has_value {
+    // Emits expression `b` so that it leaves what `leaves` says.
+    fn branch(mut self, _ b: NodeId, _ leaves: Leaves) {
+        if leaves.word {
             self.value(b)
         } else {
             self.discard(b)
@@ -1057,7 +1088,7 @@ impl Gen {
         } else if k == NODE_BREAK || k == NODE_CONTINUE {
             let l = self.loops[self.loops.len() - 1]
             self.drop_to(l.depth)
-            self.asm.jump(if k == NODE_BREAK { l.end } else { l.top })
+            self.piece.asm.jump(if k == NODE_BREAK { l.end } else { l.top })
         } else if k == NODE_ASSIGN {
             if self.node(n.place()).kind == NODE_INDEX {
                 self.assign_entry(i)
@@ -1082,13 +1113,12 @@ impl Gen {
     fn return_stmt(mut self, _ i: NodeId) {
         let v = self.node(i).value()
         let before = self.body.depth
-        if self.body.ret == TY_UNIT {
-            // A unit body may still return a unit expression, such as a call.
-            if !v.is_none() {
-                self.discard(v)
-            }
-        } else {
+        // A unit body may return with or without an expression. `branch` under a `v.is_none()`
+        // check here made Back 9 bytes larger (Fe 26.7.0, -O s).
+        if self.body.leaves().word {
             self.value(v)
+        } else if !v.is_none() {
+            self.discard(v)
         }
         self.leave()
         self.body.depth = before
@@ -1096,15 +1126,15 @@ impl Gen {
 
     fn while_stmt(mut self, _ i: NodeId) {
         let n = self.node(i)
-        let top = self.asm.label()
-        let end = self.asm.label()
-        self.asm.bind(top)
+        let top = self.piece.asm.label()
+        let end = self.piece.asm.label()
+        self.piece.asm.bind(top)
         self.jump_unless(n.cond(), end)
         self.loops.push(Loop { top, end, depth: self.body.depth })
         self.discard(n.body())
         let _ = self.loops.pop()
-        self.asm.jump(top)
-        self.asm.bind(end)
+        self.piece.asm.jump(top)
+        self.piece.asm.bind(end)
     }
 
     // `x = e` or `x op= e`.
@@ -1161,8 +1191,7 @@ impl Gen {
         let indexed = w - data
         while w > data {
             w -= 1
-            self.fp_plus(self.log_offset(LogWord::at(w)))
-            self.op(OP_MLOAD)
+            self.load_frame(self.log_offset(LogWord::at(w)))
         }
         self.push(self.c.topic0(e))
         self.push(words(data).word())
@@ -1170,23 +1199,23 @@ impl Gen {
         self.op(log_op(indexed + 1))
     }
 
-    // The offset in the frame of word `w` of the log data, which starts where the frame ends.
+    // Returns the offset from FP of word `w` of the log data. The log data starts where the frame
+    // ends (DESIGN.md §6.1).
     fn log_offset(self, _ w: LogWord) -> FrameOff {
         self.past_frame(words(w.number()))
     }
 
-    // The offset `size` bytes past the end of the current frame.
     fn past_frame(self, _ size: Size) -> FrameOff {
         FrameOff { o: 0 }.past(self.body.frame.plus(size))
     }
 
-    // The offset in the frame of the calldata of an external call, which is past the frame
-    // (DESIGN.md §6.3).
+    // Returns the offset from FP of the calldata of an external call. The calldata lies past the
+    // frame (DESIGN.md §6.3).
     fn call_data(self) -> FrameOff {
         self.past_frame(SELECTOR_PAD)
     }
 
-    // The offset in the frame of argument `k` of the calldata of an external call.
+    // Returns the offset from FP of argument `k` in the calldata of an external call.
     fn call_arg_offset(self, _ k: usize) -> FrameOff {
         self.call_data().past(selector_and_words(k))
     }
@@ -1206,8 +1235,7 @@ impl Gen {
         self.store_args(args, ArgDest::CallArgs(fields))
         // The selector goes in the low bytes of the word where the frame ends.
         self.push(self.c.selector(v))
-        self.fp_plus(self.past_frame(bytes(0)))
-        self.op(OP_MSTORE)
+        self.store_frame(self.past_frame(bytes(0)))
         // CALL takes the gas on top, then the address, the value, the calldata's offset and size,
         // and the offset and size of the return data to copy, which is none.
         // a -> 0 0 size offset 0 a
@@ -1223,7 +1251,7 @@ impl Gen {
         self.jumpi_to(REVERT_RETURNDATA)
         self.body.depth -= 1
         let ty = self.c.ty(i)
-        if ty == TY_UNIT {
+        if !Leaves::of(ty).word {
             return LEAVES_NOTHING
         }
         // Decodes the return value as SPEC §6, "Calls" says.
@@ -1246,13 +1274,13 @@ impl Gen {
     fn assert(mut self, _ i: NodeId) {
         let n = self.node(i)
         if n.message().is_none() {
-            self.jump_unless(n.cond(), self.stub(PANIC_ASSERT))
+            self.jump_unless(n.cond(), self.piece.stub(PANIC_ASSERT))
             return
         }
         self.value(n.cond())
         self.body.depth -= 1
-        let ok = self.asm.label()
-        self.asm.jumpi(ok)
+        let ok = self.piece.asm.label()
+        self.piece.asm.jumpi(ok)
         let m = self.node(n.message()).as_str()
         // The ABI encoding of a string: its offset, its length, then its bytes padded to a word.
         // A message has at most 31 bytes, so they fit in one word (SPEC §1).
@@ -1269,12 +1297,12 @@ impl Gen {
             count = 3
         }
         self.revert(selector_and_words(count))
-        self.asm.bind(ok)
+        self.piece.asm.bind(ok)
     }
 }
 
-// The opcode of bitwise or shift operator `op`. The shift amount is on top, as SHL and SHR take
-// it.
+// Returns the opcode of bitwise or shift operator `op`. A shift takes its amount on top
+// (DESIGN.md §6.3).
 fn bitwise(_ op: Tok) -> Op {
     if op == O_AMP {
         OP_AND
@@ -1311,4 +1339,17 @@ pub fn compile() -> Compiled uses (input: mut Source) {
         Option::None => generate(checked.program),
     }
     Compiled { out, warns: checked.warns }
+}
+
+#[test]
+fn every_stub_once() {
+    var i: usize = 0
+    while i < ALL_STUBS.len() {
+        var count: usize = 0
+        for s in ALL_STUBS {
+            if s.index == i { count += 1 }
+        }
+        assert!(count == 1)
+        i += 1
+    }
 }

@@ -93,28 +93,49 @@ pub struct Label { id: usize }
 impl Copy for Label {}
 
 impl Label {
-    pub fn slot(self) -> LabelSlot {
+    fn slot(self) -> LabelSlot {
         LabelSlot { id: self.id }
     }
 }
 
-// A label, or an empty slot that holds none. Code generation keeps its tables of labels as slots,
-// and makes each label the first time it is needed. Jumps take only a `Label`, so an empty slot
-// cannot become a jump target. ADR 0014 says why this is not an `Option<Label>`.
-pub struct LabelSlot { id: usize }
+// A label, or an empty slot that holds none.
+struct LabelSlot { id: usize }
 
 impl Copy for LabelSlot {}
 
-pub const EMPTY_SLOT: LabelSlot = LabelSlot { id: 0 }
+const EMPTY_SLOT: LabelSlot = LabelSlot { id: 0 }
 
 impl LabelSlot {
-    pub fn is_empty(self) -> bool {
+    fn is_empty(self) -> bool {
         self.id == 0
     }
+}
 
-    // Returns the label in this slot. The slot must not be empty.
-    pub fn label(self) -> Label {
-        Label { id: self.id }
+// Labels by index, in slots that start empty. ADR 0014 says why a slot is not an
+// `Option<Label>`.
+pub struct LabelTable { slots: MemVec<LabelSlot> }
+
+impl LabelTable {
+    pub fn new(_ n: usize) -> LabelTable {
+        var slots: MemVec<LabelSlot> = MemVec::new()
+        while slots.len() < n {
+            slots.push(EMPTY_SLOT)
+        }
+        LabelTable { slots }
+    }
+
+    // Checks whether slot `k` holds a label.
+    pub fn has(self, _ k: usize) -> bool {
+        !self.slots[k].is_empty()
+    }
+
+    // Adds a new label of `asm` to slot `k` when the slot is empty, and returns the label in
+    // the slot.
+    pub fn label(mut self, _ asm: mut Asm, _ k: usize) -> Label {
+        if self.slots[k].is_empty() {
+            self.slots.set(k, asm.label().slot())
+        }
+        Label { id: self.slots[k].id }
     }
 }
 
@@ -199,7 +220,7 @@ impl Asm {
         self.code.len() >= MAX_CODE
     }
 
-    // Returns a new label, not yet bound.
+    // Adds a new label, not yet bound, and returns it.
     pub fn label(mut self) -> Label {
         self.offsets.push(CodeOffset { at: 0 })
         Label { id: self.offsets.len() - 1 }
@@ -260,7 +281,8 @@ impl Asm {
         self.op(OP_JUMPI)
     }
 
-    // Writes the offset of each label into the pushes of it. Every label must be bound.
+    // Writes the offset of each label into every push of it. A label that is never bound is
+    // pushed as offset 0.
     pub fn finish(mut self) {
         var k: usize = 0
         while k < self.fixups.len() {

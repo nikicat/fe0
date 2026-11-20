@@ -246,8 +246,10 @@ class Chain:
         return cls(node, node.w3.eth.contract(compiler.address, abi=abi), gas)
 
     def gas_report(self) -> str:
-        """Returns the lines that report the gas of each deployment."""
-        return "\n".join(f"deploy {c}: {gas:,} gas" for c, gas in self.deploy_gas.items())
+        """Returns the lines that report each deployment's gas and their total."""
+        lines = [f"deploy {c}: {gas:,} gas" for c, gas in self.deploy_gas.items()]
+        lines.append(f"deploy all: {sum(self.deploy_gas.values()):,} gas")
+        return "\n".join(lines)
 
     def _tx(self) -> TxParams:
         return {"from": self.node.accounts[0], "gas": BLOCK_GAS}

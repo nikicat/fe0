@@ -6,7 +6,7 @@ tags: [conformance]
 
 ## Goal
 ◐ and ❌ rows of SPEC.md §10 whose fix lives mostly in the Lexer and Back, which have room
-(Lexer about 18.5 KB, Back about 6.5 KB under 24,576).
+(Lexer about 18.8 KB, Back about 7.4 KB under 24,576).
 - Binary (`0b`) and octal (`0o`) literals, SPEC §1.
 - `assert!` messages over 31 bytes: `Error(string)` over several words, §1.
 - Widths that Fe lacks, such as `u7` and `u24`, as names, §1. Fe's type names are only
