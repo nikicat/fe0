@@ -1,0 +1,16 @@
+// Contract members and arms on one line, `//!` as a plain comment, and a tail after `return`
+// (SPEC §1, §3.1, §5.7).
+msg OneLineMsg {
+    #[selector = 1]
+    Get {} -> u256,
+    #[selector = 2]
+    Set { a: u256 },
+}
+
+//! A plain comment.
+fn one() -> u256 {
+    return 1
+    2
+}
+
+contract OneLine { mut v: u256, init() uses (mut v) { v = 3 } recv OneLineMsg { Get {} -> u256 uses (v) { v + one() } Set { a } uses (mut v) { v = a } } }

@@ -1,0 +1,14 @@
+// expect: N001 11:5
+// A contract receives a msg once (SPEC §6).
+msg M {
+    #[selector = 1]
+    S {},
+}
+contract C {
+    recv M {
+        S {} {}
+    }
+    recv M {
+        S {} {}
+    }
+}

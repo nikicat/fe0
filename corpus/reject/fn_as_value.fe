@@ -1,0 +1,11 @@
+// expect: N003 6:13
+// fe: accepts
+// A function is not a value (SPEC §5.4).
+fn g() -> u256 { 1 }
+fn h() -> u256 {
+    let k = g
+    1
+}
+contract C {
+    mut v: u256,
+}

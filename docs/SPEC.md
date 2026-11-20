@@ -4,9 +4,15 @@ Fe0 is a small subset of [Fe](https://github.com/argotorg/fe) for writing EVM co
 Fe0 compiler is written in Fe.
 
 **The subset rule.** Every program Fe0 accepts must also be accepted by the official compiler,
-and must behave the same way: the same storage effects, return data and revert data for every
-call. Fe0 may reject programs that Fe accepts, never the other way round. Where this document
-and the official compiler disagree, the compiler wins and the document is fixed.
+and must behave the same way: for every deployment and call, the same success or failure, return
+or revert data, logs and storage writes. Fe0 may reject programs that Fe accepts, never the
+other way round. Where this document and the official compiler disagree, the compiler wins and
+the document is fixed.
+- The rule holds given enough gas. The two builds use different amounts of gas, so a call
+  with a tight gas limit may fail under one and succeed under the other.
+- The rule holds below Fe's recursion limit. Fe keeps return addresses on the EVM stack, and
+  Fe0 keeps frames in memory. So a call that recurses past the stack's limit reverts under Fe
+  and succeeds under Fe0 ([ADR 0021](adr/0021-frames-gas-and-depth.md) gives the depth).
 
 Marks used below:
 - **[V]** — behaviour not yet confirmed against the official compiler. Each one becomes a
@@ -59,10 +65,12 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
     `corpus/reject/doc_documents_nothing.fe`.
   - Fe rejects a doc comment on a selector's line (`1-0001`) **[✓]**. The probe is
     `corpus/reject/doc_after_selector.fe`.
-  - Fe rejects a doc comment at the end of an item's line (`1-0001`) **[V]**.
+  - Fe rejects a doc comment at the end of an item's line (`1-0001`) **[✓]**. The probe is
+    `corpus/reject/doc_item_line.fe`.
   - Fe also rejects a doc comment among binds, among parameters or `uses` entries, anywhere
-    else inside `( )`, and at the end of the file **[V]**.
-  - `//!` is an ordinary comment in both **[V]**.
+    else inside `( )`, and at the end of the file (`1-0001`) **[✓]**. The probes are the other
+    `corpus/reject/doc_*.fe`.
+  - `//!` is an ordinary comment in both **[✓]**. The probe is `corpus/one_line.fe`.
 - **Binary (`0b`) and octal (`0o`) literals** are left out of Fe0. They are valid Fe, so they
   could be added later.
 
@@ -98,6 +106,13 @@ rule for every name, which the subset rule allows.
 | `bool` | `true`, `false` | `! && \|\| == !=` |
 | `Address` | 160-bit account address | `== !=`, and `a.call(…)` (§6, "Calls"). `Address::zero()` and the methods of `Ctx` that return an `Address` make one (§6, "The caller"). Other values come from parameters, storage and return values |
 
+- `!` takes a `bool`, and `~ & | ^` take `u256`s. Fe also accepts `!` on a `u256` and
+  `& | ^` on `bool`s **[✓]**, and Fe0 rejects them (`T001`). The probes are
+  `corpus/reject/bang_u256.fe` and `corpus/reject/bitand_bool.fe`.
+- Fe0 has no unit value. A call of a function without a return type, an `if` without `else`,
+  `log.emit(…)` and a call of a variant without a return type have no value. Fe0 rejects one
+  where a value is needed (`T003`), as in `let x = g()`. Fe gives them the type `()` and
+  accepts `let x = g()` **[✓]**. The probe is `corpus/reject/unit_as_value.fe`.
 - A contract field may also be a map, `StorageMap<K, V>` (§6, "Maps").
 - There are no other types: no signed integers or other widths, no tuples, arrays, structs,
   enums or references.
@@ -121,7 +136,8 @@ The grammar is EBNF. `{ x }` means zero or more, `[ x ]` means optional. Termina
   `msg`, `contract`, `recv` and event bodies. A newline that is required, such as the one after
   a selector, is shown as `NL`.
 - Fe rejects two items on one line (`1-0001`) **[✓]**. The probe is
-  `corpus/reject/items_one_line.fe`. Fe accepts contract members and arms on one line **[V]**.
+  `corpus/reject/items_one_line.fe`. Fe accepts contract members and arms on one line **[✓]**.
+  The probe is `corpus/one_line.fe`.
 - Fe rejects a selector with its variant on the same line (`1-0001`) **[✓]**. The probe is
   `corpus/reject/selector_same_line.fe`. It also rejects `#[event]` with its struct on the
   same line, and `#[indexed]` with its field (`1-0001`) **[✓]**. The probes are
@@ -323,6 +339,10 @@ Probed **[✓]**:
 - In `m[k] = e` and `m[k] op= e`, `e` is evaluated before `k` **[✓]**. So with `z = 0`,
   `m[1 / z] = z - 1` reverts with `Panic(0x11)`, from `z - 1`. The probe is the arm `Order` of
   `corpus/maps.fe`.
+- In `p op= e`, `e` is evaluated before the old value of `p` is read **[✓]**. A call in `e`
+  may call back into the contract and write `p`. So with `v = 10`, `v += a.call(…)` leaves
+  `v` at 101 when the call sets `v` to 100 and returns 1. The probe is
+  `corpus/reenter_order.fe`.
 - In `log.emit(E { … })`, the values are evaluated in the order written, not in the order of
   the event's fields **[✓]**. The probe is the arm `Order` of `corpus/events.fe`.
 - In `a.call(M::V { … })`, `a` is evaluated first, then the values in the order written **[✓]**.
@@ -338,8 +358,15 @@ Probed **[✓]**:
 | `&` `\|` `^` `~` | Never fail |
 | `<<`, `>>` | Never fail. Bits shifted out are discarded (`3 << 255` = 2²⁵⁵), and a shift by 256 or more gives 0, as with the EVM's `SHL`/`SHR` **[✓]** |
 
+- `/` rounds down, and `%` gives the remainder of that division.
 - `Panic(c)` means the revert data `0x4e487b71 ‖ uint256(c)`, Solidity's encoding.
 - Compound assignment `p op= e` stores `p op e` in the place `p`, with the same checks.
+- A revert undoes every storage write and log of the call, as the EVM does.
+
+**Loops.** `while c { … }` runs its body while `c` is true. `break` leaves the innermost loop,
+and `continue` goes on to its next test of `c`. Both may stand only inside a loop (`N013`). Fe
+rejects them outside one (`8-0019`) **[✓]**. The probe is `corpus/reject/break_outside_loop.fe`.
+A `while` has no value.
 
 **Comparisons** are unsigned on `u256`. On `Address`, only equality is allowed.
 
@@ -358,12 +385,16 @@ ABI-encoded string.
 ## 5. Names, scopes and checking
 
 1. **Items** (`const`, `fn`, `msg`, `contract` and events) form one namespace and may be
-   declared in any order. Duplicates are an error. Fe rejects an event named like a msg
-   (`2-0004`) **[✓]**.
+   declared in any order. Duplicates are an error (`N001`). Fe rejects an event named like a
+   msg (`2-0004`) **[✓]**.
+   - Two parameters of a function, two variants of a msg, and two fields of a variant or of an
+     event may not share a name either (`N001`). Fe rejects each of these **[✓]**. The probes
+     are `corpus/reject/duplicate_param.fe`, `duplicate_variant.fe` and `duplicate_field.fe`.
 2. **Locals.** `let`, `var` and the binds of a `recv` arm declare locals. The name rules below
    apply to locals and to parameters, except `N017` below.
-   - `let` declares an immutable local and `var` a mutable one. Assigning to a `let` local is an
-     error, as in Fe (`8-0018`) **[✓]**.
+   - `let` declares an immutable local and `var` a mutable one. Assigning to a `let` local or
+     to a parameter is an error (`N014`), as in Fe (`8-0018`) **[✓]**. The probes are
+     `corpus/reject/assign_let.fe` and `corpus/reject/assign_param.fe`.
    - Shadowing with a new `let`/`var` is allowed **[✓]**.
    - A local's scope runs from after its declaration to the end of its block.
    - The name of a local or a parameter may not be the name of a contract field (`N005`). A
@@ -386,9 +417,12 @@ ABI-encoded string.
      probe is `corpus/uppercase_params.fe`.
 3. **Constants** are evaluated at compile time with the §4 semantics. Overflow is a compile-time
    error (`3-0034`), and so is division by zero (`3-0025`) **[✓]**.
-   - A constant may refer only to earlier constants and literals. So a map entry is not a
-     constant expression (`C001`). Fe rejects one too, because the map is an undefined name
-     there (`8-0012`) **[✓]**. The probe is `corpus/reject/map_in_const.fe`.
+   - A constant expression is built from integer and `bool` literals, earlier constants, the
+     operators of §4 and parentheses. Anything else is `C001`.
+   - So a map entry is not a constant expression. Fe rejects one too, because the map is an
+     undefined name there (`8-0012`) **[✓]**. The probe is `corpus/reject/map_in_const.fe`.
+   - Fe accepts an `if` in a constant **[✓]**, and Fe0 rejects it. The probe is
+     `corpus/reject/if_in_const.fe`.
    - Fe accepts forward references **[✓]**; Fe0 keeps the restriction, which is safe under the
      subset rule.
 4. **Function calls.**
@@ -397,14 +431,19 @@ ABI-encoded string.
      is the identifier `x` itself **[✓]**. Leaving out a required label is `8-0024` **[✓]**.
    - Arguments must follow the parameter order. Swapped labels are `8-0024` **[✓]**.
    - Recursion is allowed. Fe0 adds no limit beyond EVM gas and stack depth.
+   - A function is not a value (`N003`). Fe accepts `let h = g` **[✓]**. The probe is
+     `corpus/reject/fn_as_value.fe`.
 5. **Free functions are pure.** They have no `uses` clause, so they cannot touch storage, read
    the caller, emit an event or call a contract (§6). Fe rejects a free function that reads
    the caller or a map, because `ctx` or the map is an undefined name there (`8-0012`)
    **[✓]**. The probes are `corpus/reject/ctx_in_free_function.fe` and
    `corpus/reject/map_in_free_function.fe`.
 6. **Return paths.** A function with `-> T` must produce a `T` on every path, either through its
-   final expression or through `return`. Otherwise it is an error (`8-0000`, type mismatch)
-   **[✓]**.
+   final expression or through `return`. Otherwise it is an error (`T001`), as in Fe
+   (`8-0000`, type mismatch) **[✓]**.
+   - A `while` never counts as a path that leaves, even `while true`. So
+     `fn f() -> u256 { while true { return 1 } }` is an error (`T001`). Fe accepts it **[✓]**.
+     The probe is `corpus/reject/while_true_tail.fe`.
 7. **A tail after a diverging statement.** A block with a final expression has that
    expression's type, even when `return`, `break` or `continue` comes before it and the
    expression is never reached. A block without a final expression has unit type. When one
@@ -413,7 +452,8 @@ ABI-encoded string.
      probe is `corpus/reject/never_tail_return.fe`.
    - Fe rejects `break` followed by `5` in a loop body (`8-0031`) **[✓]**. The probe is
      `corpus/reject/never_tail_break.fe`.
-   - Fe accepts `return 1` followed by `2` in a function `-> u256`, and so does Fe0 **[V]**.
+   - Fe accepts `return 1` followed by `2` in a function `-> u256`, and so does Fe0 **[✓]**.
+     The probe is `corpus/one_line.fe`.
 
 ## 6. Contracts and effects
 
@@ -657,8 +697,13 @@ point on a node against `corpus/callee.fe` **[✓]**:
 - In `recv M`, `M` must name a msg (`N002`, `N007`) **[✓]**.
 - A `recv M` block must have exactly one arm per variant of `M` **[✓]** (the "missing variants"
   error).
+- A contract has at most one `recv` block for a msg (`N001`). Fe rejects a second
+  (`8-0046`) **[✓]**. The probe is `corpus/reject/recv_twice.fe`.
 - Arm bindings name the variant's fields: `Set { a: x }` binds field `a` to the local `x`, and
   `Set { a }` binds it to the local `a`.
+- An arm binds every field of its variant (`N011`), and each one once (`N001`). Fe rejects a
+  field left out (`8-0011`) and a field bound twice (`8-0008`) **[✓]**. The probes are
+  `corpus/reject/arm_missing_field.fe` and `corpus/reject/duplicate_bind.fe`.
 - An arm's return type must match its variant's.
 - A selector must fit in 32 bits (`9-0001`) **[✓]**. Selectors must be unique within a msg
   (`9-0004`) **[✓]** and across all msgs the contract receives (`8-0047`) **[✓]**.
@@ -692,9 +737,9 @@ The runtime dispatcher matches the official one (`mir/src/runtime/synthetic.rs:7
     - Extra trailing bytes are ignored.
     - Deploying with `value > 0` fails, because `init` is non-payable.
 - A contract without `init` gets a no-op one.
-- An ingot holds one contract.
-- A program must declare a contract. Fe accepts a module without one, so this rule is Fe0's
-  own.
+- A program declares exactly one contract: `G001` without one and `N015` at a second. Fe
+  accepts a module with none or with several **[✓]**, so this rule is Fe0's own. The probes
+  are `corpus/reject/no_contract.fe` and `corpus/reject/two_contracts.fe`.
 
 ## 7. Diagnostics
 
@@ -711,7 +756,9 @@ The subset rule is tested two ways.
   latter running on the EVM, and deploys both builds with the same constructor arguments and
   value. Either both deployments create a contract or neither does. Then both contracts get
   the same calls, and each call must give the same success flag and the same return or
-  revert data, byte for byte. Storage effects show through the later calls that read them.
+  revert data, byte for byte. Inside `fe test`, storage effects show through the later calls
+  that read them. On a node, the logs and the storage writes of each call must match too
+  (DESIGN.md §10, "On a node").
 - **Rejected programs.** Fe0 must give the expected error code at the expected position, and
   Fe must reject the program too, unless the rule is one that Fe0 adds on top of Fe (such as
   §5.2's ban on locals named like fields). Then Fe must accept it.
@@ -748,6 +795,9 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 |---|---|---|
 | Binary operators and their precedence | ✅ | §3.2 |
 | Unary `+` | ◐ not at the start of a line where a newline can end a statement | §3.2, §3.4 |
+| `!` on `u256`, `& \| ^` on `bool` | ❌ | §2 |
+| A unit value, as in `let x = g()` | ❌ | §2 |
+| `while true` as a path that leaves a function | ❌ | §5.6 |
 | `**` | ❌ | §3.3 |
 | Compound assignment | ✅ | §1 |
 | Decimal and hex literals | ✅ | §1 |
@@ -765,15 +815,16 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 
 | Feature | Fe0 | Where |
 |---|---|---|
-| `const` | ◐ refers only to earlier constants | §5.3 |
+| `const` | ◐ literals, earlier constants and operators only | §5.3 |
 | Functions with positional and labelled parameters | ✅ | §5.4 |
-| Recursion | ◐ deeper than Fe's stack limit, Fe0 differs (task T0gp3v) | §5.4 |
+| Recursion | ◐ deeper than Fe's stack limit, Fe0 differs | the subset rule, §5.4 |
 | `mod`, `use`, `extern`, `unsafe`, `with` | ❌ | §3.3 |
 | A local named like a field or an item | ◐ rejected | §5.2 |
 | Uppercase parameters | ✅ | §5.2 |
 | Uppercase locals | ◐ rejected | §5.2 |
 | Type names and contextual words as names | ◐ rejected everywhere | §1 |
-| A program without a contract | ◐ rejected | §6 |
+| A program without exactly one contract | ◐ rejected | §6 |
+| A function as a value | ❌ | §5.4 |
 
 **Contracts and effects**
 

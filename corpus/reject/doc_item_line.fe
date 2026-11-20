@@ -1,0 +1,6 @@
+// expect: P006 3:22
+// A doc comment may not end the line of an item (SPEC §1).
+fn g() -> u256 { 1 } /// The next item.
+contract C {
+    mut v: u256,
+}

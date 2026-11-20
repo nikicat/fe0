@@ -1,0 +1,11 @@
+// expect: N011 9:9
+// An arm binds every field of its variant (SPEC §6).
+msg M {
+    #[selector = 1]
+    S { a: u256, b: u256 },
+}
+contract C {
+    recv M {
+        S { a } {}
+    }
+}

@@ -1,0 +1,12 @@
+// expect: P003 9:16
+// A doc comment may not stand among binds (SPEC §1).
+msg M {
+    #[selector = 1]
+    S { a: u256, b: u256 },
+}
+contract C {
+    recv M {
+        S { a, /// The second.
+            b } {}
+    }
+}

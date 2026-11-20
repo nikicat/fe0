@@ -1,0 +1,53 @@
+// When `p op= e` reads the old value of `p`, seen by a call in `e` that calls back and writes
+// `p` (SPEC §4). The contract calls itself.
+msg ReenterMsg {
+    #[selector = 1]
+    Set { a: u256 } -> u256,
+    #[selector = 2]
+    Field {} -> u256,
+    #[selector = 3]
+    Entry {} -> u256,
+    #[selector = 4]
+    Local {} -> u256,
+    #[selector = 5]
+    Minus {} -> u256,
+}
+
+contract Reenter uses (ctx: Ctx, call: mut Call) {
+    mut v: u256,
+    mut m: StorageMap<u256, u256>,
+
+    recv ReenterMsg {
+        Set { a } -> u256 uses (mut v, mut m) {
+            v = a
+            m[0] = a
+            1
+        }
+        Field {} -> u256 uses (ctx, mut v, mut call) {
+            let me: Address = ctx.address()
+            v = 10
+            v += me.call(ReenterMsg::Set { a: 100 })
+            v
+        }
+        Entry {} -> u256 uses (ctx, mut m, mut call) {
+            let me: Address = ctx.address()
+            m[0] = 10
+            m[0] += me.call(ReenterMsg::Set { a: 100 })
+            m[0]
+        }
+        Local {} -> u256 {
+            var x: u256 = 10
+            x += {
+                x = 100
+                1
+            }
+            x
+        }
+        Minus {} -> u256 uses (ctx, mut v, mut call) {
+            let me: Address = ctx.address()
+            v = 10
+            v -= me.call(ReenterMsg::Set { a: 100 })
+            v
+        }
+    }
+}

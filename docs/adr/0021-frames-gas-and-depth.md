@@ -24,7 +24,7 @@ A local costs about 15 gas to read (`PUSH1 0x40 MLOAD PUSHn off ADD MLOAD`), aga
 
 **The recursion depth.** Fe keeps return addresses on the EVM stack, whose 1,024 slots run out
 at a recursion depth of about 1,010 for a one-argument function. Fe0 has no such limit. So a
-call that recurses deeper reverts under Fe and succeeds under Fe0 (task T0gp3v). That breaks
+call that recurses deeper reverts under Fe and succeeds under Fe0. That breaks
 the subset rule's promise of the same behaviour.
 
 ## Decision

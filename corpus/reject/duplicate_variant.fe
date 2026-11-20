@@ -1,0 +1,11 @@
+// expect: N001 6:5
+// Two variants of a msg may not share a name (SPEC §5.1).
+msg M {
+    #[selector = 1]
+    S {},
+    #[selector = 2]
+    S {},
+}
+contract C {
+    mut v: u256,
+}

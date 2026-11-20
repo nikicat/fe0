@@ -1,0 +1,9 @@
+// expect: N015 7:1
+// fe: accepts
+// A program has one contract (SPEC §6).
+contract C {
+    mut v: u256,
+}
+contract D {
+    mut w: u256,
+}

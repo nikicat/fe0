@@ -1,0 +1,9 @@
+// expect: N014 4:5
+// A parameter may not be assigned (SPEC §5.2).
+fn g(_ x: u256) -> u256 {
+    x = 1
+    x
+}
+contract C {
+    mut v: u256,
+}

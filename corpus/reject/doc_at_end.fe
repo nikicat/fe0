@@ -1,0 +1,6 @@
+// expect: P001 6:1
+// A doc comment may not end the file (SPEC §1).
+contract C {
+    mut v: u256,
+}
+/// Nothing.

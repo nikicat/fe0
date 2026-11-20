@@ -1,0 +1,6 @@
+// expect: N001 3:17
+// Two parameters may not share a name (SPEC §5.1).
+fn g(_ a: u256, _ a: u256) {}
+contract C {
+    mut v: u256,
+}

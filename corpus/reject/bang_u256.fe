@@ -1,0 +1,7 @@
+// expect: T001 4:28
+// fe: accepts
+// ! takes a bool (SPEC §2).
+fn g(_ x: u256) -> u256 { !x }
+contract C {
+    mut v: u256,
+}

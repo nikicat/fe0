@@ -1,0 +1,7 @@
+// expect: C001 4:17
+// fe: accepts
+// An if is not a constant expression (SPEC §5.3).
+const A: u256 = if true { 1 } else { 2 }
+contract C {
+    mut v: u256,
+}

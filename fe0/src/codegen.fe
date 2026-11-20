@@ -1137,15 +1137,15 @@ impl Gen {
         self.piece.asm.bind(end)
     }
 
-    // `x = e` or `x op= e`.
+    // Emits code that runs `x = e` or `x op= e`. Fe evaluates `e` before it reads `x` (SPEC §4).
     fn assign(mut self, _ i: NodeId) {
         let n = self.node(i)
         let d = self.c.declaration(n.place())
-        if n.op() == O_ASSIGN {
-            self.value(n.value())
-        } else {
+        self.value(n.value())
+        if n.op() != O_ASSIGN {
+            // e -> x e
             self.load(d)
-            self.value(n.value())
+            self.op(OP_SWAP1)
             self.apply(n.op().plain_form())
         }
         self.store(d)

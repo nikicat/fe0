@@ -1,0 +1,9 @@
+// expect: N001 5:18
+// Two fields of a variant may not share a name (SPEC §5.1).
+msg M {
+    #[selector = 1]
+    S { a: u256, a: u256 },
+}
+contract C {
+    mut v: u256,
+}

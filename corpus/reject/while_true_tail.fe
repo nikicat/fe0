@@ -1,0 +1,11 @@
+// expect: T001 4:16
+// fe: accepts
+// A while loop does not diverge, even on true (SPEC §5.6).
+fn g() -> u256 {
+    while true {
+        return 1
+    }
+}
+contract C {
+    mut v: u256,
+}

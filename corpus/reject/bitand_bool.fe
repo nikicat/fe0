@@ -1,0 +1,7 @@
+// expect: T001 4:27
+// fe: accepts
+// & takes u256 operands (SPEC §2).
+fn g(_ x: bool) -> bool { x & x }
+contract C {
+    mut v: u256,
+}

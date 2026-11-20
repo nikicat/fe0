@@ -1,0 +1,7 @@
+// expect: L009 3:32
+// A doc comment may not stand among parameters (SPEC §1).
+fn g(_ a: u256, /// The second.
+    _ b: u256) {}
+contract C {
+    mut v: u256,
+}

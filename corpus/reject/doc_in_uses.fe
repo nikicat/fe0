@@ -1,0 +1,11 @@
+// expect: L009 7:40
+// A doc comment may not stand among uses entries (SPEC §1).
+contract C {
+    mut v: u256,
+    mut w: u256,
+
+    init() uses (mut v, /// The second.
+        mut w) {
+        v = w
+    }
+}

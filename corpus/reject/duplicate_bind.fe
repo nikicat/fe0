@@ -1,0 +1,11 @@
+// expect: N001 9:19
+// An arm binds each field once (SPEC §6).
+msg M {
+    #[selector = 1]
+    S { a: u256, b: u256 },
+}
+contract C {
+    recv M {
+        S { a, b, a: c } {}
+    }
+}

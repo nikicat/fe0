@@ -1,0 +1,8 @@
+// expect: N013 4:5
+// break may stand only in a loop (SPEC §5.2).
+fn g() {
+    break
+}
+contract C {
+    mut v: u256,
+}

@@ -1,0 +1,10 @@
+// expect: T003 6:13
+// fe: accepts
+// A call of a function without a return type has no value (SPEC §4).
+fn g() {}
+fn h() {
+    let x = g()
+}
+contract C {
+    mut v: u256,
+}
