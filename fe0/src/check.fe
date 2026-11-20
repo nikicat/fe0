@@ -751,10 +751,10 @@ impl Checker {
         if d.is_none() {
             return Result::Err(self.at(N_UNKNOWN_NAME, i))
         }
-        if self.node(d).kind != K::kind() {
-            return Result::Err(self.at(wrong, i))
+        if let Option::Some(k) = self.c.narrow<K>(decl(d)) {
+            return Result::Ok(k)
         }
-        Result::Ok(Id { n: d })
+        Result::Err(self.at(wrong, i))
     }
 
     fn local(self, _ sym: Sym) -> NodeId {
