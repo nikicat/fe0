@@ -9,15 +9,15 @@ frame, with the frame pointer at `0x40`. It expects output "larger and more expe
 official compiler's" and counts unlimited recursion as a gain. Two facts bear on that.
 
 **The gas cost.** `tools/gas_compare.py` (task Tsm5t2) sends each corpus program's call script
-to Fe0's build and to Fe's builds on anvil. Fe0's gas over Fe's, on Fe 26.6.0:
+to Fe0's build and to Fe's builds on anvil. Fe0's gas over Fe's, on Fe 26.7.0:
 
 | Kind of program | Fe0 ÷ Fe (`-O 1`) |
 |---|---|
-| storage-bound, such as `tokens.fe`, `vault.fe`, `escrow.fe` | 1.00 to 1.08 (`tokens` 1.01) |
-| `amm.fe`, a Uniswap v2–style pair without the tokens | 1.07 (a swap: 12,450 against 11,500) |
-| arithmetic and loops, such as `isqrt`, `power`, `primes` | 2.0 to 3.7 |
-| calls, such as `fib`, `ackermann`, `many_params` | 2.0 to 3.1 |
-| the whole corpus | 1.75 (1.71 against `-O s`) |
+| storage-bound, such as `tokens.fe`, `vault.fe`, `escrow.fe` | 1.00 to 1.03 (`tokens` 1.01) |
+| `amm.fe`, a Uniswap v2–style pair that calls two tokens | 1.02 (a swap: 44,859 against 44,079) |
+| arithmetic and loops, such as `isqrt`, `power`, `primes` | 2.0 to 3.5 |
+| calls, such as `fib`, `ackermann`, `many_params` | 2.2 to 3.1 |
+| the whole corpus | 1.51 (1.48 against `-O s`) |
 
 A local costs about 15 gas to read (`PUSH1 0x40 MLOAD PUSHn off ADD MLOAD`), against 3 for a
 `DUP`. Storage costs thousands of gas per access in both builds, so it hides the difference.
