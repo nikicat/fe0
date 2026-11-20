@@ -19,7 +19,9 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
   ADR 0021 by kind of program.
 
 ## State
-- README.md is written and reviewed, unstaged. Its gas table and ADR 0021's were remeasured on
+- The compiler was redeployed to Arbitrum One on Nov 20 from eefab6f's code. DEMO.md and
+  `deployments/42161.json` have the new addresses.
+- README.md is written and reviewed. Its gas table and ADR 0021's were remeasured on
   Fe 26.7.0 (whole corpus 1.51).
 - The starter's SUBMISSION.md is gone, but the registration email lists what a submission must
   include: a public GitHub repository, the exact commit, an OSI license, the Fe version, tests,
@@ -27,8 +29,7 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
   commit, which goes in the form.
 
 ## Next
-- Redeploy every phase contract and Compiler from the submitted commit with `tools/deploy.py`
-  and browser-web3-signer, then update docs/DEMO.md and `deployments/42161.json`. The Nov 14
-  deployment already differs from main (since fb9d801).
 - Push, make the repo public (Apache-2.0 LICENSE is in place), record the exact commit SHA and
-  `fe 26.7.0`, and submit.
+  `fe 26.7.0`, and submit with the link in `docs/registration-confirmation.txt`.
+- If fe0, fe0-chain or their build changes before submission, redeploy with `tools/deploy.py`
+  (remove `deployments/42161.json` first) and update docs/DEMO.md.

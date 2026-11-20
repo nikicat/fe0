@@ -6,11 +6,11 @@ Compiler calls them in turn (DESIGN.md §8). `tools/deploy.py` deployed them, an
 
 | Contract | Address |
 |---|---|
-| Compiler | [`0xc3166Af5e42019C1f986b2e1f4958D69C377fe79`](https://arbiscan.io/address/0xc3166Af5e42019C1f986b2e1f4958D69C377fe79) |
-| Lexer | [`0x706d715692f1ECF1A26171a43Ed476DF81A38441`](https://arbiscan.io/address/0x706d715692f1ECF1A26171a43Ed476DF81A38441) |
-| Parser | [`0x57ca98785024010E16e3487611dBfD8a895505D7`](https://arbiscan.io/address/0x57ca98785024010E16e3487611dBfD8a895505D7) |
-| Checker | [`0xd36E74A23bFf124b891CfD1E0AB738bc1bc1e342`](https://arbiscan.io/address/0xd36E74A23bFf124b891CfD1E0AB738bc1bc1e342) |
-| Back | [`0x5A21bf7093de315B284251398E59b2C88B73cb8d`](https://arbiscan.io/address/0x5A21bf7093de315B284251398E59b2C88B73cb8d) |
+| Compiler | [`0x6743f90Eb910D670d681635947fD8A63B3397C7B`](https://arbiscan.io/address/0x6743f90Eb910D670d681635947fD8A63B3397C7B) |
+| Lexer | [`0xE81863dbaa6Cc6649F9c8B43a19B76cc8D6B1aC1`](https://arbiscan.io/address/0xE81863dbaa6Cc6649F9c8B43a19B76cc8D6B1aC1) |
+| Parser | [`0xFf3eeBe9F5deAF46610205Cde6cC5A5132D0A030`](https://arbiscan.io/address/0xFf3eeBe9F5deAF46610205Cde6cC5A5132D0A030) |
+| Checker | [`0x6427ceD82919812daF51172E16cc5d1e5705B254`](https://arbiscan.io/address/0x6427ceD82919812daF51172E16cc5d1e5705B254) |
+| Back | [`0xF15cEFE0E5890Dc67DD075cc357a1573810C3F10`](https://arbiscan.io/address/0xF15cEFE0E5890Dc67DD075cc357a1573810C3F10) |
 
 `fe0-chain/README.md` describes Compiler's interface and its errors.
 
@@ -27,7 +27,7 @@ The output is the same as the native CLI's (`out/cli/fe0_cli < corpus/counter.fe
 byte. Without our tools, Foundry's `cast` does the same:
 
 ```sh
-cast call --rpc-url https://arb1.arbitrum.io/rpc 0xc3166Af5e42019C1f986b2e1f4958D69C377fe79 \
+cast call --rpc-url https://arb1.arbitrum.io/rpc 0x6743f90Eb910D670d681635947fD8A63B3397C7B \
   "compile(bytes)(bytes)" "$(cast from-utf8 "$(cat corpus/counter.fe)")"
 ```
 
@@ -49,14 +49,14 @@ line 5, column 5.
 `deploy(bytes src, bytes args)` compiles the source and deploys it with the constructor
 arguments `args`. The demo deployed the counter with start value 2:
 
-- the transaction: [`0xec990daa…`](https://arbiscan.io/tx/0xec990daa3b796b174cfab6c56f418f15c953f8974f1bd6e0b5885a15b6be5212),
-  2,415,927 gas;
-- the new contract: [`0x58307ED5Db3E1F9EdCe546258Cbf2d23fBA89F57`](https://arbiscan.io/address/0x58307ED5Db3E1F9EdCe546258Cbf2d23fBA89F57).
+- the transaction: [`0xdb6f7b7e…`](https://arbiscan.io/tx/0xdb6f7b7e76451807757c88886e5c37462a7633a5309d63efaa474379a8e16044),
+  2,125,480 gas;
+- the new contract: [`0xd34823a55Cae65c980e3535a992e2c23505b858F`](https://arbiscan.io/address/0xd34823a55Cae65c980e3535a992e2c23505b858F).
 
 Its `get()` returns 2:
 
 ```sh
-cast call --rpc-url https://arb1.arbitrum.io/rpc 0x58307ED5Db3E1F9EdCe546258Cbf2d23fBA89F57 \
+cast call --rpc-url https://arb1.arbitrum.io/rpc 0xd34823a55Cae65c980e3535a992e2c23505b858F \
   "get()(uint256)"
 ```
 

@@ -160,8 +160,9 @@ def main() -> None:
         if args.rehearse:
             with Node() as node:
                 sender: Sender = Rehearsal(node)
-                deployment = Deployment(ROOT / "out/rehearsal.json")
-                deployment.path.unlink(missing_ok=True)
+                rehearsal = ROOT / "out/rehearsal.json"
+                rehearsal.unlink(missing_ok=True)
+                deployment = Deployment(rehearsal)
                 demo(sender, deployment.deploy_all(sender, builds))
         else:
             sender = Wallet(args.rpc, args.chain)
