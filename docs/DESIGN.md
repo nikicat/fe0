@@ -105,18 +105,21 @@ length-prefixed run in one array. Ids, operators and written types are typed (`N
 `check(ast)` in `fe0/src/check.fe` returns a `CheckOutput`. Its program is a `Checked`, which
 documents what each of its fields holds.
 
-Constants are evaluated before any body, in source order (`Checker.program`).
+Constants are evaluated before any body, in passes over the items (`Checker.constants`).
 
 - **Types:** the checker reuses `Ty` from `fe0/src/ast.fe` and adds types of its own. The
   `TY_` constants there document each one, and `Ty.fits` says which type fits which. Because
   `TY_NEVER` fits any type, `if c { return 1 } else { x }` has the type of `x`.
 - **Scopes:** a stack of locals, innermost last (`Body.locals`). Lookup scans it from the
   top, then the contract fields, then the items. A block truncates the stack back to where it
-  started. `Checker.declare` rejects a local or parameter named like a contract field (a
-  storage field or an effect) or an item (SPEC §5.2).
+  started. So a local hides a field or an item of its name. `Checker.declare` rejects the names
+  that Fe rejects too (SPEC §5.2).
 - **Constants:** evaluated during checking with the same checked arithmetic as run time.
   Overflow gives `C034` and division by zero `C025`.
-  - Only earlier constants may be referenced.
+  - A pass skips a constant that refers to one not evaluated yet, and a pass that evaluates
+    none reports a cycle (`N006`). Evaluating a constant on its first use would recurse once
+    per constant in a chain, and the EVM stack bounds recursion on chain (§8a). The parser's
+    depth cap does not bound a chain of constants.
   - Both operands of `&&` and `||` are evaluated. `eval_binary` in `fe0/src/check.fe` says why.
 - **Effects:** `init` and each arm get a `Grant` built from their `uses` (`Checker.grant`).
   `FieldSet` in `fe0/src/check.fe` bounds the number of contract fields.
@@ -326,12 +329,12 @@ differs from the ABI that `fe build` writes.
   |---|---|---|
   | Lexer | 5,785 | 1.29M |
   | Parser | 17,014 | 3.73M |
-  | Checker | 19,879 | 4.35M |
+  | Checker | 19,968 | 4.37M |
   | Back | 17,123 | 3.76M |
   | Compiler | 1,653 | 0.44M |
 
   - **Deploying all five costs 13.6M gas.**
-  - **Compiling costs up to 29.3M gas, for `corpus/amm.fe`.**
+  - **Compiling costs up to 29.0M gas, for `corpus/amm.fe`.**
     - That program is 8,141 bytes of source.
     - Lexing takes about 1,240 gas per byte of source.
     - No tool measures the cost of the boundaries.
@@ -384,7 +387,7 @@ the parser and the checker differ: they report the error in a field instead
 |---|---|
 | Lexer | bad character, unterminated string, malformed integer |
 | Parser | expected token, end of statement, chained comparison, literal over 256 bits (`L004`) |
-| Names | unknown name, duplicate item, local shadows a field |
+| Names | unknown name, duplicate item, parameter named like a `uses` entry |
 | Types | mismatch, missing return path |
 | Effects | field not in `uses`, write without `mut`, unknown field |
 | Constants | overflow (`C034`), division by zero (`C025`) |

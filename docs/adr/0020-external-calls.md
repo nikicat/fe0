@@ -23,9 +23,9 @@ data when the callee fails, and returns the decoded result when it succeeds.
 ## Decision
 Fe0 adds this one form:
 - a contract may declare one `Call` effect in its `uses`, such as `call: mut Call`, and a body
-  must grant it with `mut`. `a.call(…)` does not name its effect, as in Fe, so the effect is
-  found by its type. Fe is looser on both counts (SPEC §6, "Calls"), and the subset rule allows
-  Fe0 to be stricter;
+  grants it in its own `uses`. `a.call(…)` does not name its effect, as in Fe, so the effect is
+  found by its type. Fe accepts a second `Call` effect, or one declared without `mut`, in some
+  programs (SPEC §6, "Calls"), and the subset rule allows Fe0 to be stricter;
 - the expression `a.call(M::V { f: e, … })`, where `a` is an `Address` and `M::V` is a variant
   of a `msg` the program declares. Its type is the variant's return type, or unit without one;
 - code generation encodes the selector and the arguments as ABI words, emits `CALL` with all

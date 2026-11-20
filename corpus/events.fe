@@ -69,7 +69,8 @@ contract Events uses (ctx: Ctx, log: mut Log, other: mut Log) {
             log.emit(Move { to: who, up: n > 10, amount: n, from: ctx.caller() })
             true
         }
-        Flags { a, b, n } uses (mut other) {
+        // Grants `other` without `mut`, as SPEC §6 allows.
+        Flags { a, b, n } uses (other) {
             other.emit(ThreeTopics { b, n, a })
         }
         Empty {} uses (mut log, mut count) {
@@ -77,7 +78,8 @@ contract Events uses (ctx: Ctx, log: mut Log, other: mut Log) {
             log.emit(Nothing {})
             log.emit(Nothing {})
         }
-        Order { z } uses (mut log) {
+        // Grants `log` without `mut`, as SPEC §6 allows.
+        Order { z } uses (log) {
             // Fe evaluates the values in the order written: Panic(0x11), not 0x12.
             log.emit(Data { flag: z - 1 == 0, first: 1 / z, who: Address::zero() })
         }

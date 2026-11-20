@@ -390,24 +390,24 @@ ABI-encoded string.
    - Two parameters of a function, two variants of a msg, and two fields of a variant or of an
      event may not share a name either (`N001`). Fe rejects each of these **[✓]**. The probes
      are `corpus/reject/duplicate_param.fe`, `duplicate_variant.fe` and `duplicate_field.fe`.
-2. **Locals.** `let`, `var` and the binds of a `recv` arm declare locals. The name rules below
-   apply to locals and to parameters, except `N017` below.
+2. **Locals.** `let`, `var` and the binds of a `recv` arm declare locals.
    - `let` declares an immutable local and `var` a mutable one. Assigning to a `let` local or
      to a parameter is an error (`N014`), as in Fe (`8-0018`) **[✓]**. The probes are
      `corpus/reject/assign_let.fe` and `corpus/reject/assign_param.fe`.
    - Shadowing with a new `let`/`var` is allowed **[✓]**.
    - A local's scope runs from after its declaration to the end of its block.
-   - The name of a local or a parameter may not be the name of a contract field (`N005`). A
-     contract field is a storage field or an effect. So a name never silently stops
-     referring to the field. Fe accepts a local named like a storage field **[✓]**.
-   - The name of a local or a parameter may not be the name of any item (`N018`), so a name in a
-     body always means one declaration.
-   - Fe's rule is narrower, and it differs by the kind of name. Fe reads a `let`, `var` or
-     bind name that names a contract as a pattern, and rejects it (`8-0000`) **[✓]**. It
-     reads a `let` or `var` name that names a constant as a pattern too, and rejects it as
-     refutable (`8-0101`) **[✓]**. It reads a bind `a: n` for a constant `n` as a pattern
-     too, and rejects it as refutable (`8-0153`) **[✓]**. Fe accepts a parameter named like
-     any item, and a local named like a function or a msg **[✓]**.
+   - A local hides a storage field, an effect or an item of its name until the end of its block,
+     and a parameter or a bind hides it in the whole body. So `g()` after `let g` is not a call
+     (`N004`). Fe does the same (`8-0021`) **[✓]**. The probes are `corpus/shadowing.fe` and
+     `corpus/reject/local_shadows_fn.fe`.
+   - The name of a parameter or a bind may not be the name of an entry of its body's `uses`
+     (`N005`). Fe rejects it too (`8-0134`) **[✓]**. The probes are
+     `corpus/reject/param_named_like_use.fe` and `bind_named_like_use.fe`.
+   - The name of a local may not be the name of a constant, the contract or an event (`N018`).
+     Fe reads such a name as a pattern and rejects it. It rejects a constant as refutable
+     (`8-0101`, and `8-0153` for a bind), the contract as a type mismatch (`8-0000`), and an
+     event as a pattern with too few fields (`8-0004`) **[✓]**. The probes are the
+     `corpus/reject/shadow_item_*.fe` programs.
    - The name of a local may not start with an uppercase letter (`N017`).
    - Fe's rule for locals is narrower. Fe reads an uppercase local or bind that names a type or
      a variant in scope, such as `let Some` or `x: Option`, as a pattern, and rejects it
@@ -417,14 +417,15 @@ ABI-encoded string.
      probe is `corpus/uppercase_params.fe`.
 3. **Constants** are evaluated at compile time with the §4 semantics. Overflow is a compile-time
    error (`3-0034`), and so is division by zero (`3-0025`) **[✓]**.
-   - A constant expression is built from integer and `bool` literals, earlier constants, the
+   - A constant expression is built from integer and `bool` literals, other constants, the
      operators of §4 and parentheses. Anything else is `C001`.
    - So a map entry is not a constant expression. Fe rejects one too, because the map is an
      undefined name there (`8-0012`) **[✓]**. The probe is `corpus/reject/map_in_const.fe`.
    - Fe accepts an `if` in a constant **[✓]**, and Fe0 rejects it. The probe is
      `corpus/reject/if_in_const.fe`.
-   - Fe accepts forward references **[✓]**; Fe0 keeps the restriction, which is safe under the
-     subset rule.
+   - A constant may refer to a later one, as in Fe **[✓]**. A constant whose value depends on a
+     cycle of constants is `N006`. Fe rejects it too (`3-0037`) **[✓]**. The probes are
+     `corpus/consts.fe` and `corpus/reject/const_cycle.fe`.
 4. **Function calls.**
    - A parameter written `_ x: T` is positional: call it as `f(e)`.
    - A parameter written `x: T` is labelled: call it as `f(x: e)`, or as `f(x)` when the argument
@@ -511,8 +512,6 @@ contract Counter {
   (`8-0116`) **[✓]**.
 - Assigning to `f` requires `mut f` (`8-0018`) **[✓]**.
 - Listing a field the contract doesn't have is an error (`8-0051`) **[✓]**.
-- An arm binding with the same name as a field in `uses` is an error. Fe reports this ("a name
-  that an effect binds and that a parameter … also binds").
 - Fe accepts *unused* `uses` entries **[✓]**, so Fe0 reports them only as warnings.
 - A field listed twice, as in `uses (v, mut v)`, is an error (`N001` at the second entry). Fe
   rejects it too (`3-0093`) **[✓]**. The probe is `corpus/reject/uses_twice.fe`.
@@ -543,9 +542,10 @@ grant a storage field.
   one of its methods. Assigning to one is an error (`N014`), even when `uses` names it `mut`. Fe
   rejects both **[✓]**.
 - A `Ctx` effect takes no storage. The storage fields' slots are the same as without it.
-- A storage field may not take the name of an effect (`N001`). Neither may a local, a parameter
-  or a bind (§5.2). For a `Ctx` effect, Fe rejects such a storage field, bind or parameter
-  **[✓]**. It accepts such a local **[✓]**.
+- A storage field may not take the name of an effect (`N001`). For a `Ctx` effect, Fe rejects
+  such a storage field **[✓]**.
+- A local, a parameter or a bind named like an effect follows the rules of §5.2. Fe accepts a
+  local named like a `Ctx` effect **[✓]**. The probe is `corpus/shadowing.fe`.
 - A `Ctx` effect may be written `mut Ctx`, and it means the same as `Ctx`, as in Fe **[✓]**.
   The probe is `corpus/two_effects.fe`.
 - The same effect name declared twice is an error (`N001`). Fe rejects it too (`3-0093`)
@@ -617,10 +617,9 @@ A contract emits events through a `Log` effect, declared `mut`, as in
 - Each field of `E` gets one value of its type. A value that names no field of `E` is `N010`. A
   field given twice is `N001`. A field left out is `N019`. A value of another type is `T001`.
   Fe rejects each of these errors too **[✓]**.
-- Emitting needs `mut log` in the body's `uses` (`E116`, `E018`). Fe rejects a body that does
-  not list `log` (`8-0012`), and accepts `uses (log)` **[✓]**. Fe0 rejects `uses (log)`,
-  because emitting changes the log, and Fe0 grants a change to an effect or a field only
-  through `mut` in `uses`. The subset rule allows Fe0 to be stricter here.
+- Emitting needs `log` in the body's `uses` (`E116`), with or without `mut`. Fe rejects a body
+  that does not list `log` (`8-0012`) **[✓]**, and accepts `uses (log)` **[✓]**. The probe is
+  `corpus/events.fe`.
 - `log.emit(…)` has no value (`T003`). Fe accepts `let x = log.emit(…)` **[✓]**.
 - An event has at most three indexed fields (`T006`). Fe rejects four (`10-0006`) **[✓]**.
 - An event is not a value (`N003`), and neither is a `Log` effect. Fe rejects `log` as a value
@@ -651,7 +650,7 @@ msg Erc20 {
     Transfer { to: Address, amount: u256 } -> bool,
 }
 
-// in a body whose uses has `mut call`:
+// in a body whose uses has `call`:
 let ok = token.call(Erc20::Transfer { to, amount })
 ```
 
@@ -663,10 +662,9 @@ let ok = token.call(Erc20::Transfer { to, amount })
   the rules of `log.emit` (§6, "Events"): `N010`, `N001`, `N019` and `T001`, which Fe rejects
   too **[✓]**. The variant is written with braces, even when it has no fields. Fe rejects
   `M::V` without them when `V` has a return type **[✓]**.
-- A body that calls needs the contract's `Call` effect, whatever its name, granted `mut` in
-  its `uses`: `E116` without the effect and `E018` without `mut`. Fe rejects a body without the
-  effect (`8-0036`) **[✓]**. It accepts `uses (call)` **[✓]**, and Fe0 rejects it for the same
-  reason it rejects `uses (log)`.
+- A body that calls needs the contract's `Call` effect, whatever its name, in its `uses`
+  (`E116`), with or without `mut`. Fe rejects a body without the effect (`8-0036`) **[✓]**,
+  and accepts `uses (call)` **[✓]**. The probe is `corpus/calls.fe`.
 - A contract has at most one `Call` effect (`N001` at the second). Fe rejects a body that
   grants two (`8-0040`) and accepts a contract that declares two when no body grants both
   **[✓]**. Fe0 rejects `call: Call` without `mut` (`P002`). Fe rejects it once a body calls (`8-0037`)
@@ -761,7 +759,7 @@ The subset rule is tested two ways.
   (DESIGN.md §10, "On a node").
 - **Rejected programs.** Fe0 must give the expected error code at the expected position, and
   Fe must reject the program too, unless the rule is one that Fe0 adds on top of Fe (such as
-  §5.2's ban on locals named like fields). Then Fe must accept it.
+  §5.3's ban on `if` in a constant). Then Fe must accept it.
 
 The aim is a test of one of these kinds for every rule above that has a [✓] mark. The tests are
 in `corpus/`, `corpus/reject/` and `fe0/src/codegen_tests.fe`, and DESIGN.md §10 describes how
@@ -815,11 +813,11 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 
 | Feature | Fe0 | Where |
 |---|---|---|
-| `const` | ◐ literals, earlier constants and operators only | §5.3 |
+| `const` | ◐ literals, other constants and operators only | §5.3 |
 | Functions with positional and labelled parameters | ✅ | §5.4 |
 | Recursion | ◐ deeper than Fe's stack limit, Fe0 differs | the subset rule, §5.4 |
 | `mod`, `use`, `extern`, `unsafe`, `with` | ❌ | §3.3 |
-| A local named like a field or an item | ◐ rejected | §5.2 |
+| A local or a parameter named like a field or an item | ✅ | §5.2 |
 | Uppercase parameters | ✅ | §5.2 |
 | Uppercase locals | ◐ rejected | §5.2 |
 | Type names and contextual words as names | ◐ rejected everywhere | §1 |
@@ -839,7 +837,8 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 | Maps elsewhere, maps of maps, `StorageMap` methods | ❌ | §3.3 |
 | `uses` checks on `init` and arms | ✅ | §6 |
 | `mut Ctx` | ✅ | §6 |
-| `Log` and `Call` granted without `mut` | ◐ rejected | §6 |
+| `Log` and `Call` granted without `mut` | ✅ | §6 |
+| `Log` and `Call` declared without `mut` | ◐ rejected | §6 |
 | `uses` on free functions | ❌ free functions are pure | §5.5 |
 | `Ctx` methods without arguments that return `u256` or `Address`, except `gas()` | ✅ | §6 |
 | `gas()`, the `Ctx` methods that return `Wei` or `Timestamp`, and those with arguments | ❌ | §6 |

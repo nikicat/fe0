@@ -90,7 +90,8 @@ contract Calls uses (call: mut Call) {
     }
 
     recv CallsMsg {
-        Echo { a } -> u256 uses (callee, mut call) {
+        // Grants `call` without `mut`, as SPEC §6 allows.
+        Echo { a } -> u256 uses (callee, call) {
             callee.call(CalleeMsg::Echo { a })
         }
         Store { a } uses (callee, mut call) {

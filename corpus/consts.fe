@@ -10,8 +10,9 @@ msg ConstsMsg {
     Scale { x: u256 } -> u256,
 }
 
-const WAD: u256 = 1000000000000000000
+// A constant may refer to a later one (SPEC §5.3).
 const HALF_WAD: u256 = WAD / 2
+const WAD: u256 = 1000000000000000000
 const TOP: u256 = 1 << 255
 const MASK: u256 = ~0 >> 128
 const MIXED: u256 = (TOP >> 200) ^ MASK & 0xffff | HALF_WAD % 7

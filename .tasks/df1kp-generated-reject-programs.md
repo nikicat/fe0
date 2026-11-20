@@ -37,7 +37,7 @@ It runs them through `embed.harness` as its `rejects`, and CI runs a fixed set o
     `name < args >` with the argument kinds that Fe accepts.
   - **Record literal (§3.4):** drop the parentheses that `E.may_read_as_record` adds.
   - **Uppercase locals (§5.2):** capitalize a local.
-  - **Other rules:** a local named like a field, a chained comparison, a forward constant.
+  - **Other rules:** a local named like a constant, a chained comparison, a constant cycle.
 - For a rule wider than Fe's, the mutation can't always tell whether Fe accepts the result.
   Decide whether it asks `fe check` and then writes the header, or only makes shapes whose
   verdict it knows.

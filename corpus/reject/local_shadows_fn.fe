@@ -1,0 +1,7 @@
+// expect: N004 6:5
+// After `let g`, `g()` calls the local, which is not a function (SPEC §5.2).
+fn g() -> u256 { 1 }
+fn f() -> u256 {
+    let g: u256 = 2
+    g()
+}

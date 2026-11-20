@@ -1,0 +1,74 @@
+// Names that a local or a parameter shares with a field, an effect or an item (SPEC §5.2). In
+// each body, the name means the innermost declaration.
+msg ShadowingMsg {
+    #[selector = 1]
+    Get -> u256,
+    #[selector = 2]
+    Set { x: u256 } -> u256,
+    #[selector = 3]
+    Bind { n: u256 } -> u256,
+    #[selector = 4]
+    Items { a: u256 } -> u256,
+    #[selector = 5]
+    Caller -> bool,
+}
+
+// A lowercase msg, so that a local can take its name. A local may not start with an uppercase
+// letter (SPEC §5.2).
+msg other {
+    #[selector = 0x10]
+    Ping {},
+}
+
+#[event]
+struct Seen {
+    n: u256,
+}
+
+const LIMIT: u256 = 100
+
+fn double(_ x: u256) -> u256 {
+    x * 2
+}
+
+// Each parameter is named like an item: a constant, the contract, a msg and an event.
+fn sum(_ LIMIT: u256, _ Shadowing: u256, _ ShadowingMsg: u256, _ Seen: u256) -> u256 {
+    LIMIT + Shadowing + ShadowingMsg + Seen
+}
+
+// Locals named like a function and a msg.
+fn locals(_ a: u256) -> u256 {
+    let double: u256 = a + 1
+    let other: u256 = double * 3
+    other + LIMIT
+}
+
+contract Shadowing uses (ctx: Ctx) {
+    mut n: u256,
+
+    recv ShadowingMsg {
+        // `let n` reads the field in its value, and is the local after it.
+        Get {} -> u256 uses (n) {
+            let n: u256 = n + 1
+            n * 10
+        }
+        Set { x } -> u256 uses (mut n) {
+            n = x
+            var n: u256 = 7
+            n += x
+            n
+        }
+        // The bind `n` is not the field, which this arm's `uses` does not list.
+        Bind { n } -> u256 {
+            double(n)
+        }
+        Items { a } -> u256 {
+            sum(a, 1, 2, 3) + locals(a)
+        }
+        Caller {} -> bool uses (ctx) {
+            let who = ctx.caller()
+            let ctx: u256 = 5
+            who != Address::zero() && ctx == 5
+        }
+    }
+}

@@ -1,0 +1,4 @@
+// expect: N006 3:17
+// A constant may not depend on a cycle of constants (SPEC §5.3).
+const A: u256 = B
+const B: u256 = A

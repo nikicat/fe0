@@ -15,8 +15,8 @@ theorem about Fe0's programs is a theorem about those Fe programs.
 **What keeps a model small.**
 - One grammar (SPEC §3.1), three value types (SPEC §2), and no generics, traits, references or
   memory.
-- Every name in a body means one declaration (SPEC §5.2). Constants refer only to earlier ones
-  (SPEC §5.3).
+- A name in a body means the innermost declaration of that name (SPEC §5.2). No constant
+  depends on itself (SPEC §5.3).
 - SPEC §4 fixes the order of every operand, argument, field value and assignment. So the
   semantics is a function: a state and a call give one outcome.
 - An outcome is success with return data, or failure with revert data, plus the storage writes
@@ -29,8 +29,8 @@ theorem about Fe0's programs is a theorem about those Fe programs.
 **What a model could prove.**
 - Type safety: a body that the checker accepts gives a value of its type, or fails with the
   revert data of SPEC §4 and §6.
-- Effect safety, the point of Fe0 (SPEC §6): a body reads only the fields that its `uses`
-  lists, and writes, emits or calls only through the entries that it lists `mut`.
+- Effect safety, the point of Fe0 (SPEC §6): a body reads, emits and calls only through the
+  entries that its `uses` lists, and writes only through the fields that it lists `mut`.
 - Free functions are pure (SPEC §5.5): their result depends only on their arguments.
 - The dispatcher and `init` decode their input as SPEC §6 says.
 - Fe0's output, or Fe's, runs as the model says. The differential tests of SPEC §8 check this

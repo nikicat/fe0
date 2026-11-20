@@ -1,5 +1,0 @@
-// expect: N006 4:17
-// A constant may refer only to earlier constants (SPEC §5.3).
-// fe: accepts
-const A: u256 = B + 1
-const B: u256 = 2

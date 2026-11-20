@@ -788,17 +788,22 @@ impl Checker {
         Result::Ok(Id { n: d })
     }
 
-    // Declares the parameter or local `sym` in the next frame slot. Errors with N_SHADOWS_FIELD,
-    // N_SHADOWS_ITEM or N_UPPERCASE_LOCAL at `decl` when SPEC §5.2 does not allow the name.
+    // Declares the parameter or local `sym` in the next frame slot. Errors with N_NAMED_LIKE_USE,
+    // N_LOCAL_AS_PATTERN or N_UPPERCASE_LOCAL at `decl` when SPEC §5.2 does not allow the name.
     fn declare(mut self, _ sym: Sym, _ decl: NodeId, _ ty: Ty) -> Result<Diag, ()> {
-        if !self.field(sym).is_none() {
-            return Result::Err(self.at(N_SHADOWS_FIELD, decl))
+        let kind = self.node(decl).kind
+        if kind != NODE_LET && !self.find(self.body.grant.list, sym).is_none() {
+            return Result::Err(self.at(N_NAMED_LIKE_USE, decl))
         }
-        if !self.item(sym).is_none() {
-            return Result::Err(self.at(N_SHADOWS_ITEM, decl))
-        }
-        if self.node(decl).kind != NODE_PARAM && self.c.ast.starts_upper(sym) {
-            return Result::Err(self.at(N_UPPERCASE_LOCAL, decl))
+        if kind != NODE_PARAM {
+            // Fe reads a local named like one of these items as a pattern.
+            let item = self.node(self.item(sym)).kind
+            if item == NODE_CONST || item == NODE_CONTRACT || item == NODE_EVENT {
+                return Result::Err(self.at(N_LOCAL_AS_PATTERN, decl))
+            }
+            if self.c.ast.starts_upper(sym) {
+                return Result::Err(self.at(N_UPPERCASE_LOCAL, decl))
+            }
         }
         self.set_ty(decl, ty)
         self.c.set_frame_slot(decl, FrameSlot { n: self.body.frame })
@@ -913,16 +918,8 @@ impl Checker {
         if !self.c.the_contract.is_none() {
             self.fields()?
         }
-        // Constants first, in source order, so that bodies can use their values.
+        self.constants()?
         var k: usize = 0
-        while k < self.len(items) {
-            let i = self.elem(items, k)
-            if self.node(i).kind == NODE_CONST {
-                self.constant(i)?
-            }
-            k += 1
-        }
-        k = 0
         while k < self.len(items) {
             let i = self.elem(items, k)
             let kind = self.node(i).kind
@@ -987,6 +984,42 @@ impl Checker {
         Result::Ok(())
     }
 
+    // Evaluates every constant before any body, as DESIGN §5 describes. Errors as `constant`
+    // does, and with N_CONST_CYCLE when a constant depends on a cycle of constants.
+    fn constants(mut self) -> Result<Diag, ()> {
+        let items = self.c.ast.items
+        var skipped: Option<Diag> = Option::None
+        var progress = true
+        while progress {
+            skipped = Option::None
+            progress = false
+            var k: usize = 0
+            while k < self.len(items) {
+                let i = self.elem(items, k)
+                if self.node(i).kind == NODE_CONST && self.c.ty(i) == TY_NONE {
+                    match self.constant(i) {
+                        Result::Ok(()) => {
+                            progress = true
+                        },
+                        Result::Err(d) => {
+                            if d.code != N_CONST_CYCLE {
+                                return Result::Err(d)
+                            }
+                            if skipped.is_none() {
+                                skipped = Option::Some(d)
+                            }
+                        },
+                    }
+                }
+                k += 1
+            }
+        }
+        match skipped {
+            Option::Some(d) => Result::Err(d),
+            Option::None => Result::Ok(()),
+        }
+    }
+
     fn constant(mut self, _ i: NodeId) -> Result<Diag, ()> {
         let n = self.node(i)
         let v = self.eval(n.value())?
@@ -998,7 +1031,8 @@ impl Checker {
         Result::Ok(())
     }
 
-    // Evaluates constant expression `i` with the checked arithmetic of SPEC §4.
+    // Evaluates constant expression `i` with the checked arithmetic of SPEC §4. Errors with
+    // N_CONST_CYCLE when `i` refers to a constant that is not evaluated yet, even with no cycle.
     fn eval(mut self, _ i: NodeId) -> Result<Diag, Val> {
         let n = self.node(i)
         let k = n.kind
@@ -1020,9 +1054,9 @@ impl Checker {
                     return Result::Err(self.at(C_NOT_CONST, i))
                 },
             }
-            // Constants are evaluated in source order, so a later one has no type yet.
+            // A constant that is not evaluated yet has no type (`constants`).
             if self.c.ty(d.n) == TY_NONE {
-                return Result::Err(self.at(N_FORWARD_CONST, i))
+                return Result::Err(self.at(N_CONST_CYCLE, i))
             }
             self.set_res(i, d)
             v = Val { v: self.c.word_of(c), ty: self.c.ty(d.n) }
@@ -1351,20 +1385,24 @@ impl Checker {
         Result::Ok(t)
     }
 
-    // Returns the node that declares the name of node `i`, as `resolve` finds it, and records it
-    // as what `i` refers to. When that node is a FIELD, also records a read of the contract
-    // field. Errors as `resolve` does, and with E_NOT_IN_USES when the body's `uses` does not
-    // grant the field.
+    // Records what node `i` refers to, and a use of it when it is a contract field, and returns
+    // its declaration. Errors as `resolve` and `use_field` do.
     fn read(mut self, _ i: NodeId) -> Result<Diag, Id<Decl>> {
         let d = self.resolve(i)?
         match self.c.narrow<Field>(d) {
             Option::Some(f) => {
-                self.access(f, self.body.grant.read, self.at(E_NOT_IN_USES, i))?
+                self.use_field(f, i)?
             },
             Option::None => {},
         }
         self.set_res(i, d)
         Result::Ok(d)
+    }
+
+    // Records that the body uses contract field `f`, which may be an effect. Errors with
+    // E_NOT_IN_USES at node `i` when the body's `uses` does not list `f` (SPEC §6).
+    fn use_field(mut self, _ f: Id<Field>, _ i: NodeId) -> Result<Diag, ()> {
+        self.access(f, self.body.grant.read, self.at(E_NOT_IN_USES, i))
     }
 
     fn name(mut self, _ i: NodeId) -> Result<Diag, Ty> {
@@ -1390,15 +1428,15 @@ impl Checker {
         Result::Ok(m.ty)
     }
 
-    // Returns the declaration that the name of node `i` refers to. Errors as `read` does, and
-    // with T_MISMATCH when that declaration is not an effect of type `want`.
-    fn effect(mut self, _ i: NodeId, _ want: Ty) -> Result<Diag, Id<Field>> {
+    // Records that the body uses the effect that node `i` names. A grant without `mut` is enough
+    // (SPEC §6). Errors as `read` does, and with T_MISMATCH when the name is not an effect of
+    // type `want`.
+    fn effect(mut self, _ i: NodeId, _ want: Ty) -> Result<Diag, ()> {
         let d = self.read(i)?
         if self.c.ty(d.n) != want {
             return Result::Err(self.at(T_MISMATCH, i))
         }
-        // Only a contract field has an effect's type (SPEC §6, "Contracts and effects").
-        Result::Ok(Id { n: d.n })
+        Result::Ok(())
     }
 
     // Checks the key of INDEX `i`, whose name `m` declares, and returns the type of the map's
@@ -1414,12 +1452,10 @@ impl Checker {
     }
 
     // Checks EMIT `i` (SPEC §6, "Events"). Errors as `effect`, `item_of` and `labeled_args` do,
-    // with E_NOT_MUT when the body may not write the `Log` effect, and with T_MISMATCH when the
-    // event's name is not an event.
+    // and with T_MISMATCH when the event's name is not an event.
     fn emit(mut self, _ i: NodeId) -> Result<Diag, ()> {
         let n = self.node(i)
-        let log = self.effect(i, TY_LOG)?
-        self.access(log, self.body.grant.write, self.at(E_NOT_MUT, i))?
+        self.effect(i, TY_LOG)?
         let e: Id<Event> = self.item_of(n.event(), i, T_MISMATCH)?
         self.set_res(i, e)
         self.labeled_args(i, self.c.event_fields(e))
@@ -1436,16 +1472,15 @@ impl Checker {
         Result::Ok(self.node(v.n).ty().or_unit())
     }
 
-    // Checks that the body of MSG_CALL `i` may write the contract's `Call` effect. Errors with
-    // E_NOT_IN_USES when the body's `uses` does not grant it, and with E_NOT_MUT when it grants
-    // it without `mut`.
+    // Records that the body of MSG_CALL `i` uses the contract's `Call` effect. Errors as
+    // `use_field` does, and with E_NOT_IN_USES when the contract declares no `Call` effect
+    // (SPEC §6, "Calls").
     fn use_call_effect(mut self, _ i: NodeId) -> Result<Diag, ()> {
         let call = self.call_effect
         if call.is_none() {
             return Result::Err(self.at(E_NOT_IN_USES, i))
         }
-        self.access(call, self.body.grant.read, self.at(E_NOT_IN_USES, i))?
-        self.access(call, self.body.grant.write, self.at(E_NOT_MUT, i))
+        self.use_field(call, i)
     }
 
     // Returns the VARIANT that `M::V` of MSG_CALL `i` names. Errors as `item_of` does, with

@@ -1,0 +1,16 @@
+// expect: N005 11:10
+// A parameter may not take the name of an entry of its body's `uses` (SPEC §5.2).
+msg M {
+    #[selector = 1]
+    Get -> u256,
+    #[selector = 2]
+    Set { n: u256 } -> u256,
+}
+contract C {
+    mut n: u256,
+    init(n: u256) uses (mut n) { n = 1 }
+    recv M {
+        Get {} -> u256 uses (n) { n }
+        Set { n } -> u256 { n }
+    }
+}

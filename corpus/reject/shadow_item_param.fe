@@ -1,8 +1,0 @@
-// expect: N018 6:6
-// A parameter may not take a constant's name (SPEC §5.2).
-// fe: accepts
-const n: u256 = 5
-
-fn f(_ n: u256) -> u256 {
-    n
-}

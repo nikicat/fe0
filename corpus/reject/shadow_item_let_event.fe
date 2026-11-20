@@ -1,0 +1,8 @@
+// expect: N018 6:5
+// A `let` local may not take an event's name (SPEC §5.2).
+#[event]
+struct ev { a: u256 }
+fn f() -> u256 {
+    let ev: u256 = 2
+    ev
+}

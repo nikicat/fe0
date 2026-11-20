@@ -112,10 +112,10 @@ pub const N_UNKNOWN_NAME: DiagCode = DiagCode { raw: 3002 }
 // A name used as a value when `Ty.is_value` says it is not one.
 pub const N_NOT_A_VALUE: DiagCode = DiagCode { raw: 3003 }
 pub const N_NOT_A_FUNCTION: DiagCode = DiagCode { raw: 3004 }
-// A local or parameter named like a contract field (SPEC §5.2).
-pub const N_SHADOWS_FIELD: DiagCode = DiagCode { raw: 3005 }
-// A constant that refers to itself or to a later constant (SPEC §5.3).
-pub const N_FORWARD_CONST: DiagCode = DiagCode { raw: 3006 }
+// A parameter or bind named like an entry of its body's `uses` (SPEC §5.2).
+pub const N_NAMED_LIKE_USE: DiagCode = DiagCode { raw: 3005 }
+// A constant whose value depends on a cycle of constants (SPEC §5.3).
+pub const N_CONST_CYCLE: DiagCode = DiagCode { raw: 3006 }
 pub const N_NOT_A_MSG: DiagCode = DiagCode { raw: 3007 }
 pub const N_UNKNOWN_VARIANT: DiagCode = DiagCode { raw: 3008 }
 pub const N_MISSING_ARM: DiagCode = DiagCode { raw: 3009 }
@@ -133,8 +133,8 @@ pub const N_TWO_CONTRACTS: DiagCode = DiagCode { raw: 3015 }
 pub const N_DUPLICATE_SELECTOR: DiagCode = DiagCode { raw: 3016 }
 // A local whose name starts with an uppercase letter (SPEC §5.2).
 pub const N_UPPERCASE_LOCAL: DiagCode = DiagCode { raw: 3017 }
-// A local or parameter named like an item (SPEC §5.2).
-pub const N_SHADOWS_ITEM: DiagCode = DiagCode { raw: 3018 }
+// A local named like a constant, the contract or an event (SPEC §5.2).
+pub const N_LOCAL_AS_PATTERN: DiagCode = DiagCode { raw: 3018 }
 // An emitted event or a called variant without a value for one of its fields (SPEC §6, "Events"
 // and "Calls").
 pub const N_MISSING_FIELD: DiagCode = DiagCode { raw: 3019 }
@@ -167,7 +167,7 @@ pub const E_UNUSED_USE: DiagCode = DiagCode { raw: 5003 }
 
 // Constants
 
-// A constant's value uses something other than literals, earlier constants and operators.
+// A constant's value that is not a constant expression (SPEC §5.3).
 pub const C_NOT_CONST: DiagCode = DiagCode { raw: 6001 }
 // Division or remainder by zero in a constant (SPEC §5.3).
 pub const C_DIV_ZERO: DiagCode = DiagCode { raw: 6025 }

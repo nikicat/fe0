@@ -14,18 +14,18 @@ use ingot::diag::{
     E_UNUSED_USE,
     N_ASSIGN_IMMUTABLE,
     N_BAD_LABEL,
+    N_CONST_CYCLE,
     N_DUPLICATE,
     N_DUPLICATE_SELECTOR,
-    N_FORWARD_CONST,
+    N_LOCAL_AS_PATTERN,
     N_MISSING_ARM,
     N_MISSING_BIND,
     N_MISSING_FIELD,
+    N_NAMED_LIKE_USE,
     N_NOT_A_FUNCTION,
     N_NOT_A_MSG,
     N_NOT_A_VALUE,
     N_OUTSIDE_LOOP,
-    N_SHADOWS_FIELD,
-    N_SHADOWS_ITEM,
     N_TWO_CONTRACTS,
     N_UNKNOWN_FIELD,
     N_UNKNOWN_NAME,
@@ -224,28 +224,37 @@ fn locals() {
     )
     rejects(
         "const n: u256 = 5\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v: n } { }\n    }\n}\n",
-        N_SHADOWS_ITEM,
+        N_LOCAL_AS_PATTERN,
         206,
     )
     rejects(
         "const n: u256 = 5\nfn f() -> u256 {\n    let n: u256 = 2\n    n\n}",
-        N_SHADOWS_ITEM,
+        N_LOCAL_AS_PATTERN,
         39,
     )
     rejects(
-        "fn g() -> u256 { 1 }\nfn f(_ g: u256) -> u256 { g }",
-        N_SHADOWS_ITEM,
-        26,
+        "#[event]\nstruct e {}\nfn f() -> u256 {\n    let e: u256 = 2\n    e\n}",
+        N_LOCAL_AS_PATTERN,
+        42,
     )
     rejects(
-        "msg m {\n    #[selector = 0x01]\n    A {},\n}\nfn f(_ m: u256) -> u256 { m }",
-        N_SHADOWS_ITEM,
-        48,
+        "contract k {\n}\nfn f() -> u256 {\n    var k: u256 = 2\n    k\n}",
+        N_LOCAL_AS_PATTERN,
+        36,
+    )
+    accepts(
+        "fn g() -> u256 { 1 }\nfn f() -> u256 {\n    let g: u256 = 2\n    g\n}\nfn h() -> u256 { g() }",
+    )
+    accepts(
+        "msg m {\n    #[selector = 0x01]\n    A {},\n}\nfn f() -> u256 {\n    let m: u256 = 2\n    m\n}",
+    )
+    accepts(
+        "const n: u256 = 5\n#[event]\nstruct e {}\ncontract k {\n}\nfn f(_ n: u256, _ e: u256, _ k: u256) -> u256 { n + e + k }",
     )
     rejects(
-        "contract k {\n}\nfn f(_ k: u256) -> u256 { k }",
-        N_SHADOWS_ITEM,
-        20,
+        "fn g() -> u256 { 1 }\nfn f(_ g: u256) -> u256 { g() }",
+        N_NOT_A_FUNCTION,
+        47,
     )
 }
 
@@ -320,12 +329,21 @@ fn constants() {
     accepts(
         "const A: u256 = 2 + 3\nconst B: u256 = A * 4 - 1 / 1 % 7\nconst C: bool = B == 19 && !false\nconst D: u256 = 1 << 256\nconst E: u256 = ~+2 - +A",
     )
+    accepts(
+        "const A: u256 = B * C\nconst B: u256 = C + 1\nconst C: u256 = 3\nfn f() -> u256 { A }",
+    )
+    rejects("const A: u256 = B\nconst B: u256 = A", N_CONST_CYCLE, 16)
+    rejects("const A: u256 = A", N_CONST_CYCLE, 16)
     rejects(
-        "const A: u256 = B\nconst B: u256 = 1",
-        N_FORWARD_CONST,
+        "const C: u256 = A\nconst A: u256 = B\nconst B: u256 = A",
+        N_CONST_CYCLE,
         16,
     )
-    rejects("const A: u256 = A", N_FORWARD_CONST, 16)
+    rejects(
+        "const A: u256 = B + 1\nconst B: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        C_OVERFLOW,
+        18,
+    )
     rejects(
         "const A: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff + 1",
         C_OVERFLOW,
@@ -403,14 +421,15 @@ fn effects() {
         "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (mut a) { a }\n        Set { v } uses (mut a) { a = v }\n    }\n}\n",
     )
     rejects(
-        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    init(a: u256) { }\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut a) { a = v }\n    }\n}\n",
-        N_SHADOWS_FIELD,
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    init(a: u256) uses (mut a) { a = 1 }\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut a) { a = v }\n    }\n}\n",
+        N_NAMED_LIKE_USE,
         132,
     )
-    rejects(
-        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 {\n            let a: u256 = 1\n            a\n        }\n        Set { v } { }\n    }\n}\n",
-        N_SHADOWS_FIELD,
-        173,
+    accepts(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    init(a: u256) { }\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut a) { a = v }\n    }\n}\n",
+    )
+    accepts(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) {\n            let a: u256 = a + 1\n            a\n        }\n        Set { v } { }\n    }\n}\n",
     )
     rejects(
         "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    mut a: bool\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut a) { a = v }\n    }\n}\n",
@@ -511,10 +530,8 @@ fn events() {
     accepts(
         "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\n#[event]\nstruct D {}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log) { log.emit(D {}) }\n    }\n}\n",
     )
-    rejects(
+    accepts(
         "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (log, ctx) { log.emit(E { to: ctx.caller(), amount: v }) }\n    }\n}\n",
-        E_NOT_MUT,
-        312,
     )
     rejects(
         "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (ctx) { log.emit(E { to: ctx.caller(), amount: v }) }\n    }\n}\n",
@@ -636,10 +653,8 @@ fn msg_calls() {
         E_UNUSED_USE,
         346,
     )
-    rejects(
+    accepts(
         "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[selector = 0x12]\n    Put { a: u256 },\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (call: mut Call) {\n    mut a: u256\n    mut t: Address\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (t, call) { t.call(O::Put { a: v }) }\n    }\n}\n",
-        E_NOT_MUT,
-        357,
     )
     rejects(
         "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[selector = 0x12]\n    Put { a: u256 },\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (call: mut Call) {\n    mut a: u256\n    mut t: Address\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (t) { t.call(O::Put { a: v }) }\n    }\n}\n",
@@ -802,9 +817,12 @@ fn messages() {
         182,
     )
     rejects(
-        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v: a } { }\n    }\n}\n",
-        N_SHADOWS_FIELD,
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v: a } uses (mut a) { a = 1 }\n    }\n}\n",
+        N_NAMED_LIKE_USE,
         188,
+    )
+    accepts(
+        "msg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v: a } { }\n    }\n}\n",
     )
     rejects(
         "fn N() {}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K {\n    recv N {\n    }\n}\n",
