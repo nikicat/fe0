@@ -56,7 +56,8 @@ fn sum(_ n: u256) -> u256 {
     if n == 0 { 0 } else { n + sum(n - 1) }
 }
 
-contract Events uses (ctx: Ctx, log: mut Log, other: mut Log) {
+// Declares `quiet` and `call` without `mut`, as SPEC §6 allows.
+contract Events uses (ctx: Ctx, log: mut Log, other: mut Log, quiet: Log, call: Call) {
     mut count: u256,
 
     init(start: u256) uses (ctx, mut log, mut count) {

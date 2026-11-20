@@ -328,8 +328,8 @@ differs from the ABI that `fe build` writes.
   | Contract | Runtime bytes | Deploy gas |
   |---|---|---|
   | Lexer | 5,785 | 1.29M |
-  | Parser | 17,014 | 3.73M |
-  | Checker | 19,968 | 4.37M |
+  | Parser | 17,009 | 3.73M |
+  | Checker | 20,101 | 4.40M |
   | Back | 17,123 | 3.76M |
   | Compiler | 1,653 | 0.44M |
 

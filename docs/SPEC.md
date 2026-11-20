@@ -161,7 +161,7 @@ field       = IDENT ":" type ;
 
 contract    = "contract" IDENT [ effects ] "{" { cfield } [ init ] { recv } "}" ;
 effects     = "uses" "(" [ effect { "," effect } [ "," ] ] ")" ;
-effect      = IDENT ":" ( [ "mut" ] "Ctx" | "mut" ( "Log" | "Call" ) ) ;  (* §6, "The caller", "Events", "Calls" *)
+effect      = IDENT ":" [ "mut" ] ( "Ctx" | "Log" | "Call" ) ;  (* §6, "The caller", "Events", "Calls" *)
 cfield      = "mut" IDENT ":" ( type | map ) [ "," ] ;   (* v1: mut only, see §6 *)
 event       = "#" "[" "event" "]" NL [ "pub" ] "struct" IDENT "{" [ efields ] "}" ;
 efields     = efield { "," efield } [ "," ] ;
@@ -608,7 +608,7 @@ struct Transfer {
 }
 ```
 
-A contract emits events through a `Log` effect, declared `mut`, as in
+A contract emits events through a `Log` effect declared `mut`, as in
 `contract Token uses (ctx: Ctx, log: mut Log) {`.
 - `log.emit(E { f: e, … })` emits event `E`. `{ f }` stands for `{ f: f }`, and the fields may
   be written in any order.
@@ -625,8 +625,10 @@ A contract emits events through a `Log` effect, declared `mut`, as in
 - An event is not a value (`N003`), and neither is a `Log` effect. Fe rejects `log` as a value
   (`16-0002`) **[✓]**.
 - A `Log` effect has no `caller()` (`T001`). Fe accepts `log.caller()` **[✓]**.
-- Fe0 rejects `log: Log` without `mut` (`P002`). Fe rejects it once a body emits (`8-0066`)
-  **[✓]**. A contract may have several `Log` effects. Like `Ctx` effects, they take no storage.
+- A `Log` effect may be declared without `mut`, as `log: Log`, but then no body may emit
+  through it (`E004`), even when its `uses` grants it `mut`. Fe accepts the declaration and
+  rejects the emit (`8-0066`) **[✓]**. A contract may have several `Log` effects. Like `Ctx`
+  effects, they take no storage.
 
 The log. `log.emit(E { … })` emits `LOGn` with `n` one more than the number of indexed
 fields **[✓]**:
@@ -641,7 +643,7 @@ fields **[✓]**:
 The probe is `corpus/events.fe`, which runs on a node (DESIGN.md §10, "On a node").
 
 **Calls** ([ADR 0020](adr/0020-external-calls.md)). A contract calls another contract through a
-`Call` effect, declared `mut`, as in `contract Pool uses (call: mut Call) {`. The call sends a
+`Call` effect declared `mut`, as in `contract Pool uses (call: mut Call) {`. The call sends a
 variant of a msg that the program declares, often the other contract's msg written out again:
 
 ```fe
@@ -667,8 +669,10 @@ let ok = token.call(Erc20::Transfer { to, amount })
   and accepts `uses (call)` **[✓]**. The probe is `corpus/calls.fe`.
 - A contract has at most one `Call` effect (`N001` at the second). Fe rejects a body that
   grants two (`8-0040`) and accepts a contract that declares two when no body grants both
-  **[✓]**. Fe0 rejects `call: Call` without `mut` (`P002`). Fe rejects it once a body calls (`8-0037`)
   **[✓]**.
+- A `Call` effect may be declared without `mut`, as `call: Call`, but then no body may call
+  (`E004`), even when its `uses` grants the effect `mut`. Fe accepts the declaration and
+  rejects the call (`8-0037`) **[✓]**.
 - A `Call` effect is not a value (`N003`) and has no `caller()` (`T001`). Fe accepts
   `call.caller()` **[✓]**. Like the other effects, it takes no storage.
 
@@ -838,7 +842,7 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 | `uses` checks on `init` and arms | ✅ | §6 |
 | `mut Ctx` | ✅ | §6 |
 | `Log` and `Call` granted without `mut` | ✅ | §6 |
-| `Log` and `Call` declared without `mut` | ◐ rejected | §6 |
+| `Log` and `Call` declared without `mut` | ✅ | §6 |
 | `uses` on free functions | ❌ free functions are pure | §5.5 |
 | `Ctx` methods without arguments that return `u256` or `Address`, except `gas()` | ✅ | §6 |
 | `gas()`, the `Ctx` methods that return `Wei` or `Timestamp`, and those with arguments | ❌ | §6 |

@@ -7,6 +7,7 @@ use ingot::diag::{
     C_DIV_ZERO,
     C_NOT_CONST,
     C_OVERFLOW,
+    E_EFFECT_NOT_MUT,
     E_NOT_IN_USES,
     E_NOT_MUT,
     E_TOO_MANY_FIELDS,
@@ -538,6 +539,24 @@ fn events() {
         E_NOT_IN_USES,
         307,
     )
+    accepts(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, quiet: Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log, ctx) { log.emit(E { to: ctx.caller(), amount: v }) }\n    }\n}\n",
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (log, ctx) { log.emit(E { to: ctx.caller(), amount: v }) }\n    }\n}\n",
+        E_EFFECT_NOT_MUT,
+        308,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log, ctx) { log.emit(E { to: ctx.caller(), amount: v }) }\n    }\n}\n",
+        E_EFFECT_NOT_MUT,
+        312,
+    )
+    rejects(
+        "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: Log) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (log) { assert!(log.caller() == Address::zero()) }\n    }\n}\n",
+        T_MISMATCH,
+        301,
+    )
     rejects(
         "#[event]\nstruct E {\n    #[indexed]\n    to: Address,\n    amount: u256,\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (log: mut Log, ctx: Ctx) {\n    mut a: u256\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut log, ctx) { ctx.emit(E { to: ctx.caller(), amount: v }) }\n    }\n}\n",
         T_MISMATCH,
@@ -675,6 +694,34 @@ fn msg_calls() {
         "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[selector = 0x12]\n    Put { a: u256 },\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (call: mut Call, c2: mut Call) {\n    mut a: u256\n    mut t: Address\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } { }\n    }\n}\n",
         N_DUPLICATE,
         234,
+    )
+    rejects(
+        "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[selector = 0x12]\n    Put { a: u256 },\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (call: Call, c2: mut Call) {\n    mut a: u256\n    mut t: Address\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } { }\n    }\n}\n",
+        N_DUPLICATE,
+        230,
+    )
+    accepts(
+        "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[selector = 0x12]\n    Put { a: u256 },\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (call: Call) {\n    mut a: u256\n    mut t: Address\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } { }\n    }\n}\n",
+    )
+    rejects(
+        "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[selector = 0x12]\n    Put { a: u256 },\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (call: Call) {\n    mut a: u256\n    mut t: Address\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (t) { t.call(O::Put { a: v }) }\n    }\n}\n",
+        E_NOT_IN_USES,
+        347,
+    )
+    rejects(
+        "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[selector = 0x12]\n    Put { a: u256 },\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (call: Call) {\n    mut a: u256\n    mut t: Address\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (t, call) { t.call(O::Put { a: v }) }\n    }\n}\n",
+        E_EFFECT_NOT_MUT,
+        353,
+    )
+    rejects(
+        "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[selector = 0x12]\n    Put { a: u256 },\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (call: Call) {\n    mut a: u256\n    mut t: Address\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (t, mut call) { t.call(O::Put { a: v }) }\n    }\n}\n",
+        E_EFFECT_NOT_MUT,
+        357,
+    )
+    rejects(
+        "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[selector = 0x12]\n    Put { a: u256 },\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (call: Call) {\n    mut a: u256\n    mut t: Address\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (call) { assert!(call.caller() == Address::zero()) }\n    }\n}\n",
+        T_MISMATCH,
+        358,
     )
     rejects(
         "msg O {\n    #[selector = 0x11]\n    Echo { a: u256 } -> u256,\n    #[selector = 0x12]\n    Put { a: u256 },\n}\nmsg M {\n    #[selector = 0x01]\n    Get -> u256,\n    #[selector = 0x02]\n    Set { v: u256 },\n}\ncontract K uses (call: mut Call) {\n    mut a: u256\n    mut t: Address\n    recv M {\n        Get {} -> u256 uses (a) { a }\n        Set { v } uses (mut call) { v.call(O::Put { a: v }) }\n    }\n}\n",

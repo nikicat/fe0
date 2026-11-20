@@ -1,5 +1,6 @@
-// expect: P002 13:24
-// A `Call` effect is declared `mut` (SPEC §6, "Calls").
+// expect: E004 17:13
+// A body calls only through a `Call` effect declared `mut` (SPEC §6, "Calls"), even when its
+// `uses` grants it `mut`.
 msg Other {
     #[selector = 0x11]
     Echo { a: u256 } -> u256,

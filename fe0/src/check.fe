@@ -973,9 +973,10 @@ impl Checker {
     }
 
     // Keeps field `f` of type `ty` as the contract's `Call` effect when it is one. A call does not
-    // name its effect, so a contract has at most one. Errors with N_DUPLICATE at a second one.
+    // name its effect, so a contract has at most one (ADR 0020). Errors with N_DUPLICATE at a
+    // second one.
     fn note_call_effect(mut self, _ f: NodeId, _ ty: Ty) -> Result<Diag, ()> {
-        if ty == TY_CALL {
+        if ty == TY_CALL || ty == TY_CALL_RO {
             if !self.call_effect.is_none() {
                 return Result::Err(self.at(N_DUPLICATE, f))
             }
@@ -1428,15 +1429,26 @@ impl Checker {
         Result::Ok(m.ty)
     }
 
-    // Records that the body uses the effect that node `i` names. A grant without `mut` is enough
-    // (SPEC §6). Errors as `read` does, and with T_MISMATCH when the name is not an effect of
-    // type `want`.
+    // Records that the body uses the effect that node `i` names. A `uses` entry without `mut` is
+    // enough (SPEC §6). Errors as `read` and `effect_type` do.
     fn effect(mut self, _ i: NodeId, _ want: Ty) -> Result<Diag, ()> {
         let d = self.read(i)?
-        if self.c.ty(d.n) != want {
-            return Result::Err(self.at(T_MISMATCH, i))
+        self.effect_type(self.c.ty(d.n), want, i)
+    }
+
+    // Checks that the effect used at node `i`, of type `t`, has type `want`. Errors with
+    // E_EFFECT_NOT_MUT when `t` is `want.read_only()`, the type of an effect declared without `mut`
+    // (SPEC §6), and with T_MISMATCH when `t` is any other type.
+    fn effect_type(self, _ t: Ty, _ want: Ty, _ i: NodeId) -> Result<Diag, ()> {
+        if t == want {
+            return Result::Ok(())
         }
-        Result::Ok(())
+        let code = if t == want.read_only() {
+            E_EFFECT_NOT_MUT
+        } else {
+            T_MISMATCH
+        }
+        Result::Err(self.at(code, i))
     }
 
     // Checks the key of INDEX `i`, whose name `m` declares, and returns the type of the map's
@@ -1472,15 +1484,16 @@ impl Checker {
         Result::Ok(self.node(v.n).ty().or_unit())
     }
 
-    // Records that the body of MSG_CALL `i` uses the contract's `Call` effect. Errors as
-    // `use_field` does, and with E_NOT_IN_USES when the contract declares no `Call` effect
-    // (SPEC §6, "Calls").
+    // Records that the body of MSG_CALL `i` uses the contract's `Call` effect (SPEC §6, "Calls").
+    // Errors with E_NOT_IN_USES when the contract declares no `Call` effect, and as `use_field`
+    // and `effect_type` do.
     fn use_call_effect(mut self, _ i: NodeId) -> Result<Diag, ()> {
         let call = self.call_effect
         if call.is_none() {
             return Result::Err(self.at(E_NOT_IN_USES, i))
         }
-        self.use_field(call, i)
+        self.use_field(call, i)?
+        self.effect_type(self.c.ty(call.n), TY_CALL, i)
     }
 
     // Returns the VARIANT that `M::V` of MSG_CALL `i` names. Errors as `item_of` does, with

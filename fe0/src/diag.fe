@@ -157,6 +157,9 @@ pub const T_TOO_MANY_INDEXED: DiagCode = DiagCode { raw: 4006 }
 pub const E_NOT_IN_USES: DiagCode = DiagCode { raw: 5116 }
 // Assigning to a storage field that `uses` does not list as `mut` (SPEC §6).
 pub const E_NOT_MUT: DiagCode = DiagCode { raw: 5018 }
+// Emitting or calling through a `Log` or `Call` effect that the contract declares without
+// `mut` (SPEC §6).
+pub const E_EFFECT_NOT_MUT: DiagCode = DiagCode { raw: 5004 }
 // A `uses` entry that names no field of the contract (SPEC §6).
 pub const E_UNKNOWN_FIELD: DiagCode = DiagCode { raw: 5051 }
 // More contract fields than a FieldSet holds (MAX_FIELDS in check.fe).

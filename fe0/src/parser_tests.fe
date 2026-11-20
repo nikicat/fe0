@@ -221,6 +221,10 @@ impl Printer {
             self.put("mut Log")
         } else if t == TY_CALL {
             self.put("mut Call")
+        } else if t == TY_LOG_RO {
+            self.put("Log")
+        } else if t == TY_CALL_RO {
+            self.put("Call")
         } else if t.is_map() {
             self.put("StorageMap<")
             self.ty(t.map_key())
@@ -723,6 +727,11 @@ fn events() {
         "contract C uses (ctx: Ctx, log: mut Log) {\n}",
         "(contract C (ctx:Ctx log:mut Log) ? ())",
     )
+    // A `Log` effect may be declared without `mut` (SPEC §6).
+    item_is(
+        "contract C uses (log: Log) {\n}",
+        "(contract C (log:Log) ? ())",
+    )
     // `log.emit(E { … })` is a whole expression. A value without a label is a name that spells
     // its field, as in a call.
     tail_is(
@@ -757,10 +766,14 @@ fn events() {
 
 #[test]
 fn calls() {
-    // A contract may have a `Call` effect, declared `mut` (ADR 0020).
+    // A contract may have a `Call` effect (ADR 0020), with or without `mut` (ADR 0001, SPEC §6).
     item_is(
         "contract C uses (call: mut Call) {\n}",
         "(contract C (call:mut Call) ? ())",
+    )
+    item_is(
+        "contract C uses (call: Call) {\n}",
+        "(contract C (call:Call) ? ())",
     )
     // `t.call(M::V { … })` is a whole expression. Its values are read as those of an emit.
     tail_is(
@@ -901,11 +914,9 @@ fn errors() {
     assert!(
         parse_err("msg M { #[slector = 1] A {} }").code == P_EXPECTED_TOKEN,
     )
-    // A contract's effect must have type `Ctx`, or `Log` or `Call` written with `mut`.
+    // A contract's effect must have type `Ctx`, `Log` or `Call`.
     rejects("contract C uses (ctx: u256) {}", P_EXPECTED_TOKEN, 22)
-    rejects("contract C uses (call: Call) {}", P_EXPECTED_TOKEN, 23)
     rejects("contract C uses (ctx: mut u256) {}", P_EXPECTED_TOKEN, 26)
-    rejects("contract C uses (log: Log) {}", P_EXPECTED_TOKEN, 22)
     rejects("contract C uses (ctx) {}", P_EXPECTED_TOKEN, 20)
     // A lexer error stops the parse.
     assert!(

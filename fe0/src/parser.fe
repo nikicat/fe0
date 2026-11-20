@@ -581,14 +581,18 @@ impl Parser {
         let pos = self.tok().span.start
         let name = self.ident()?
         self.expect(P_COLON)?
+        let is_mut = self.eat(K_MUT)
         var ty = TY_CTX
         var word = W_CTX
-        if self.eat(K_MUT) && !self.at_word(W_CTX) {
+        if !self.at_word(W_CTX) {
             word = W_LOG
             ty = TY_LOG
             if self.at_word(W_CALL_EFFECT) {
                 word = W_CALL_EFFECT
                 ty = TY_CALL
+            }
+            if !is_mut {
+                ty = ty.read_only()
             }
         }
         self.expect_word(word)?

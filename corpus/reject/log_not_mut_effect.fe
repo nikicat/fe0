@@ -1,5 +1,6 @@
-// expect: P002 13:23
-// A `Log` effect is declared `mut Log` (SPEC §6, "Events").
+// expect: E004 17:13
+// A body emits only through a `Log` effect declared `mut` (SPEC §6, "Events"), even when its
+// `uses` grants it `mut`.
 msg M {
     #[selector = 1]
     Go { n: u256 },

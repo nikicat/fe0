@@ -173,13 +173,16 @@ pub const TY_NEVER: Ty = Ty { code: 5 }
 // blocks, such as `1 + 2` or `{ 1 }`.
 pub const TY_INT: Ty = Ty { code: 6 }
 
-// The codes from TY_CTX on are the types of names that are not values, and is_value relies on
-// it. Give a new value type a code below TY_CTX. The codes from TY_CTX up to MAP_BASE are the
-// effect types, and is_effect relies on it.
-// The types of a contract's effects, `Ctx`, `mut Log` and `mut Call`. Only an effect has one.
+// The types of a contract's effects, `Ctx`, `mut Log`, `mut Call`, `Log` and `Call` (SPEC §6).
+// Only an effect has one. Their codes run from TY_CTX up to MAP_BASE (is_effect), and no code
+// from TY_CTX on is a value (is_value), so a new value type takes a code below TY_CTX.
 pub const TY_CTX: Ty = Ty { code: 7 }
 pub const TY_LOG: Ty = Ty { code: 8 }
 pub const TY_CALL: Ty = Ty { code: 9 }
+// What `read_only` adds to an effect's code.
+const RO_STEP: u8 = 3
+pub const TY_LOG_RO: Ty = Ty { code: TY_LOG.code + RO_STEP }
+pub const TY_CALL_RO: Ty = Ty { code: TY_CALL.code + RO_STEP }
 // The code of the first map type. Its low four bits are zero, to hold the key and value codes.
 const MAP_BASE: u8 = 16
 // The shift of the key code within a map code.
@@ -212,6 +215,17 @@ impl Ty {
     // Returns this type, or TY_U256 when it is TY_INT.
     pub fn or_u256(self) -> Ty {
         if self == TY_INT { TY_U256 } else { self }
+    }
+
+    // Returns the type of an effect of type `self` declared without `mut`, such as TY_LOG_RO for
+    // TY_LOG. Only TY_LOG and TY_CALL have a read-only form, so it returns `self` for any other
+    // type. `Ctx` and `mut Ctx` are one type (SPEC §6).
+    pub fn read_only(self) -> Ty {
+        if self == TY_LOG || self == TY_CALL {
+            Ty { code: self.code + RO_STEP }
+        } else {
+            self
+        }
     }
 
     // Returns the type `StorageMap<key, value>`. Each of `key` and `value` is TY_U256, TY_BOOL
