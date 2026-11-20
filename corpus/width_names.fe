@@ -1,0 +1,23 @@
+// Widths that Fe lacks, such as `u7` and `u24`, are plain names (SPEC §1).
+msg WidthNamesMsg {
+    #[selector = 1]
+    Pack { u7: u256, i24: u256 } -> u256,
+}
+
+fn u24(_ u0: u256, i512: u256) -> u256 {
+    let u08: u256 = u0 << 8
+    var x8: u256 = u08 | i512
+    x8 += 1
+    x8
+}
+
+contract WidthNames {
+    mut u2560: u256,
+
+    recv WidthNamesMsg {
+        Pack { u7, i24 } -> u256 uses (mut u2560) {
+            u2560 = u24(u7, i512: i24)
+            u2560
+        }
+    }
+}

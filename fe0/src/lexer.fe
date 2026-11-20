@@ -12,7 +12,6 @@ use ingot::diag::{
     L_NON_ASCII,
     L_RESERVED_WORD,
     L_UNEXPECTED_CHAR,
-    L_UNSUPPORTED_LITERAL,
     L_UNTERMINATED_STRING,
 }
 use ingot::io::{Byte, Source}
@@ -135,21 +134,17 @@ pub const K_BREAK: Tok = Tok { code: 17 }
 pub const K_CONTINUE: Tok = Tok { code: 18 }
 pub const K_MSG: Tok = Tok { code: 19 }
 pub const K_CONTRACT: Tok = Tok { code: 20 }
-pub const K_INIT: Tok = Tok { code: 21 }
-pub const K_RECV: Tok = Tok { code: 22 }
-pub const K_USES: Tok = Tok { code: 23 }
-pub const K_MUT: Tok = Tok { code: 24 }
-pub const K_CONST: Tok = Tok { code: 25 }
-pub const K_PUB: Tok = Tok { code: 26 }
-pub const K_TRUE: Tok = Tok { code: 27 }
-pub const K_FALSE: Tok = Tok { code: 28 }
-pub const K_ASSERT: Tok = Tok { code: 29 }
-pub const K_STRUCT: Tok = Tok { code: 31 }
+pub const K_USES: Tok = Tok { code: 21 }
+pub const K_MUT: Tok = Tok { code: 22 }
+pub const K_CONST: Tok = Tok { code: 23 }
+pub const K_PUB: Tok = Tok { code: 24 }
+pub const K_TRUE: Tok = Tok { code: 25 }
+pub const K_FALSE: Tok = Tok { code: 26 }
+pub const K_STRUCT: Tok = Tok { code: 27 }
 
 // The lexer finds a keyword by one packed word per identifier in this table (ADR 0014).
-// Entry k spells `K_FN.after(k)`. Code 30 is T_DOC, so its entry is 0, which no
-// identifier packs to.
-const KEYWORDS: [Spelling; 22] = [
+// Entry k spells `K_FN.after(k)`.
+const KEYWORDS: [Spelling; 18] = [
     // fn
     Spelling { packed: 0x666e },
     // let
@@ -172,10 +167,6 @@ const KEYWORDS: [Spelling; 22] = [
     Spelling { packed: 0x6d7367 },
     // contract
     Spelling { packed: 0x636f6e7472616374 },
-    // init
-    Spelling { packed: 0x696e6974 },
-    // recv
-    Spelling { packed: 0x72656376 },
     // uses
     Spelling { packed: 0x75736573 },
     // mut
@@ -188,16 +179,13 @@ const KEYWORDS: [Spelling; 22] = [
     Spelling { packed: 0x74727565 },
     // false
     Spelling { packed: 0x66616c7365 },
-    // assert
-    Spelling { packed: 0x617373657274 },
-    Spelling { packed: 0 },
     // struct
     Spelling { packed: 0x737472756374 },
 ]
 
-// Fe0 rejects every keyword of Fe's lexer as a name, and `with` as well (SPEC.md §1, "Reserved
-// words"). These are the ones that have no token of their own.
-const RESERVED: [Spelling; 23] = [
+// Fe0 rejects every keyword of Fe's lexer as a name (SPEC.md §1, "Reserved words"). These are
+// the ones that have no token of their own.
+const RESERVED: [Spelling; 22] = [
     // as
     Spelling { packed: 0x6173 },
     // mod
@@ -242,8 +230,6 @@ const RESERVED: [Spelling; 23] = [
     Spelling { packed: 0x696e676f74 },
     // super
     Spelling { packed: 0x7375706572 },
-    // with
-    Spelling { packed: 0x77697468 },
 ]
 
 // A doc comment: `///` up to the end of the line (SPEC.md §1).
@@ -346,6 +332,39 @@ impl Spelling {
         T_IDENT
     }
 
+    // Returns the kind of the type name that this `len`-byte spelling spells, or T_IDENT when it
+    // spells none (SPEC.md §1).
+    fn type_kind(self, _ len: usize) -> Tok {
+        let k = self.index_in(TYPE_NAMES)
+        if k < TYPE_NAMES.len() {
+            return T_U256.after(k)
+        }
+        // Putting these three in TYPE_NAMES, as T_TYPE, made Lexer 168 bytes larger
+        // (Fe 26.6.0, -O s).
+        if self.is_sized_int(len) || self == W_USIZE || self == W_ISIZE || self == W_STRING {
+            return T_TYPE
+        }
+        T_IDENT
+    }
+
+    // Whether this `len`-byte spelling is `u` or `i` followed by one of Fe's widths: 8, 16, 32,
+    // 64, 128 or 256.
+    fn is_sized_int(self, _ len: usize) -> bool {
+        if len < 2 || len > 4 {
+            return false
+        }
+        let shift = (len - 1) as u256 * 8
+        let c = self.packed >> shift
+        let d = self.packed - (c << shift)
+        (c == 0x75 || c == 0x69)
+            && (d == 0x38
+                || d == 0x3136
+                || d == 0x3332
+                || d == 0x3634
+                || d == 0x313238
+                || d == 0x323536)
+    }
+
     fn is_reserved(self) -> bool {
         self.index_in(RESERVED) < RESERVED.len()
     }
@@ -362,7 +381,11 @@ impl Spelling {
     }
 }
 
-// Identifiers that Fe gives a fixed meaning but does not reserve, unlike the K_ keywords.
+// Identifiers that Fe gives a fixed meaning but does not reserve, unlike the K_ keywords
+// (SPEC.md §1).
+pub const W_INIT: Spelling = Spelling { packed: 0x696e6974 }
+pub const W_RECV: Spelling = Spelling { packed: 0x72656376 }
+pub const W_ASSERT: Spelling = Spelling { packed: 0x617373657274 }
 pub const W_SELECTOR: Spelling = Spelling { packed: 0x73656c6563746f72 }
 pub const W_CTX: Spelling = Spelling { packed: 0x437478 }
 pub const W_ZERO: Spelling = Spelling { packed: 0x7a65726f }
@@ -525,19 +548,6 @@ impl Text {
         Spelling { packed: v }
     }
 
-    // Whether span `s` is `u` or `i` followed by one or more digits, as in `u8` or `i128`.
-    fn is_sized_int_name(self, _ s: Span) -> bool {
-        let c = self.span_byte(s, 0)
-        var k: usize = 1
-        if (c.is(b'u') || c.is(b'i')) && k < s.len {
-            while k < s.len && self.span_byte(s, k).is_digit() {
-                k += 1
-            }
-            return k == s.len
-        }
-        false
-    }
-
     // Whether span `s` starts with an uppercase letter.
     pub fn starts_upper(self, _ s: Span) -> bool {
         self.span_byte(s, 0).is_upper()
@@ -569,12 +579,13 @@ impl Text {
     // Value of the integer literal at span `s`, which `Lexer::number` scanned. Errors with
     // L_INT_TOO_LARGE at the literal when the value exceeds 2^256 - 1.
     pub fn int_value(self, _ s: Span) -> Result<Diag, u256> {
-        var base: u256 = 10
         var i = s.start.off
-        if s.len > 2 && self.byte(i + 1).is_hex_marker() {
-            base = 16
-            i += 2
+        let base = if s.len > 2 {
+            self.byte(i + 1).radix()
+        } else {
+            10
         }
+        if base != 10 { i += 2 }
         var v: u256 = 0
         while i < s.end().off {
             let c = self.byte(i)
@@ -590,9 +601,11 @@ impl Text {
         Result::Ok(v)
     }
 
-    // Text of string literal `s` with its escapes decoded and its quotes removed.
-    pub fn string_value(self, _ s: Span) -> StrValue {
-        var v = StrValue { word: 0, len: 0 }
+    // Pushes the bytes of string literal `s` to `out` as the data words of an ABI-encoded string
+    // (SPEC.md §4), with its escapes decoded and its quotes removed. Returns the number of bytes.
+    pub fn string_words(self, _ s: Span, _ out: mut MemVec<u256>) -> usize {
+        var word: u256 = 0
+        var len: usize = 0
         var i = s.start.off + 1
         while i < s.end().off - 1 {
             var c = self.byte(i)
@@ -600,10 +613,19 @@ impl Text {
                 i += 1
                 c = self.byte(i).unescape()
             }
-            v.push(c.value())
+            let k = len % STR_WORD_BYTES
+            word = word | (c.value() as u256) << str_byte_shift(k)
+            len += 1
+            if k == STR_WORD_BYTES - 1 {
+                out.push(word)
+                word = 0
+            }
             i += 1
         }
-        v
+        if len % STR_WORD_BYTES != 0 {
+            out.push(word)
+        }
+        len
     }
 
     // Line and column of byte offset `pos`. LF, CR and CRLF each end one line.
@@ -625,31 +647,17 @@ impl Text {
     }
 }
 
-// The bytes of a string literal, packed into one word the way Solidity's `Error(string)` data
-// word holds them. The first byte is the most significant, and unused bytes are zero.
-pub struct StrValue {
-    // The first 32 bytes.
-    pub word: u256,
-    // The number of bytes, which may exceed 32.
-    pub len: usize,
+// The number of bytes of a string literal in each word that `Text.string_words` pushes.
+pub const STR_WORD_BYTES: usize = 32
+
+// Returns byte `k` of a word that `Text.string_words` pushed.
+pub fn str_word_byte(_ w: u256, _ k: usize) -> u8 {
+    (w >> str_byte_shift(k)).downcast_truncate()
 }
 
-impl Copy for StrValue {}
-
-impl StrValue {
-    // Appends byte `b`. Past the first 32 bytes, only `len` grows.
-    pub fn push(mut self, _ b: u8) {
-        if self.len < 32 {
-            let w: u256 = b as u256
-            self.word = self.word | w << ((31 - self.len) * 8) as u256
-        }
-        self.len += 1
-    }
-
-    // Returns byte `i` of the first 32. Errors with an overflow panic when `i` is 32 or more.
-    pub fn byte(self, _ i: usize) -> u8 {
-        (self.word >> ((31 - i) * 8) as u256).downcast_truncate()
-    }
+// Returns the shift of byte `k` in a string word. The first byte is the most significant.
+fn str_byte_shift(_ k: usize) -> u256 {
+    ((STR_WORD_BYTES - 1 - k) * 8) as u256
 }
 
 const U256_MAX: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
@@ -680,14 +688,22 @@ impl Byte {
         self.is_digit() || self.within(b'a', b'f') || self.within(b'A', b'F')
     }
 
-    // The `x` of a `0x` prefix.
-    fn is_hex_marker(self) -> bool {
-        self.is(b'x') || self.is(b'X')
+    // Returns the base of an integer literal whose leading `0` this byte follows: 16 for `x`, 8
+    // for `o` and 2 for `b`, in either case. Any other byte gives 10.
+    fn radix(self) -> u256 {
+        if self.is(b'x') || self.is(b'X') {
+            16
+        } else if self.is(b'o') || self.is(b'O') {
+            8
+        } else if self.is(b'b') || self.is(b'B') {
+            2
+        } else {
+            10
+        }
     }
 
-    // The `b` or `o` of a `0b` or `0o` prefix, which Fe0 leaves out.
-    fn is_unsupported_radix(self) -> bool {
-        self.is(b'b') || self.is(b'B') || self.is(b'o') || self.is(b'O')
+    fn is_digit_in(self, _ base: u256) -> bool {
+        self.is_hex_digit() && self.digit_value() < base
     }
 
     // A byte that may follow `\` in a string escape.
@@ -787,26 +803,6 @@ impl Lexer {
     // Returns the span of the token read so far.
     fn span(self) -> Span {
         Span { start: self.start, len: self.text.end().since(self.start) }
-    }
-
-    // Returns the kind of the type name that the token read so far spells, or T_IDENT when it
-    // spells none (SPEC.md §1).
-    fn type_kind(self, _ w: Spelling) -> Tok {
-        // As a method of Spelling, with the `is_sized_int_name` check in `ident`, this made Lexer
-        // 67 bytes larger (Fe 26.6.0, -O s).
-        let k = w.index_in(TYPE_NAMES)
-        if k < TYPE_NAMES.len() {
-            return T_U256.after(k)
-        }
-        // Putting these three in TYPE_NAMES, as T_TYPE, made Lexer 168 bytes larger
-        // (Fe 26.6.0, -O s).
-        if self.text.is_sized_int_name(self.span())
-            || w == W_USIZE
-            || w == W_ISIZE
-            || w == W_STRING {
-            return T_TYPE
-        }
-        T_IDENT
     }
 
     fn tok(self, _ kind: Tok) -> Token {
@@ -928,14 +924,15 @@ impl Lexer {
         while self.peeked.is_ident_start() || self.peeked.is_digit() {
             self.bump()
         }
-        let w = self.text.packed(self.span())
+        let span = self.span()
+        let w = self.text.packed(span)
         if w == W_UNDERSCORE {
             return Result::Ok(self.tok(T_UNDERSCORE))
         }
         if w.is_reserved() {
             return self.err(L_RESERVED_WORD)
         }
-        let ty = self.type_kind(w)
+        let ty = w.type_kind(span.len)
         if ty != T_IDENT {
             return Result::Ok(self.tok(ty))
         }
@@ -1024,16 +1021,19 @@ impl Lexer {
     fn number(mut self) -> Result<Diag, Token> uses (input: mut Source) {
         let first = self.peeked
         self.bump()
-        if first.is(b'0') && self.peeked.is_hex_marker() {
+        let base = if first.is(b'0') {
+            self.peeked.radix()
+        } else {
+            10
+        }
+        if base != 10 {
             self.bump()
-            if !self.peeked.is_hex_digit() {
+            if !self.peeked.is_digit_in(base) {
                 return self.err(L_BAD_INT)
             }
-            while self.peeked.is_hex_digit() {
+            while self.peeked.is_digit_in(base) {
                 self.bump()
             }
-        } else if first.is(b'0') && self.peeked.is_unsupported_radix() {
-            return self.err(L_UNSUPPORTED_LITERAL)
         } else {
             var last_underscore = false
             while self.peeked.is_digit() || self.peeked.is(b'_') {
@@ -1048,7 +1048,7 @@ impl Lexer {
                 return self.err(L_BAD_INT)
             }
         }
-        if self.peeked.is_ident_start() {
+        if self.peeked.is_ident_start() || self.peeked.is_digit() {
             return self.err(L_BAD_INT)
         }
         Result::Ok(self.tok(T_INT))

@@ -1,0 +1,3 @@
+// expect: L008 3:19
+// A binary literal has only the digits 0 and 1 (SPEC §1).
+const TWO: u256 = 0b12

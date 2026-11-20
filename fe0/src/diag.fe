@@ -2,10 +2,8 @@
 
 use ingot::lexer::Pos
 
-// An error code. It is `phase * 1000 + n` and prints as the phase letter and three digits, so
-// 6034 is `C034`. The phases, from 1 to 7, are lexer, parser, names, types, effects,
-// constants and generation. A phase's letter is the first letter of its name. Codes are made
-// only here, so every code has a known phase.
+// An error code. It is `phase * 1000 + n` and prints as the phase's letter in `PHASE_LETTERS`
+// and three digits, so 6034 is `C034`. Codes are made only here, so every code has a known phase.
 pub struct DiagCode { raw: u16 }
 
 impl Copy for DiagCode {}
@@ -79,7 +77,6 @@ pub const L_BAD_ESCAPE: DiagCode = DiagCode { raw: 1003 }
 // literal itself.
 pub const L_INT_TOO_LARGE: DiagCode = DiagCode { raw: 1004 }
 pub const L_RESERVED_WORD: DiagCode = DiagCode { raw: 1005 }
-pub const L_UNSUPPORTED_LITERAL: DiagCode = DiagCode { raw: 1006 }
 pub const L_NON_ASCII: DiagCode = DiagCode { raw: 1007 }
 pub const L_BAD_INT: DiagCode = DiagCode { raw: 1008 }
 // A line break inside parentheses where Fe0 allows none (SPEC.md §3.4).
@@ -95,7 +92,6 @@ pub const P_EXPECTED_EXPR: DiagCode = DiagCode { raw: 2005 }
 pub const P_EXPECTED_END: DiagCode = DiagCode { raw: 2006 }
 pub const P_CHAINED_COMPARISON: DiagCode = DiagCode { raw: 2007 }
 pub const P_TOO_DEEP: DiagCode = DiagCode { raw: 2008 }
-pub const P_MESSAGE_TOO_LONG: DiagCode = DiagCode { raw: 2009 }
 pub const P_FIELD_NOT_MUT: DiagCode = DiagCode { raw: 2010 }
 // A `<` that may start generic arguments after a name (SPEC.md §3.2).
 pub const P_GENERIC_ARGS: DiagCode = DiagCode { raw: 2011 }

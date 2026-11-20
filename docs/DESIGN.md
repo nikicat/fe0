@@ -174,6 +174,9 @@ Opcodes are emitted straight from the AST, with no IR
 | `0x60–0x7f` | Reserved (EVM convention, unused) |
 | `0x80…` | Frames, growing upward. While `log.emit` runs, its data and topics are in the words past the current frame. While `a.call(…)` runs, its calldata is there |
 
+Revert data is written from scratch onward and may be any length, so it can run over FP and the
+frames. This is safe because `REVERT` follows at once, and nothing reads memory after it.
+
 **Frames.** Each function has a frame of `2 + params + locals` words at FP:
 - `[FP+0]` saved FP of the caller;
 - `[FP+32]` return address;
@@ -327,14 +330,14 @@ differs from the ABI that `fe build` writes.
 
   | Contract | Runtime bytes | Deploy gas |
   |---|---|---|
-  | Lexer | 5,785 | 1.29M |
-  | Parser | 17,009 | 3.73M |
+  | Lexer | 5,719 | 1.28M |
+  | Parser | 17,111 | 3.75M |
   | Checker | 20,101 | 4.40M |
-  | Back | 17,123 | 3.76M |
+  | Back | 17,216 | 3.78M |
   | Compiler | 1,653 | 0.44M |
 
   - **Deploying all five costs 13.6M gas.**
-  - **Compiling costs up to 29.0M gas, for `corpus/amm.fe`.**
+  - **Compiling costs up to 28.7M gas, for `corpus/amm.fe`.**
     - That program is 8,141 bytes of source.
     - Lexing takes about 1,240 gas per byte of source.
     - No tool measures the cost of the boundaries.

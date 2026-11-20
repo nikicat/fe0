@@ -1,4 +1,4 @@
-// Assert messages: empty, short, with escapes, and at the 31-byte limit.
+// Assert messages: empty, short, with escapes, and of 31, 32, 33 and 100 bytes.
 msg MessagesMsg {
     #[selector = 1]
     Check { code: u256 },
@@ -11,6 +11,12 @@ fn check(_ code: u256) {
     assert!(code != 4, "tab\tquote\"backslash\\")
     assert!(code != 5, "line one\nline two\r")
     assert!(code != 6, "0123456789012345678901234567890")
+    assert!(code != 7, "0123456789012345678901234567890\n")
+    assert!(code != 8, "0123456789012345678901234567890\n!")
+    assert!(
+        code != 9,
+        "This message is one hundred bytes long, so it fills four data words in the revert data that it makes"
+    )
     assert!(code < 100, "code too large")
 }
 

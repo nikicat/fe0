@@ -1,0 +1,26 @@
+// Integer literals in each base of SPEC §1.
+msg RadixMsg {
+    #[selector = 0b1]
+    Same -> bool,
+    #[selector = 0o2]
+    Mix { x: u256 } -> u256,
+    #[selector = 0B11]
+    Max -> u256,
+}
+
+const MODE: u256 = 0o755
+const LOW: u256 = 0b1011
+
+contract Radix {
+    recv RadixMsg {
+        Same {} -> bool {
+            LOW == 0xb && MODE == 493 && LOW + 0O17 == 0B11010 && MODE - MODE == 0o0
+        }
+        Mix { x } -> u256 {
+            x & 0b1111 | MODE << 0o4 | LOW
+        }
+        Max {} -> u256 {
+            0o17777777777777777777777777777777777777777777777777777777777777777777777777777777777777
+        }
+    }
+}

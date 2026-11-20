@@ -1,0 +1,3 @@
+// expect: L008 3:20
+// An octal literal has no `_` separators (SPEC §1).
+const MODE: u256 = 0o7_55

@@ -13,12 +13,14 @@ use ingot::lexer::{
     ABI_UINT256,
     Pos,
     SOURCE_START,
+    STR_WORD_BYTES,
     Span,
     Spelling,
     T_EOF,
     Text,
     Tok,
     Token,
+    str_word_byte,
 }
 use ingot::wire::{Reader, Wire, Writer}
 
@@ -86,7 +88,7 @@ pub const NODE_ARM: Kind = Kind { code: 10 }
 pub const NODE_BIND: Kind = Kind { code: 11 }
 // one entry of `uses (...)`: name (of the field), and `as_use()` for is_mut.
 pub const NODE_USE: Kind = Kind { code: 12 }
-// string literal: word (its bytes as a `StrValue.word`), and `as_str()` for its len.
+// string literal: its words (read with `Ast.str_word`), and `as_str()` for its len.
 pub const NODE_STR: Kind = Kind { code: 13 }
 // `#[event] struct`: name, list of FIELDs.
 pub const NODE_EVENT: Kind = Kind { code: 14 }
@@ -828,6 +830,11 @@ impl StrNode {
     pub fn len(self) -> usize {
         self.n.d
     }
+
+    // Returns the number of words that hold the string.
+    pub fn word_count(self) -> usize {
+        (self.len() + STR_WORD_BYTES - 1) / STR_WORD_BYTES
+    }
 }
 
 pub struct ContractNode { n: Node }
@@ -1045,7 +1052,7 @@ impl Ast {
         NodeId { id: self.lists[l.id + 1 + i] }
     }
 
-    // Returns the word of INT, VARIANT or STR node `i`.
+    // Returns the word of INT or VARIANT node `i`.
     pub fn word_value(self, _ i: NodeId) -> u256 {
         self.word(self.node(i).word())
     }
@@ -1090,6 +1097,23 @@ impl Ast {
         var n = self.nodes[i.id]
         n.b = otherwise.id
         self.nodes.set(i.id, n)
+    }
+
+    // Adds a STR node for string literal `s`, and its words to `words`.
+    pub fn add_str(mut self, _ s: Span) -> NodeId {
+        let first = WordId { id: self.words.len() }
+        let len = self.text.string_words(s, mut self.words)
+        self.add_node(Node::new_str(s.start, word: first, len))
+    }
+
+    // Returns word `k` of string `s`. `add_str` puts the words of a STR in one run.
+    pub fn str_word(self, _ s: StrNode, _ k: usize) -> u256 {
+        self.words[s.n.word().id + k]
+    }
+
+    // Returns byte `b` of string `s`.
+    pub fn str_byte(self, _ s: StrNode, _ b: usize) -> u8 {
+        str_word_byte(self.str_word(s, b / STR_WORD_BYTES), b % STR_WORD_BYTES)
     }
 
     // Adds `v` to `words` and returns its index.

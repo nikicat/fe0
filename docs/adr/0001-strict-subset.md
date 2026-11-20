@@ -36,6 +36,11 @@ Checker contract 100 bytes for the first three together and 133 bytes for the fo
 - **A contract may declare a `Log` or `Call` effect without `mut`.** Fe0 rejects only an emit
   or a call through it (SPEC §6).
 
+In two more cases, following Fe made the Lexer contract 164 bytes smaller and the Parser
+contract 36 bytes larger (Fe 26.7.0, `-O s`):
+- **A width that Fe lacks, such as `u7` or `u24`, is a name** (SPEC §1).
+- **`init`, `recv`, `assert` and `with` are names** (SPEC §1).
+
 Where Fe is just as strict, so is Fe0. A field listed twice in a `uses` clause and an effect
 name declared twice are both rejected (`N001`), as Fe 26.7.0 rejects them (`3-0093`,
 argotorg/fe#1987). A `Ctx` effect may be written `mut Ctx`, as in Fe.
@@ -45,9 +50,10 @@ argotorg/fe#1987). A `Ctx` effect may be written `mut Ctx`, as in Fe.
   bytes on chain, for programs nobody needs to write.
 - **Keep a stricter rule even where following Fe is free:** each such rule rejects Fe programs
   for no gain.
-- **Keep the stricter name, grant, constant and effect declaration rules above:** a name
-  would always mean one declaration, and only `mut` would grant or declare a change. But each
-  rule rejects Fe programs, and following Fe costs only the 233 bytes above.
+- **Keep the stricter name, grant, constant and effect declaration rules of the first four
+  cases above:** a name would always mean one declaration, and only `mut` would grant or
+  declare a change. But each rule rejects Fe programs. Following Fe in those four cases costs
+  the Checker only 233 bytes.
 - **A Fe-like language with its own rules:** loses the differential oracle
   ([0002](0002-match-official-output.md), [0003](0003-own-corpus-and-generator.md)), and with it
   the main evidence that the compiler is right.

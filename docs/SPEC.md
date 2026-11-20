@@ -38,7 +38,9 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 | Identifier | `[a-zA-Z_][a-zA-Z0-9_]*`, excluding keywords, type names and a lone `_` | |
 | Decimal integer | `[0-9]+(_[0-9]+)*` | The value must fit in 256 bits |
 | Hex integer | `0[xX][0-9a-fA-F]+` | No `_` separators. Must fit in 256 bits |
-| String | `"` … `"` with escapes `\" \\ \n \r \t` | Only allowed as the message of `assert!`, and at most 31 bytes after decoding. Fe accepts longer messages **[✓]**; Fe0 v1 restricts them so `Error(string)` stays one data word |
+| Octal integer | `0[oO][0-7]+` | No `_` separators. Must fit in 256 bits |
+| Binary integer | `0[bB][01]+` | No `_` separators. Must fit in 256 bits |
+| String | `"` … `"` with escapes `\" \\ \n \r \t` | Only allowed as the message of `assert!` |
 | Punctuation | `( ) { } [ ] : , -> # .` | `;` is not a token: Fe rejects it after a statement, even at the end of a line **[✓]**. `::` appears only in `Address::zero()` and in the `M::V` of a call (§6, "Calls"), as two `:` with no space between them. Fe reads `::` as one token and rejects `: :` **[✓]** |
 | Operators | `+ - * / % ~ ! ^ & \| && \|\| < > = == !=` | |
 | Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside, and rejects spaced forms. Fe rejects `x + = 1` too **[✓]** |
@@ -71,8 +73,6 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
     else inside `( )`, and at the end of the file (`1-0001`) **[✓]**. The probes are the other
     `corpus/reject/doc_*.fe`.
   - `//!` is an ordinary comment in both **[✓]**. The probe is `corpus/one_line.fe`.
-- **Binary (`0b`) and octal (`0o`) literals** are left out of Fe0. They are valid Fe, so they
-  could be added later.
 
 **Reserved words.** These are every keyword of Fe's lexer, so Fe0 rejects any of them as an
 identifier (`tools/spikes.sh` checks this list against Fe's source):
@@ -83,20 +83,22 @@ match for in loop where while pub return yield self Self struct enum trait impl 
 mut ref own use extern unsafe ingot super
 ```
 
-`init`, `recv`, `assert` and `with` are contextual words in Fe, not keywords. Fe0 **also
-rejects them as identifiers**, which keeps the parser simple and is allowed by the subset rule.
+`init`, `recv`, `assert` and `with` are contextual words in Fe, not keywords, so they are
+identifiers in Fe0 too **[✓]**. The probe is `corpus/contextual_words.fe`. The grammar of §3.1
+still gives three of them a fixed meaning in places where no name can stand. In a contract body,
+every field starts with `mut`, so `init` and `recv` there start an `init` and a `recv` block.
+And `assert` followed by `!` starts an `assert!`.
 
-**Type names.** `u` or `i` followed by digits, `usize`, `isize`, `bool`, `String` and
-`Address` are type names, not identifiers. Fe0 rejects them wherever a name appears.
+**Type names.** Fe's primitive types are `u8`, `u16`, `u32`, `u64`, `u128` and `u256`, the
+`i` types of the same widths, `usize`, `isize`, `bool` and `String`. These and `Address` are
+type names, not identifiers. Fe0 rejects them wherever a name appears. Other widths, such as
+`u7` and `u24`, are plain names, as in Fe **[✓]**.
 
-Fe's rule is narrower than Fe0's. Its primitive types are `u8`, `u16`, `u32`, `u64`, `u128`
-and `u256`, the `i` types of the same widths, `usize`, `isize`, `bool` and `String`. Fe
-rejects a local, parameter, function or constant named after one of them, with `8-0030` at
-each use **[✓]**. A `let`, a `var` and a bind all count as locals. Fe accepts these names for
-fields. It also accepts them for msgs, variants and contracts, except `bool` and `u256`
-**[✓]**. Fe accepts `Address` as the name of a parameter, function or constant **[✓]**.
-Widths that Fe lacks, such as `u7` and `u24`, are plain names in Fe **[✓]**. Fe0 keeps one
-rule for every name, which the subset rule allows.
+Fe's rule is narrower than Fe0's. Fe rejects a local, parameter, function or constant named
+after a primitive type, with `8-0030` at each use **[✓]**. A `let`, a `var` and a bind all count
+as locals. Fe accepts these names for fields. It also accepts them for msgs, variants and
+contracts, except `bool` and `u256` **[✓]**. Fe accepts `Address` as the name of a parameter,
+function or constant **[✓]**. Fe0 keeps one rule for every name, which the subset rule allows.
 
 ## 2. Types
 
@@ -261,7 +263,7 @@ and index
   set gas or value, a call on an address that is not a name, such as `ctx.caller().call(…)`,
   and a msg value that is not written in the call, such as `let m = M::V { … }`;
 - structs other than events, struct values, `enum`, `use`, `mod`, `impl`, `extern`, `unsafe`,
-  `with` and closures;
+  `with` blocks and closures;
 - contract effects other than `Ctx`, `Log` and `Call`, `uses` on a free function, `#[payable]`,
   fallback arms (`_`);
 - events with fields of other types, such as arrays and strings;
@@ -380,7 +382,8 @@ type. Without `else`, it has unit type and may only be used as a statement.
 **`assert!(c)`** reverts with `Panic(0x01)` when `c` is false **[✓]**.
 
 **`assert!(c, "msg")`** reverts with `Error(string)` instead **[✓]**: `0x08c379a0` followed by the
-ABI-encoded string.
+ABI-encoded string. A message of any length is encoded whole **[✓]**. The probe is
+`corpus/messages.fe`.
 
 ## 5. Names, scopes and checking
 
@@ -786,7 +789,7 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 |---|---|---|
 | `u256`, `bool`, `Address`, with checked arithmetic | ✅ | §2, §4 |
 | Other integer widths, signed integers, `usize`, `isize` | ❌ | §2 |
-| `String` | ◐ only as an `assert!` message of at most 31 bytes | §1 |
+| `String` | ◐ only as an `assert!` message | §1 |
 | Tuples, arrays, structs other than events, enums, references | ❌ | §2, §3.3 |
 | Generics, traits, `impl`, closures, `as` casts | ❌ | §3.3 |
 | A literal's type inferred from later uses | ◐ the type must be fixed where the literal is written | §2 |
@@ -802,8 +805,7 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 | `while true` as a path that leaves a function | ❌ | §5.6 |
 | `**` | ❌ | §3.3 |
 | Compound assignment | ✅ | §1 |
-| Decimal and hex literals | ✅ | §1 |
-| Binary and octal literals | ❌ | §1 |
+| Decimal, hex, octal and binary literals | ✅ | §1 |
 | `if` as an expression, block values | ✅ | §4 |
 | `while`, `break`, `continue`, `return` | ✅ | §3.1 |
 | `for`, ranges, `loop`, `match` | ❌ | §3.3 |
@@ -820,11 +822,12 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 | `const` | ◐ literals, other constants and operators only | §5.3 |
 | Functions with positional and labelled parameters | ✅ | §5.4 |
 | Recursion | ◐ deeper than Fe's stack limit, Fe0 differs | the subset rule, §5.4 |
-| `mod`, `use`, `extern`, `unsafe`, `with` | ❌ | §3.3 |
+| `mod`, `use`, `extern`, `unsafe`, `with` blocks | ❌ | §3.3 |
 | A local or a parameter named like a field or an item | ✅ | §5.2 |
 | Uppercase parameters | ✅ | §5.2 |
 | Uppercase locals | ◐ rejected | §5.2 |
-| Type names and contextual words as names | ◐ rejected everywhere | §1 |
+| Type names as names | ◐ rejected everywhere | §1 |
+| `init`, `recv`, `assert` and `with` as names | ✅ | §1 |
 | A program without exactly one contract | ◐ rejected | §6 |
 | A function as a value | ❌ | §5.4 |
 

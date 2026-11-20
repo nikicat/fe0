@@ -13,7 +13,6 @@ use ingot::diag::{
     P_EXPECTED_TYPE,
     P_FIELD_NOT_MUT,
     P_GENERIC_ARGS,
-    P_MESSAGE_TOO_LONG,
     P_RECORD_LITERAL,
     P_TOO_DEEP,
 }
@@ -53,7 +52,6 @@ use ingot::lexer::{
     P_COMMA,
     P_LPAREN,
     Pos,
-    StrValue,
     T_IDENT,
     Tok,
 }
@@ -483,11 +481,11 @@ impl Printer {
             self.put("]")
         } else if k == NODE_STR {
             self.put("\"")
-            let v = StrValue { word: self.ast.word(n.word()), len: n.as_str().len() }
-            var i: usize = 0
-            while i < v.len {
-                self.escaped(v.byte(i))
-                i += 1
+            let s = n.as_str()
+            var b: usize = 0
+            while b < s.len() {
+                self.escaped(self.ast.str_byte(s, b))
+                b += 1
             }
             self.put("\"")
         } else {
@@ -986,15 +984,18 @@ fn record_literal() {
 }
 
 #[test]
-fn assert_message_length() {
-    // 31 bytes after decoding is the limit; `\n` counts as one.
-    parse_text(
-        "fn f() { assert!(true, \"01234567890123456789012345678\\n\\t\") }",
+fn long_assert_messages() {
+    // A message of 32 bytes fills one word, and one of 33 bytes takes two. `\n` counts as one
+    // byte.
+    tail_is(
+        "fn f() { assert!(x, \"012345678901234567890123456789\\n\\t\") }",
+        "(assert x \"012345678901234567890123456789\\n\\t\")",
     )
-    let d = parse_err(
-        "fn f() { assert!(true, \"01234567890123456789012345678901\") }",
+    tail_is(
+        "fn f() { assert!(x, \"01234567890123456789012345678901\\n\") }",
+        "(assert x \"01234567890123456789012345678901\\n\")",
     )
-    assert!(d.code == P_MESSAGE_TOO_LONG)
+    tail_is("fn f() { assert!(x, \"\") }", "(assert x \"\")")
 }
 
 #[test]

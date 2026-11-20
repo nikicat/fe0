@@ -16,13 +16,12 @@ impl Display for Message {
 }
 
 // One message per error code in fe0/src/diag.fe.
-const MESSAGES: [Message; 57] = [
+const MESSAGES: [Message; 55] = [
     Message { code: L_UNEXPECTED_CHAR, text: "unexpected character" },
     Message { code: L_UNTERMINATED_STRING, text: "unterminated string" },
     Message { code: L_BAD_ESCAPE, text: "unknown escape in a string" },
     Message { code: L_INT_TOO_LARGE, text: "integer over 256 bits" },
     Message { code: L_RESERVED_WORD, text: "reserved word" },
-    Message { code: L_UNSUPPORTED_LITERAL, text: "only decimal and hex integers" },
     Message { code: L_NON_ASCII, text: "byte outside ASCII" },
     Message { code: L_BAD_INT, text: "malformed integer" },
     Message { code: L_LINE_BREAK, text: "line break inside parentheses" },
@@ -34,7 +33,6 @@ const MESSAGES: [Message; 57] = [
     Message { code: P_EXPECTED_END, text: "expected the end of a line" },
     Message { code: P_CHAINED_COMPARISON, text: "comparisons cannot be chained" },
     Message { code: P_TOO_DEEP, text: "nested too deeply" },
-    Message { code: P_MESSAGE_TOO_LONG, text: "assert message over 31 bytes" },
     Message { code: P_FIELD_NOT_MUT, text: "a contract field must be mut" },
     Message { code: P_GENERIC_ARGS, text: "ambiguous `<` after a name" },
     Message { code: P_RECORD_LITERAL, text: "ambiguous `{` at line start" },

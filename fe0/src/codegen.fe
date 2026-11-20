@@ -37,10 +37,6 @@ impl Size {
     fn plus(self, _ other: Size) -> Size {
         Size { n: self.n + other.n }
     }
-
-    fn is_zero(self) -> bool {
-        self.n == 0
-    }
 }
 
 // An address in memory.
@@ -435,6 +431,24 @@ impl Gen {
         self.on_scratch(OP_REVERT, size)
     }
 
+    // Reverts with `Error(string)` and STR node `m` as its message (SPEC.md §4).
+    fn revert_error(mut self, _ m: NodeId) {
+        self.selector_at_scratch(ERROR_SELECTOR)
+        self.push(WORD.word())
+        self.store_at(revert_word(0))
+        let s = self.node(m).as_str()
+        let count = s.word_count()
+        self.push(bytes(s.len()).word())
+        self.store_at(revert_word(1))
+        var k: usize = 0
+        while k < count {
+            self.push(self.c.ast.str_word(s, k))
+            self.store_at(revert_word(2 + k))
+            k += 1
+        }
+        self.revert(selector_and_words(2 + k))
+    }
+
     // Reverts with the return data of the last external call, copied to SCRATCH.
     fn revert_returndata(mut self) {
         self.op(OP_RETURNDATASIZE)
@@ -649,7 +663,7 @@ impl Gen {
         self.jumpi_to(REVERT_EMPTY)
     }
 
-    // The runtime code: the dispatcher (DESIGN.md §6.4), the arms and what they call.
+    // Emits the runtime code: the dispatcher (DESIGN.md §6.4), the arms and what they call.
     fn runtime(mut self) {
         self.non_payable()
         self.load_selector()
@@ -862,7 +876,7 @@ impl Gen {
         self.apply(op)
     }
 
-    // `a && b` or `a || b`: `b` runs only when `a` does not decide the result.
+    // Emits `a && b` or `a || b`, where `b` runs only when `a` does not decide the result.
     fn short_circuit(mut self, _ i: NodeId) {
         let n = self.node(i)
         let end = self.piece.asm.label()
@@ -954,9 +968,9 @@ impl Gen {
         }
     }
 
-    // The values are evaluated in the order written, not in field order (SPEC.md §4). A call in a
-    // later value puts its frame past the current one, where these values go (DESIGN.md §6.1,
-    // §6.2). So no value is stored until all of them are evaluated.
+    // Emits code that stores the values at `dest`, evaluated in the order written, not in field
+    // order (SPEC.md §4). A call in a later value puts its frame past the current one, where these
+    // values go (DESIGN.md §6.1, §6.2). So no value is stored until all of them are evaluated.
     fn store_args(mut self, _ args: ListId, _ dest: ArgDest) {
         self.values(args)
         var k = self.len(args)
@@ -1151,7 +1165,7 @@ impl Gen {
         self.store(d)
     }
 
-    // `m[k] = e` or `m[k] op= e`. Fe evaluates `e` before `k` (SPEC §4).
+    // Emits code that runs `m[k] = e` or `m[k] op= e`. Fe evaluates `e` before `k` (SPEC §4).
     fn assign_entry(mut self, _ i: NodeId) {
         let n = self.node(i)
         self.value(n.value())
@@ -1270,7 +1284,8 @@ impl Gen {
         LEAVES_WORD
     }
 
-    // `assert!(c)` reverts with Panic(0x01), and `assert!(c, "m")` with Error("m") (SPEC §4).
+    // Emits `assert!` expression i. `assert!(c)` reverts with Panic(0x01), and `assert!(c, "m")`
+    // with Error("m") (SPEC §4).
     fn assert(mut self, _ i: NodeId) {
         let n = self.node(i)
         if n.message().is_none() {
@@ -1281,22 +1296,7 @@ impl Gen {
         self.body.depth -= 1
         let ok = self.piece.asm.label()
         self.piece.asm.jumpi(ok)
-        let m = self.node(n.message()).as_str()
-        // The ABI encoding of a string: its offset, its length, then its bytes padded to a word.
-        // A message has at most 31 bytes, so they fit in one word (SPEC §1).
-        self.selector_at_scratch(ERROR_SELECTOR)
-        self.push(WORD.word())
-        self.store_at(revert_word(0))
-        let len = bytes(m.len())
-        self.push(len.word())
-        self.store_at(revert_word(1))
-        var count: usize = 2
-        if !len.is_zero() {
-            self.push(self.c.ast.word_value(n.message()))
-            self.store_at(revert_word(2))
-            count = 3
-        }
-        self.revert(selector_and_words(count))
+        self.revert_error(n.message())
         self.piece.asm.bind(ok)
     }
 }

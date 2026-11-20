@@ -15,7 +15,6 @@ use ingot::diag::{
     P_EXPECTED_TYPE,
     P_FIELD_NOT_MUT,
     P_GENERIC_ARGS,
-    P_MESSAGE_TOO_LONG,
     P_RECORD_LITERAL,
     P_TOO_DEEP,
 }
@@ -26,9 +25,6 @@ use ingot::lexer::*
 // EVM stack bounds that recursion. ADR 0012 gives the measurement behind this cap, and
 // `parser_tests::deepest_nesting` checks it.
 pub const MAX_DEPTH: usize = 20
-
-// Bytes an `assert!` message may hold after decoding escapes (SPEC.md §1).
-const MAX_MESSAGE: usize = 31
 
 // The kind of element a comma-separated list holds. It picks the parser of each element. Fe has
 // no closures, so `comma_items` takes this selector in place of a parser.
@@ -545,7 +541,7 @@ impl Parser {
         self.effects()?
         self.expect(P_LBRACE)?
         self.skip_docs()
-        while self.peek() == K_MUT || self.peek() == T_IDENT {
+        while self.at_field() {
             if !self.eat(K_MUT) {
                 return Result::Err(self.err(P_FIELD_NOT_MUT))
             }
@@ -556,12 +552,12 @@ impl Parser {
         }
         let field_list = self.close_list(field_mark)
         var init = NO_NODE
-        if self.peek() == K_INIT {
+        if self.at_word(W_INIT) {
             init = self.init()?
             self.skip_docs()
         }
         let recv_mark = self.open_list()
-        while self.peek() == K_RECV {
+        while self.at_word(W_RECV) {
             let r = self.recv()?
             self.pending.push(r)
             self.skip_docs()
@@ -825,6 +821,13 @@ impl Parser {
         k == O_BANG || k == O_TILDE || (k == O_PLUS && self.prev() != T_NEWLINE)
     }
 
+    // Whether a contract field starts here: `mut`, or a name and `:`, which is a field that lacks
+    // its `mut` (SPEC.md §3.1, rule `cfield`). `init` and `recv` are names too (SPEC.md §1), so
+    // the `:` tells a field from an `init` or a `recv` block.
+    fn at_field(self) -> bool {
+        self.peek() == K_MUT || self.peek() == T_IDENT && self.peek2() == P_COLON
+    }
+
     // Index of the token after the bracket group that opens at token `start`, or of the T_EOF
     // token when the group does not close.
     fn after_group(self, _ start: TokIdx) -> TokIdx {
@@ -888,6 +891,9 @@ impl Parser {
             if next == P_LBRACKET {
                 return self.index()
             }
+            if next == O_BANG && self.at_word(W_ASSERT) {
+                return self.assert()
+            }
             let name = self.ident()?
             return Result::Ok(self.ast.add_node(Node::new_name(t.span.start, name)))
         }
@@ -905,9 +911,6 @@ impl Parser {
         }
         if k == K_IF {
             return self.if_expr()
-        }
-        if k == K_ASSERT {
-            return self.assert()
         }
         Result::Err(self.err(P_EXPECTED_EXPR))
     }
@@ -1049,13 +1052,7 @@ impl Parser {
         let cond = self.expr()?
         var message = NO_NODE
         if self.eat(P_COMMA) {
-            let s = self.expect(T_STR)?
-            let v = self.ast.text.string_value(s.span)
-            if v.len > MAX_MESSAGE {
-                return Result::Err(diag(P_MESSAGE_TOO_LONG, s.span.start))
-            }
-            let word = self.ast.add_word(v.word)
-            message = self.ast.add_node(Node::new_str(s.span.start, word, len: v.len))
+            message = self.ast.add_str(self.expect(T_STR)?.span)
         }
         self.expect(P_RPAREN)?
         Result::Ok(self.ast.add_node(Node::new_assert(pos, cond, message)))

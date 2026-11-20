@@ -1,0 +1,40 @@
+// Uses `init`, `recv`, `assert` and `with` as names (SPEC.md §1): of functions, fields, an
+// effect, parameters, a bind and locals. The same program also uses `init`, `recv` and
+// `assert!` in their fixed meaning.
+msg ContextualMsg {
+    #[selector = 1]
+    Get { init: u256 } -> u256,
+    #[selector = 2]
+    Caller -> bool,
+}
+
+const LIMIT: u256 = 1000
+
+fn assert(_ recv: u256, init: u256) -> u256 {
+    let with: u256 = recv + init
+    assert!(with < LIMIT, "assert, init, recv and with are names")
+    with
+}
+
+fn with(_ init: u256) -> u256 {
+    var recv: u256 = init
+    recv *= 2
+    recv
+}
+
+contract Contextual uses (init: Ctx) {
+    mut recv: u256,
+
+    init(with: u256) uses (mut recv) {
+        recv = with
+    }
+
+    recv ContextualMsg {
+        Get { init } -> u256 uses (recv) {
+            assert(recv, init: with(init))
+        }
+        Caller {} -> bool uses (init) {
+            init.caller() != Address::zero()
+        }
+    }
+}

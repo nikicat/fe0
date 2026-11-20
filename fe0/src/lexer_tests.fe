@@ -8,7 +8,6 @@ use ingot::diag::{
     L_NON_ASCII,
     L_RESERVED_WORD,
     L_UNEXPECTED_CHAR,
-    L_UNSUPPORTED_LITERAL,
     L_UNTERMINATED_STRING,
 }
 use ingot::io::{Source, text}
@@ -57,30 +56,40 @@ fn keywords_and_idents() {
         [K_FN, K_LET, K_VAR, K_IF, K_ELSE, K_WHILE, K_RETURN, K_BREAK, K_CONTINUE, T_EOF],
     )
     expect(
-        "msg contract init recv uses mut const pub true false assert struct",
-        [
-            K_MSG,
-            K_CONTRACT,
-            K_INIT,
-            K_RECV,
-            K_USES,
-            K_MUT,
-            K_CONST,
-            K_PUB,
-            K_TRUE,
-            K_FALSE,
-            K_ASSERT,
-            K_STRUCT,
-            T_EOF,
-        ],
+        "msg contract uses mut const pub true false struct",
+        [K_MSG, K_CONTRACT, K_USES, K_MUT, K_CONST, K_PUB, K_TRUE, K_FALSE, K_STRUCT, T_EOF],
+    )
+    // Fe's contextual words are plain names (SPEC.md §1).
+    expect(
+        "init recv assert with",
+        [T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_EOF],
     )
     expect(
         "x _y fnord u u2x Bool _",
         [T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_UNDERSCORE, T_EOF],
     )
     expect(
-        "u256 bool Address u8 i7 usize isize String",
-        [T_U256, T_BOOL, T_ADDRESS, T_TYPE, T_TYPE, T_TYPE, T_TYPE, T_TYPE, T_EOF],
+        "u256 bool Address u8 i16 u32 i64 u128 i256 usize isize String",
+        [
+            T_U256,
+            T_BOOL,
+            T_ADDRESS,
+            T_TYPE,
+            T_TYPE,
+            T_TYPE,
+            T_TYPE,
+            T_TYPE,
+            T_TYPE,
+            T_TYPE,
+            T_TYPE,
+            T_TYPE,
+            T_EOF,
+        ],
+    )
+    // Widths that Fe lacks are plain names.
+    expect(
+        "u7 i24 u08 u0 u1 i512 u2560 x8",
+        [T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_IDENT, T_EOF],
     )
 }
 
@@ -113,19 +122,21 @@ fn reserved_words_are_errors() {
     expect_reserved("unsafe")
     expect_reserved("ingot")
     expect_reserved("super")
-    expect_reserved("with")
     expect_reserved("let for = 1")
-    assert!(lex_err("let x = with").pos() == Pos::at(8))
+    assert!(lex_err("let x = super").pos() == Pos::at(8))
 }
 
-// Each fixed spelling in lexer.fe is what `Text.packed` makes of its word, and `push_bytes`
+// Each W_ and ABI_ spelling listed here is what `Text.packed` makes of its word, and `push_bytes`
 // gives the word back.
 #[test]
 fn word_spellings_round_trip() {
     let l = lex_text(
-        "selector Ctx zero StorageMap event indexed Log emit Call call uint256 bool address",
+        "init recv assert selector Ctx zero StorageMap event indexed Log emit Call call uint256 bool address",
     )
-    let words: [Spelling; 13] = [
+    let words: [Spelling; 16] = [
+        W_INIT,
+        W_RECV,
+        W_ASSERT,
         W_SELECTOR,
         W_CTX,
         W_ZERO,
@@ -321,8 +332,15 @@ fn integers() {
     assert!(lex_err("1__0").code == L_BAD_INT)
     assert!(lex_err("12ab").code == L_BAD_INT)
     assert!(lex_err("0x").code == L_BAD_INT)
-    assert!(lex_err("0b101").code == L_UNSUPPORTED_LITERAL)
-    assert!(lex_err("0o17").code == L_UNSUPPORTED_LITERAL)
+    assert!(made(int_value_of("0b101")) == 5)
+    assert!(made(int_value_of("0B0")) == 0)
+    assert!(made(int_value_of("0o17")) == 15)
+    assert!(made(int_value_of("0O777")) == 511)
+    assert!(lex_err("0b").code == L_BAD_INT)
+    assert!(lex_err("0b2").code == L_BAD_INT)
+    assert!(lex_err("0b12").code == L_BAD_INT)
+    assert!(lex_err("0o8").code == L_BAD_INT)
+    assert!(lex_err("0o1_7").code == L_BAD_INT)
 }
 
 #[test]
@@ -332,11 +350,22 @@ fn strings() {
     assert!(l.toks[5].kind == T_STR)
     assert!(l.toks[5].span.len == 12)
     // The decoded bytes read back in order.
-    let v = l.text.string_value(l.toks[5].span)
-    assert!(v.len == 7)
-    assert!(v.byte(0) == 0x61)
-    assert!(v.byte(2) == 0x22)
-    assert!(v.byte(6) == 0x0a)
+    var words: MemVec<u256> = MemVec::new()
+    assert!(l.text.string_words(l.toks[5].span, mut words) == 7)
+    assert!(words.len() == 1)
+    assert!(words[0] == 0x6120226222200a << 200)
+    // Byte 33 starts a second word, padded with zeros.
+    let long = lex_text("\"0123456789abcdef0123456789abcdef!\"")
+    assert!(long.text.string_words(long.toks[0].span, mut words) == 33)
+    assert!(words.len() == 3)
+    assert!(
+        words[1] == 0x3031323334353637383961626364656630313233343536373839616263646566,
+    )
+    assert!(words[2] == 0x21 << 248)
+    assert!(str_word_byte(words[1], 0) == b'0')
+    assert!(str_word_byte(words[1], STR_WORD_BYTES - 1) == b'f')
+    assert!(str_word_byte(words[2], 0) == b'!')
+    assert!(str_word_byte(words[2], 1) == 0)
     assert!(lex_err("\"abc").code == L_UNTERMINATED_STRING)
     assert!(lex_err("\"ab\ncd\"").code == L_UNTERMINATED_STRING)
     assert!(lex_err("\"\\q\"").code == L_BAD_ESCAPE)

@@ -1,0 +1,5 @@
+init 7
+Get 3
+Get 400
+Get 500                             # 7 + 2*500 >= LIMIT: assert! reverts with its message
+Caller

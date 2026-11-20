@@ -1,7 +1,0 @@
-// expect: P003 5:8
-// `init` and the other contextual words of Fe are reserved in Fe0 (SPEC §1), so the parser
-// finds no identifier.
-// fe: accepts
-fn f(_ init: u256) -> u256 {
-    init
-}

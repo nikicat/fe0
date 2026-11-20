@@ -27,5 +27,3 @@ data included.
 
 ## Consequences
 - These are Solidity's conventions, so Fe0's contracts work with existing tooling too.
-- `assert!` messages are capped at 31 bytes so that `Error(string)` stays one data word
-  (SPEC.md §1).
