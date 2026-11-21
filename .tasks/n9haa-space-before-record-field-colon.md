@@ -13,8 +13,9 @@ such as `Other::Store { a: 1 }`. Fe accepts a space before every other `:`: in a
 pattern (`Go { t : t }`), a call's label (`g(a : n)`), a type annotation (`let q : u256`), a
 parameter (`a : u256`) and a field of a struct's declaration.
 
-Done means: Fe0 rejects the space or tab with a new error code, and SPEC.md states the rule. A
-new reject program in `corpus/reject/` pins it, and Fe rejects that program too.
+Done means: Fe0 rejects what Fe rejects before the `:` with a new error code, and SPEC.md
+states the rule. A new reject program in `corpus/reject/` pins it, and Fe rejects that program
+too.
 
 ## State
 - To reproduce it, put a space before the `:` of `first` in `corpus/events.fe`.
