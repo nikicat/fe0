@@ -5,11 +5,16 @@ The tokens follow Fe0's lexer (SPEC.md §1) closely enough to find places in a p
 lexer accepts. They do not check a program.
 """
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from enum import StrEnum
-from typing import NamedTuple
+from typing import NamedTuple, NewType
 
 from fegen import LINE_END, ByteOffset, FeName
+
+
+# An index into a list of tokens. It means nothing in another list, such as the significant
+# tokens of the same program.
+TokenIndex = NewType("TokenIndex", int)
 
 
 class Kind(StrEnum):
@@ -84,6 +89,10 @@ class Op(StrEnum):
 
 OPENERS: frozenset[Op] = frozenset({Op.LPAREN, Op.LBRACE, Op.LBRACKET})
 CLOSERS: frozenset[Op] = frozenset({Op.RPAREN, Op.RBRACE, Op.RBRACKET})
+ASSIGN_OPS: frozenset[Op] = frozenset({
+    Op.ASSIGN, Op.PLUS_ASSIGN, Op.MINUS_ASSIGN, Op.STAR_ASSIGN, Op.SLASH_ASSIGN,
+    Op.PERCENT_ASSIGN, Op.AMP_ASSIGN, Op.PIPE_ASSIGN, Op.CARET_ASSIGN, Op.SHL_ASSIGN,
+    Op.SHR_ASSIGN})
 
 
 class Keyword(StrEnum):
@@ -91,6 +100,10 @@ class Keyword(StrEnum):
     that may also name something (SPEC.md §1)."""
 
     LET = "let"
+    IF = "if"
+    WHILE = "while"
+    CONTRACT = "contract"
+    STRUCT = "struct"
     VAR = "var"
     CONST = "const"
     MUT = "mut"
@@ -146,6 +159,53 @@ def tokens(data: bytes) -> Iterator[Token]:
         yield Token(Kind(m.lastgroup), ByteOffset(m.start()), ByteOffset(m.end()), m[0])
 
 
+def next_index(toks: Sequence[Token], after: TokenIndex,
+               p: Callable[[Token], bool]) -> TokenIndex | None:
+    """Returns the index of the first token after `toks[after]` that `p` accepts. Returns None
+    when `p` accepts no later token."""
+    return next((TokenIndex(k) for k in range(after + 1, len(toks)) if p(toks[k])), None)
+
+
 def significant(toks: Iterable[Token]) -> list[Token]:
     """Returns the tokens that are not trivia (`Kind.trivia`), in order."""
     return [t for t in toks if not t.kind.trivia]
+
+
+class BracketPair(NamedTuple):
+    open: TokenIndex
+    close: TokenIndex
+
+
+class Brackets:
+    """The bracket pairs of a list of tokens."""
+
+    def __init__(self, toks: Sequence[Token]) -> None:
+        self.toks = toks
+        # The closing bracket of each open bracket that is closed, by the open bracket.
+        self._close: dict[TokenIndex, TokenIndex] = {}
+        stack: list[TokenIndex] = []
+        for i, t in enumerate(toks):
+            if t.kind == Kind.OPEN:
+                stack.append(TokenIndex(i))
+            elif t.kind == Kind.CLOSE and stack:
+                self._close[stack.pop()] = TokenIndex(i)
+
+    def __iter__(self) -> Iterator[BracketPair]:
+        """Yields each pair, in the order the pairs close."""
+        return (BracketPair(o, c) for o, c in self._close.items())
+
+    def close(self, o: TokenIndex) -> TokenIndex | None:
+        """Returns the index of the bracket that closes the one at `o`. Returns None when `o` is
+        not an open bracket that is closed."""
+        return self._close.get(o)
+
+    def top_level(self, pair: BracketPair) -> Iterator[Token]:
+        """Yields, in order, the tokens inside `pair`, leaving out each inner bracket pair and
+        the tokens it holds."""
+        i = pair.open + 1
+        while i < pair.close:
+            if (c := self._close.get(TokenIndex(i))) is not None:
+                i = c + 1
+            else:
+                yield self.toks[i]
+                i += 1

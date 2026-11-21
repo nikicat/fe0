@@ -1,0 +1,16 @@
+// expect: P003 12:17
+// fe: accepts
+// A local cannot be named with a type name (SPEC §1).
+msg M {
+    #[selector = 1]
+    Get { x: u256 } -> u256,
+}
+
+contract C {
+    recv M {
+        Get { x } -> u256 {
+            let u256: u256 = x
+            x
+        }
+    }
+}

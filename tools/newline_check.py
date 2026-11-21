@@ -29,7 +29,7 @@ import cli_check
 from fegen import FE, ROOT, ByteOffset, FeSource, LineCol
 from fetokens import Kind, Op, Token, tokens
 from gen import Gen
-from mutate import reflow
+from mutate import Text, reflow
 
 FE_STMTS: Path = ROOT / "tools/fe-stmts"
 FE_STMTS_TARGET: Path = ROOT / "out/fe-stmts"
@@ -227,8 +227,9 @@ def generated(seeds: int, out: Path) -> list[Program]:
     programs = []
     for seed in range(1, seeds + 1):
         source = FeSource(Gen(seed).program().program)
+        reflowed = reflow(Text.of(source), random.Random(seed))
         for path, text in [(out / f"s{seed}.fe", source),
-                           (out / f"s{seed}_reflowed.fe", reflow(source, random.Random(seed)))]:
+                           (out / f"s{seed}_reflowed.fe", reflowed)]:
             path.write_text(text)
             programs.append(Program(path, text))
     return programs

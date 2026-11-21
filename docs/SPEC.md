@@ -63,16 +63,17 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 - **Doc comments.** A comment that starts with `///`, including `////`, is a doc comment. It may
   come only before an item, a contract field, `init`, `recv`, an arm, a variant or a field of a
   variant or of an event. Only newlines and other comments may come between it and what it
-  documents, except a plain comment line right before a name (above). A doc comment may also stand
-  at the end of the line where a contract field, `init`, `recv`, an arm, a variant, a variant's
-  field or an event's field ends. It then documents the next of these. It may not stand at the end
-  of the line where an item ends, because only a newline or a plain comment may follow an item on
-  its line (§3.1). It may also end the line of the `{` that opens a `msg`, an event, a contract, a
-  `recv` block or a variant's fields. A variant's doc comment may come before or after its
-  selector, but not on the selector's line. In the same way, an event's doc comment may come
-  before or after its `#[event]`, and the doc comment of an event's field may come before or after
-  its `#[indexed]`. A doc comment must come before what it documents, so one right before `}` or
-  at the end of the file is a syntax error. Fe allows doc comments in the same places:
+  documents, except a plain comment line right before a name (above). A doc comment may also
+  stand at the end of the line where a contract field, `init`, `recv`, an arm, a variant, a
+  variant's field or an event's field ends. It then documents the next of these. It may not
+  stand at the end of the line where an item ends, because only a newline or a plain comment may
+  follow an item on its line (§3.1). It may also end the line of the `{` that opens a `msg`, an
+  event, a contract, a `recv` block or a variant's fields. A variant's doc comment may come
+  before or after its selector, but not on the selector's line. In the same way, an event's doc
+  comment may come before or after its `#[event]`, and the doc comment of an event's field may
+  come before or after its `#[indexed]`. A doc comment must come before what it documents, so
+  one right before `}` or at the end of the file is a syntax error. Fe allows doc comments in
+  the same places:
   - Fe accepts each of these places **[✓]**. The program `corpus/doc_comments.fe` has one of
     each.
   - Fe rejects a doc comment in a block (`1-0001`) **[✓]**. The probe is
@@ -110,9 +111,13 @@ type names, not identifiers. Fe0 rejects them wherever a name appears. Other wid
 
 Fe's rule is narrower than Fe0's. Fe rejects a local, parameter, function or constant named
 after a primitive type, with `8-0030` at each use **[✓]**. A `let`, a `var` and a bind all count
-as locals. Fe accepts these names for fields. It also accepts them for msgs, variants and
-contracts, except `bool` and `u256` **[✓]**. Fe accepts `Address` as the name of a parameter,
-function or constant **[✓]**. Fe0 keeps one rule for every name, which the subset rule allows.
+as locals. Fe accepts a local that nothing uses when the local has the type it is named after,
+as in `let u256: u256 = x` **[✓]**. The probe is `corpus/reject/type_name_unused_let.fe`. Fe
+rejects an unused one of another type with `8-0000` **[✓]**. The probe is
+`corpus/reject/type_name_unused_let_other_type.fe`. Fe accepts these names for fields. It also
+accepts them for msgs, variants and contracts, except `bool` and `u256` **[✓]**. Fe accepts
+`Address` as the name of a parameter, function or constant **[✓]**. Fe0 keeps one rule for every
+name, which the subset rule allows.
 
 ## 2. Types
 
@@ -247,8 +252,8 @@ and index
 
 - All binary operators associate to the left, comparisons included, as in Fe. So `a < b == true`
   is `(a < b) == true`. The types must fit at each step: `a < b < c` compares the `bool` `a < b`
-  with `c`. Fe rejects that with `8-0016`, because `bool` has no `Ord` **[✓]**, and Fe0 rejects it
-  with `T001`. Both accept `a < b == true` and `a == b == true` **[✓]**. The probes are
+  with `c`. Fe rejects that with `8-0016`, because `bool` has no `Ord` **[✓]**, and Fe0 rejects
+  it with `T001`. Both accept `a < b == true` and `a == b == true` **[✓]**. The probes are
   `corpus/reject/chained_comparison.fe` and `corpus/chained_comparisons.fe`.
 - Unary `+` takes a `u256` and gives it back unchanged. Fe rejects it on `bool` and `Address`
   with `8-0052` **[✓]**. The probes are `corpus/unary_plus.fe`, `corpus/reject/plus_bool.fe`
@@ -397,8 +402,8 @@ type. Without `else`, it has unit type and may only be used as a statement.
 
 **`assert!(c)`** reverts with `Panic(0x01)` when `c` is false **[✓]**.
 
-**`assert!(c, "msg")`** reverts with `Error(string)` instead **[✓]**: `0x08c379a0` followed by the
-ABI-encoded string. A message of any length is encoded whole **[✓]**. The probe is
+**`assert!(c, "msg")`** reverts with `Error(string)` instead **[✓]**: `0x08c379a0` followed by
+the ABI-encoded string. A message of any length is encoded whole **[✓]**. The probe is
 `corpus/messages.fe`.
 
 ## 5. Names, scopes and checking
@@ -428,9 +433,9 @@ ABI-encoded string. A message of any length is encoded whole **[✓]**. The prob
      event as a pattern with too few fields (`8-0004`) **[✓]**. The probes are the
      `corpus/reject/shadow_item_*.fe` programs.
    - The name of a local may not start with an uppercase letter (`N017`).
-   - Fe rejects fewer uppercase locals than Fe0. Fe reads an uppercase local or bind that names a
-     type or a variant in scope, such as `let Some` or `x: Option`, as a pattern, and rejects it
-     **[✓]**. It accepts any other uppercase local, such as `let Foo` **[✓]**. The probe is
+   - Fe rejects fewer uppercase locals than Fe0. Fe reads an uppercase local or bind that names
+     a type or a variant in scope, such as `let Some` or `x: Option`, as a pattern, and rejects
+     it **[✓]**. It accepts any other uppercase local, such as `let Foo` **[✓]**. The probe is
      `corpus/reject/uppercase_let_not_a_type.fe`. Fe0 uses the stricter rule for locals
      ([ADR 0001](adr/0001-strict-subset.md)).
    - Fe accepts every uppercase parameter, even `_ Option: u256` **[✓]**, and so does Fe0. The
@@ -448,8 +453,9 @@ ABI-encoded string. A message of any length is encoded whole **[✓]**. The prob
      `corpus/consts.fe` and `corpus/reject/const_cycle.fe`.
 4. **Function calls.**
    - A parameter written `_ x: T` is positional: call it as `f(e)`.
-   - A parameter written `x: T` is labelled: call it as `f(x: e)`, or as `f(x)` when the argument
-     is the identifier `x` itself **[✓]**. Leaving out a required label is `8-0024` **[✓]**.
+   - A parameter written `x: T` is labelled: call it as `f(x: e)`, or as `f(x)` when the
+     argument is the identifier `x` itself **[✓]**. Leaving out a required label is `8-0024`
+     **[✓]**.
    - Arguments must follow the parameter order. Swapped labels are `8-0024` **[✓]**.
    - Recursion is allowed. Fe0 adds no limit beyond EVM gas and stack depth.
    - A function is not a value (`N003`). Fe accepts `let h = g` **[✓]**. The probe is
@@ -523,7 +529,8 @@ contract Counter {
 - `bool` is stored as 0 or 1 **[✓]**.
 - `Address` is stored with the high bits of its 20 bytes zero **[✓]**: the address `0xcc`
   alone in a slot is stored as the word `0xcc`.
-- For when immutables are added: a field declared without `mut` is read-only after `init` **[✓]**.
+- For when immutables are added: a field declared without `mut` is read-only after `init`
+  **[✓]**.
   - `init` may still write it, with `uses (mut v)`.
   - An arm that declares `mut v` on it is rejected (`8-0085`).
 
@@ -570,8 +577,8 @@ grant a storage field.
   The probe is `corpus/two_effects.fe`.
 - The same effect name declared twice is an error (`N001`). Fe rejects it too (`3-0093`)
   **[✓]**. The probe is `corpus/reject/ctx_duplicate_effect.fe`.
-- Only a `Ctx` effect has the methods above (`T001`). Fe rejects `owner.caller()` on an `Address`
-  field too, because `Address` has no such method (`2-0010`) **[✓]**. The probe is
+- Only a `Ctx` effect has the methods above (`T001`). Fe rejects `owner.caller()` on an
+  `Address` field too, because `Address` has no such method (`2-0010`) **[✓]**. The probe is
   `corpus/reject/ctx_not_an_effect.fe`.
 - Fe0 takes the methods of Fe's `Ctx` that take no arguments and return `u256` or `Address`,
   except `gas()` ([ADR 0017](adr/0017-caller.md)). `timestamp()`, `value()` and
