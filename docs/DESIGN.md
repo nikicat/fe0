@@ -467,6 +467,10 @@ build and Fe's build and sends each entry from the account its `from=N` names. T
 `node_check.py` lists what the two builds must agree on. `tools/gas_compare.py` runs the same
 way and reports each build's gas.
 
+**Gas and level.** `embed.py` and `node_check.py` build Fe's side at `-O 1` (SPEC.md, the
+subset rule). Each call inside `fe test` gets `CALL_GAS` gas (fe0/src/difftest.fe), and each
+transaction on the node gets `TX_GAS` (tools/node.py).
+
 A call script may first deploy other programs for the program to call (SPEC §6, "Calls"), as
 in `deploy token.fe as t0`, pass the address as `@t0` and call it, as in `@t0 Transfer @this 5`.
 The docstring of `tools/embed.py` gives the format. Such a program runs only on a node, since

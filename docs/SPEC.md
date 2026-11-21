@@ -8,8 +8,11 @@ and must behave the same way: for every deployment and call, the same success or
 or revert data, logs and storage writes. Fe0 may reject programs that Fe accepts, never the
 other way round. Where this document and the official compiler disagree, the compiler wins and
 the document is fixed.
+- The official compiler's build is its build at `-O 1`, its default optimisation level. A
+  difference between two of its own levels is a bug in the official compiler.
 - The rule holds given enough gas. The two builds use different amounts of gas, so a call
-  with a tight gas limit may fail under one and succeed under the other.
+  with a tight gas limit may fail under one and succeed under the other. DESIGN.md §10 names
+  the gas limits that the tests use.
 - The rule holds below Fe's recursion limit. Fe keeps return addresses on the EVM stack, and
   Fe0 keeps frames in memory. So a call that recurses past the stack's limit reverts under Fe
   and succeeds under Fe0 ([ADR 0021](adr/0021-frames-gas-and-depth.md) gives the depth).
