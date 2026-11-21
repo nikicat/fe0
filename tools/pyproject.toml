@@ -21,15 +21,10 @@ package = false
 exclude-newer = "2026-11-12T00:00:00Z"
 
 # The type checks of the scripts here. Run `uv run mypy` and `uv run pyright` in this
-# directory.
+# directory. Pyright's settings are in pyrightconfig.json at the repo root, where the editor
+# finds them too.
 
 [tool.mypy]
 strict = true
 files = ["."]
 exclude = ['^\.venv/']
-
-[tool.pyright]
-include = ["."]
-exclude = [".venv"]
-venvPath = "."
-venv = ".venv"

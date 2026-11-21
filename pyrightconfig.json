@@ -1,0 +1,6 @@
+{
+  "include": ["tools"],
+  "exclude": ["tools/.venv"],
+  "venvPath": "tools",
+  "venv": ".venv"
+}

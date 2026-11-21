@@ -4,15 +4,12 @@
   "files.associations": {
     "**/corpus/reject/*.fe": "plaintext"
   },
-  // The language server also loads each .fe file and fe.toml that the file watcher reports as
-  // created: the corpus programs, which are standalone files, and the batch ingots that the
-  // tools write under out/, which hold every reject program. A path excluded here is never
-  // reported, so only the files open in the editor get checked.
+  // Fe's language server checks every .fe file and fe.toml that the file watcher reports. These
+  // trees hold invalid or generated programs: the corpus, the tools' output under out/, and
+  // copies of the repo under .git/unsmell/.
   "files.watcherExclude": {
     "**/corpus/**": true,
-    "**/out/**": true
-  },
-  // The tools import each other by module name (`import fegen`), as `uv run --project tools
-  // tools/x.py` runs them with tools/ on the path.
-  "python.analysis.extraPaths": ["tools"]
+    "**/out/**": true,
+    "**/.git/unsmell/**": true
+  }
 }
