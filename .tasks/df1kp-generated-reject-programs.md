@@ -14,8 +14,8 @@ and only a corpus program caught it.
 
 Done means: `tools/mutate.py` mutates gen.py's programs and checks each mutant with the native
 CLI and with `fe check`. CI runs it on a fixed range of seeds, and every finding fails the run.
-Done also means that the decisions below that the tool keeps move to docs/DESIGN.md, and that
-the `--help` text of `tools/mutate.py` cites them there instead of this task.
+Done also means that the decisions below that still describe the finished tool move to
+docs/DESIGN.md, and that the `--help` text of `tools/mutate.py` cites DESIGN.md, not this task.
 
 ## Decisions
 - **An oracle, not headers.** Each mutant gets two verdicts: the native CLI's exit code (0 or
