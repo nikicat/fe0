@@ -3,9 +3,8 @@
 
 The programs are corpus/*.fe and the generated programs of the seeds. The same seed always gives
 the same mutants. Each mutant is written to out/mutate/, so a finding can be read there. The
-tool prints each finding and a summary, and exits with 1 when it finds one. Task Tdf1kp
-(.tasks/df1kp-generated-reject-programs.md) says what counts as a finding and which mutations
-there are.
+tool prints each finding and a summary, and exits with 1 when it finds one. DESIGN.md §11a
+says what counts as a finding and which families of mutation there are.
 
 usage: mutate.py [--seed N] [-n N] [--per-program N]
 """
@@ -13,7 +12,7 @@ import argparse
 import random
 import sys
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from enum import Enum, StrEnum, auto
 from pathlib import Path
 from typing import NamedTuple
@@ -23,7 +22,7 @@ import embed
 from fegen import ROOT, ByteOffset, DiagCode, FeName, FeSource
 from fetokens import (ASSIGN_OPS, BracketPair, Brackets, Keyword, Kind, Op, Token, TokenIndex,
                       next_index, significant, tokens)
-from gen import GEN, Gen
+from gen import GEN, Gen, Seed, program_file, seeds_from
 
 OUT: Path = ROOT / "out/mutate"
 
@@ -73,6 +72,14 @@ PATTERN_DECLARERS: frozenset[Keyword] = frozenset({
 # No program of the corpus or of gen.py uses this name, so a local of this name hides nothing
 # that a later line uses.
 UNREACHABLE_LOCAL = FeName("mutant_unreachable")
+# An uppercase name that is no type or variant, so Fe accepts it for a local (SPEC.md §5.2).
+UPPER_LOCAL_NAME = FeName("MutantLocal")
+# A `let` whose local has the name of its own type, `u256`. Fe accepts it while no later line
+# uses the local (SPEC.md §1, "Type names").
+OWN_TYPE_LET = b"let u256: u256 = 0"
+FN_VALUE_LOCAL = FeName("mutant_fn")
+SECOND_CONTRACT_SOURCE = b"contract MutantSecond {\n    mut w: u256,\n}\n"
+MAP_TYPE = FeName("StorageMap")
 
 
 class Text(NamedTuple):
@@ -89,52 +96,55 @@ class Text(NamedTuple):
         toks = list(tokens(data))
         return cls(data, toks, significant(toks))
 
+    def apply_one(self, rng: random.Random, changes: Sequence[Change]) -> FeSource | None:
+        """Returns `data` with one of `changes` made. `rng` picks which. Returns None when
+        `changes` is empty."""
+        if not changes:
+            return None
+        change = rng.choice(changes)
+        return apply_edits(self.data, [change] if isinstance(change, Edit) else change)
+
 
 def reflow(text: Text, rng: random.Random) -> FeSource:
     """Returns `text` with a line break in about half of the places inside parentheses where
     Fe0 allows one: after a `(`, a `,` or a binary operator, and before a `)`."""
     breaks: list[Edit] = []
-    # The open brackets.
-    stack: list[Token] = []
+    brackets = Brackets(text.toks)
     prev: Token | None = None
 
-    def maybe_break(start: ByteOffset, end: ByteOffset) -> None:
+    def maybe_break(i: TokenIndex, start: ByteOffset, end: ByteOffset) -> None:
         """Adds to `breaks` an edit that puts a line break in place of `text.data[start:end]`,
-        half of the time."""
-        if stack and stack[-1].symbol == Op.LPAREN and rng.random() < 0.5:
+        half of the time, when `text.toks[i]` is inside parentheses."""
+        if brackets.in_parens(i) and rng.random() < 0.5:
             breaks.append(Edit(start, end, b"\n"))
 
-    for t in text.toks:
+    for i, t in enumerate(text.toks):
         match t.kind:
             case Kind.OPEN:
-                stack.append(t)
-                maybe_break(t.end, t.end)
+                maybe_break(TokenIndex(i), t.end, t.end)
             case Kind.CLOSE:
-                maybe_break(t.start, t.start)
-                stack.pop()
+                maybe_break(TokenIndex(i), t.start, t.start)
             case Kind.SPACE if prev is not None and (prev.symbol == Op.COMMA
                                                      or prev.symbol in BINARY_OPS):
-                maybe_break(t.start, t.end)
+                maybe_break(TokenIndex(i), t.start, t.end)
         if not t.kind.trivia:
             prev = t
     return apply_edits(text.data, breaks)
 
 
 class Expect(Enum):
-    """What the oracle expects of a mutant, by its mutation's family (task Tdf1kp, "Three
+    """What the tool expects of a mutant, by its mutation's family (DESIGN.md §11a, "Three
     families of mutation")."""
 
-    # When both compilers accept the mutant, Fe0 gives the original's bytes (task Tdf1kp).
     SAME_CODE = "same code"
-    # Fe0 may give other bytes, because the mutant adds code.
     ANY_CODE = "any code"
-    # Fe should reject the mutant, because it breaks one rule.
     REJECT = "reject"
+    NARROWING = "narrowing"
 
 
 class Mutation(StrEnum):
-    """A meaning-preserving or a rule-breaking mutation (task Tdf1kp, "Three families of
-    mutation")."""
+    """A meaning-preserving, rule-breaking or narrowing mutation (DESIGN.md §11a, "Three
+    families of mutation")."""
 
     COMMENT = "comment"
     SPACE = "space"
@@ -150,9 +160,19 @@ class Mutation(StrEnum):
     DROP_USES = "drop_uses"
     BOOL_FOR_INT = "bool_for_int"
     PATTERN_NAME = "pattern_name"
+    UPPER_LOCAL = "upper_local"
+    OWN_TYPE_LOCAL = "own_type_local"
+    FN_VALUE = "fn_value"
+    IF_CONST = "if_const"
+    SECOND_CONTRACT = "second_contract"
+    BREAK_BEFORE_OP = "break_before_op"
+    PAREN_MAP = "paren_map"
+    MAP_GET = "map_get"
 
     @property
     def expect(self) -> Expect:
+        if self.probe is not None:
+            return Expect.NARROWING
         match self:
             case Mutation.UNREACHABLE:
                 return Expect.ANY_CODE
@@ -162,48 +182,93 @@ class Mutation(StrEnum):
             case (Mutation.TYPE_NAME | Mutation.CHAIN | Mutation.CONST_CYCLE | Mutation.DROP_MUT
                   | Mutation.DROP_USES | Mutation.BOOL_FOR_INT | Mutation.PATTERN_NAME):
                 return Expect.REJECT
+            case _:
+                raise AssertionError(f"{self} is in no family of mutation")
+
+    @property
+    def probe(self) -> Path | None:
+        """The reject program whose construct a narrowing mutation plants (DESIGN.md §11a). None
+        for a mutation of another family."""
+        match self:
+            case Mutation.UPPER_LOCAL:
+                return embed.REJECTS / "uppercase_let_not_a_type.fe"
+            case Mutation.OWN_TYPE_LOCAL:
+                return embed.REJECTS / "type_name_unused_let.fe"
+            case Mutation.FN_VALUE:
+                return embed.REJECTS / "fn_as_value.fe"
+            case Mutation.IF_CONST:
+                return embed.REJECTS / "if_in_const.fe"
+            case Mutation.SECOND_CONTRACT:
+                return embed.REJECTS / "two_contracts.fe"
+            case Mutation.BREAK_BEFORE_OP:
+                return embed.REJECTS / "line_break_plus.fe"
+            case Mutation.PAREN_MAP:
+                return embed.REJECTS / "map_paren_map.fe"
+            case Mutation.MAP_GET:
+                return embed.REJECTS / "map_get_method.fe"
+            case _:
+                return None
 
     @property
     def breaks_rule(self) -> bool:
-        """True if the mutation is rule-breaking (task Tdf1kp, "Three families of mutation").
+        """True if the mutation is rule-breaking (DESIGN.md §11a, "Three families of mutation").
         False otherwise."""
         return self.expect == Expect.REJECT
 
     def mutate(self, text: Text, rng: random.Random) -> FeSource | None:
-        """Returns a mutant of `text`, or None when `text` has no place for the mutation."""
+        """Returns a mutant of `text`. `rng` picks the change, or for REFLOW the line breaks.
+        Returns None when `text` has no place for the mutation."""
+        changes: Sequence[Change]
         match self:
-            case Mutation.COMMENT:
-                return comment(text, rng)
-            case Mutation.SPACE:
-                return space(text, rng)
-            case Mutation.PAREN:
-                return paren(text, rng)
             case Mutation.REFLOW:
                 return reflow(text, rng)
+            case Mutation.COMMENT:
+                changes = comment(text)
+            case Mutation.SPACE:
+                changes = space(text)
+            case Mutation.PAREN:
+                changes = paren(text)
             case Mutation.RENAME:
-                return rename(text, rng)
+                changes = rename(text)
             case Mutation.UNREACHABLE:
-                return unreachable(text, rng)
+                changes = unreachable(text)
             case Mutation.UNPAREN:
-                return unparen(text, rng)
+                changes = unparen(text)
             case Mutation.TYPE_NAME:
-                return type_name(text, rng)
+                changes = type_name(text)
             case Mutation.CHAIN:
-                return chain(text, rng)
+                changes = chain(text)
             case Mutation.CONST_CYCLE:
-                return const_cycle(text, rng)
+                changes = const_cycle(text)
             case Mutation.DROP_MUT:
-                return drop_mut(text, rng)
+                changes = drop_mut(text)
             case Mutation.DROP_USES:
-                return drop_uses(text, rng)
+                changes = drop_uses(text)
             case Mutation.BOOL_FOR_INT:
-                return bool_for_int(text, rng)
+                changes = bool_for_int(text)
             case Mutation.PATTERN_NAME:
-                return pattern_name(text, rng)
+                changes = pattern_name(text)
+            case Mutation.UPPER_LOCAL:
+                changes = rename_local(text, [UPPER_LOCAL_NAME])
+            case Mutation.OWN_TYPE_LOCAL:
+                changes = before_let(text, OWN_TYPE_LET)
+            case Mutation.FN_VALUE:
+                changes = fn_value(text)
+            case Mutation.IF_CONST:
+                changes = if_const(text)
+            case Mutation.SECOND_CONTRACT:
+                changes = second_contract(text)
+            case Mutation.BREAK_BEFORE_OP:
+                changes = break_before_op(text)
+            case Mutation.PAREN_MAP:
+                changes = paren_map(text)
+            case Mutation.MAP_GET:
+                changes = map_get(text)
+        return text.apply_one(rng, changes)
 
 
 class Mutant(NamedTuple):
-    """A program changed at one place."""
+    """A program that one mutation changed."""
 
     mutation: Mutation
     source: FeSource
@@ -216,8 +281,19 @@ class Edit(NamedTuple):
     end: ByteOffset
     text: bytes
 
-    def apply(self, data: bytes) -> FeSource:
-        return apply_edits(data, [self])
+    @classmethod
+    def replacing(cls, t: Token, text: bytes) -> "Edit":
+        """Returns the edit that puts `text` in place of `t`."""
+        return cls(t.start, t.end, text)
+
+
+# One change that a mutation can make to a program: one edit, or several edits in order.
+type Change = Edit | Sequence[Edit]
+
+
+def parenthesized(t: Token) -> Edit:
+    """Returns the edit that puts parentheses around `t`."""
+    return Edit.replacing(t, Op.LPAREN.encode() + t.text + Op.RPAREN.encode())
 
 
 def apply_edits(data: bytes, edits: Iterable[Edit]) -> FeSource:
@@ -231,28 +307,21 @@ def apply_edits(data: bytes, edits: Iterable[Edit]) -> FeSource:
     return FeSource((out + data[last:]).decode())
 
 
-def comment(text: Text, rng: random.Random) -> FeSource | None:
-    """Returns `text` with a plain comment at the end of a line, or with a plain comment line
-    after it. Returns None when `text` has no line end."""
-    ends = [t for t in text.toks if t.kind == Kind.NEWLINE]
-    if not ends:
-        return None
-    t = rng.choice(ends)
-    edit = Edit(t.start, t.start, b" // mutant") if rng.random() < 0.5 else \
-        Edit(t.end, t.end, b"// mutant" + t.text)
-    return edit.apply(text.data)
+def comment(text: Text) -> list[Edit]:
+    """Returns the edits that put a plain comment at the end of a line, and those that put a
+    plain comment line after it. Empty when `text` has no line end."""
+    return [e for t in text.toks if t.kind == Kind.NEWLINE
+            for e in (Edit(t.start, t.start, b" // mutant"),
+                      Edit(t.end, t.end, b"// mutant" + t.text))]
 
 
-def space(text: Text, rng: random.Random) -> FeSource | None:
-    """Returns `text` with a space between two adjacent tokens on one line. Returns None when no
+def space(text: Text) -> list[Edit]:
+    """Returns the edits that put a space between two adjacent tokens on one line. Empty when no
     two tokens touch."""
     joints = [b.start for a, b in zip(text.toks, text.toks[1:])
               if not a.kind.trivia and a.kind != Kind.NEWLINE
               and b.kind not in (Kind.SPACE, Kind.NEWLINE)]
-    if not joints:
-        return None
-    at = rng.choice(joints)
-    return Edit(at, at, b" ").apply(text.data)
+    return [Edit(at, at, b" ") for at in joints]
 
 
 def declared(sig: list[Token]) -> set[FeName]:
@@ -294,18 +363,14 @@ def operands(sig: list[Token], atom: Callable[[Token], bool]) -> list[Token]:
             if atom(b) and a.symbol in BEFORE_OPERAND and ends_operand(c)]
 
 
-def paren(text: Text, rng: random.Random) -> FeSource | None:
-    """Returns `text` with parentheses around one operand that is an integer literal, `true`,
-    `false` or a name the program declares (task Tdf1kp). Returns None when there is no such
+def paren(text: Text) -> list[Edit]:
+    """Returns the edits that put parentheses around one operand that is an integer literal,
+    `true`, `false` or a name the program declares (DESIGN.md §11a). Empty when there is no such
     operand."""
     names = declared(text.sig)
     atoms = operands(text.sig,
                      lambda t: t.kind == Kind.NUMBER or t.symbol in BOOLS or t.word in names)
-    if not atoms:
-        return None
-    t = rng.choice(atoms)
-    wrapped = Op.LPAREN.encode() + t.text + Op.RPAREN.encode()
-    return Edit(t.start, t.end, wrapped).apply(text.data)
+    return [parenthesized(t) for t in atoms]
 
 
 def named_after(sig: list[Token], keywords: frozenset[Keyword]) -> list[FeName]:
@@ -313,56 +378,51 @@ def named_after(sig: list[Token], keywords: frozenset[Keyword]) -> list[FeName]:
     return sorted({w for a, b in zip(sig, sig[1:]) if a.symbol in keywords and (w := b.word)})
 
 
-def rename_word(text: Text, old: FeName, new: FeName) -> FeSource:
-    """Returns `text` with every word `old` changed to `new`."""
-    return apply_edits(text.data, [Edit(t.start, t.end, new.encode()) for t in text.toks
-                                   if t.word == old])
+def rename_word(text: Text, old: FeName, new: FeName) -> list[Edit]:
+    """Returns the edits that change every word `old` to `new`."""
+    return [Edit.replacing(t, new.encode()) for t in text.toks if t.word == old]
 
 
-def rename_local(text: Text, rng: random.Random, names: Sequence[FeName]) -> FeSource | None:
-    """Returns `text` with one local's name, at every place it appears, changed to one of
-    `names`. Returns None when the program has no local or `names` is empty."""
-    locals_ = named_after(text.sig, LOCAL_DECLARERS)
-    if not locals_ or not names:
-        return None
-    return rename_word(text, rng.choice(locals_), rng.choice(names))
+def rename_local(text: Text, names: Sequence[FeName]) -> list[list[Edit]]:
+    """Returns, for each local and each of `names`, the edits that change the local's name to
+    that name at every place it appears. Empty when the program has no local or `names` is
+    empty."""
+    return [rename_word(text, old, new)
+            for old in named_after(text.sig, LOCAL_DECLARERS) for new in names]
 
 
-def rename(text: Text, rng: random.Random) -> FeSource | None:
-    """Returns `text` with one local renamed, at every place it appears, to a name that Fe and
-    Fe0 both allow for a local (task Tdf1kp, "Three families of mutation"). Returns None when
+def rename(text: Text) -> list[list[Edit]]:
+    """Returns the changes that each rename one local, everywhere it appears, to a name that Fe
+    and Fe0 both allow for a local (DESIGN.md §11a, "Three families of mutation"). Empty when
     the program has no local, or when each such name already names a local, a parameter, a
     constant or a field."""
     taken = declared(text.sig)
     hideable = [n for n in named_after(text.sig, HIDEABLE_DECLARERS) if n[:1].islower()]
-    return rename_local(text, rng, sorted(n for n in {*ODD_NAMES, *hideable} if n not in taken))
+    return rename_local(text, sorted(n for n in {*ODD_NAMES, *hideable} if n not in taken))
 
 
-def type_name(text: Text, rng: random.Random) -> FeSource | None:
-    """Returns `text` with one local's name, at every place it appears, changed to a type
-    name. Returns None when the program has no local."""
-    return rename_local(text, rng, TYPE_NAMES)
+def type_name(text: Text) -> list[list[Edit]]:
+    """Returns the changes that each rename one local, everywhere it appears, to a type name.
+    Empty when the program has no local."""
+    return rename_local(text, TYPE_NAMES)
 
 
-def pattern_name(text: Text, rng: random.Random) -> FeSource | None:
-    """Returns `text` with one local's name, at every place it appears, changed to a name that
-    Fe reads as a pattern, as VARIANT_NAMES and PATTERN_DECLARERS say. Returns None when the
-    program has no local."""
-    return rename_local(text, rng,
+def pattern_name(text: Text) -> list[list[Edit]]:
+    """Returns the changes that each rename one local, everywhere it appears, to a name that Fe
+    reads as a pattern, as VARIANT_NAMES and PATTERN_DECLARERS say. Empty when the program
+    has no local."""
+    return rename_local(text,
                         sorted({*VARIANT_NAMES, *named_after(text.sig, PATTERN_DECLARERS)}))
 
 
-def chain(text: Text, rng: random.Random) -> FeSource | None:
-    """Returns `text` with ` < 1` after the right operand of a comparison, so that the `bool`
-    the comparison gives is ordered. Fe rejects that, because `bool` has no `Ord`
-    (SPEC.md §3.2). Returns None when no comparison has an atom on its right."""
+def chain(text: Text) -> list[Edit]:
+    """Returns the edits that put ` < 1` after the right operand of a comparison, so that the
+    `bool` the comparison gives is ordered. Fe rejects that, because `bool` has no `Ord`
+    (SPEC.md §3.2). Empty when no comparison has an atom on its right."""
     rights = [b for a, b, c in zip(text.sig, text.sig[1:], text.sig[2:])
               if a.symbol in COMPARISONS and b.kind in (Kind.WORD, Kind.NUMBER)
               and (ends_operand(c) or c.symbol == Op.LBRACE)]
-    if not rights:
-        return None
-    t = rng.choice(rights)
-    return Edit(t.end, t.end, b" < 1").apply(text.data)
+    return [Edit(t.end, t.end, b" < 1") for t in rights]
 
 
 def statement_end(toks: list[Token], i: TokenIndex) -> Token | None:
@@ -381,19 +441,46 @@ def statement_end(toks: list[Token], i: TokenIndex) -> Token | None:
     return None
 
 
-def const_cycle(text: Text, rng: random.Random) -> FeSource | None:
-    """Returns `text` with one constant's value replaced by the constant itself. Returns None
-    when the program has no constant."""
+class ConstValue(NamedTuple):
+    """A constant's value spans from right after its `=` to the end of its statement."""
+
+    name: Token
+    start: ByteOffset
+    end: ByteOffset
+    # The bytes of the span, without the space around them.
+    value: bytes
+
+    def replace(self, new: bytes) -> Edit:
+        """Returns the edit that makes `new` the constant's value."""
+        return Edit(self.start, self.end, b" " + new)
+
+
+def const_values(text: Text) -> list[ConstValue]:
+    """Returns the value of each constant of `text`."""
     toks = [t for t in text.toks if t.kind != Kind.COMMENT]
-    edits = []
+    out = []
     for i, t in enumerate(toks):
         if t.symbol != Keyword.CONST:
             continue
         n = next_index(toks, TokenIndex(i), lambda u: not u.kind.trivia)
         j = next_index(toks, TokenIndex(i), lambda u: u.symbol == Op.ASSIGN)
         if n is not None and j is not None and (end := statement_end(toks, j)) is not None:
-            edits.append(Edit(toks[j].end, end.start, b" " + toks[n].text))
-    return rng.choice(edits).apply(text.data) if edits else None
+            start, stop = toks[j].end, end.start
+            out.append(ConstValue(toks[n], start, stop, text.data[start:stop].strip()))
+    return out
+
+
+def const_cycle(text: Text) -> list[Edit]:
+    """Returns the edits that replace one constant's value by the constant itself. Empty when
+    the program has no constant."""
+    return [c.replace(c.name.text) for c in const_values(text)]
+
+
+def if_const(text: Text) -> list[Edit]:
+    """Returns the edits that replace one constant's value `V` by `if true { V } else { V }`.
+    Empty when the program has no constant."""
+    return [c.replace(b"if true { " + c.value + b" } else { " + c.value + b" }")
+            for c in const_values(text)]
 
 
 class UsesClause(NamedTuple):
@@ -426,27 +513,22 @@ def uses_clauses(toks: list[Token]) -> list[UsesClause]:
     return out
 
 
-def drop_mut(text: Text, rng: random.Random) -> FeSource | None:
-    """Returns `text` with one `mut` taken out of a `uses` list. Returns None when no `uses`
-    list has a `mut`."""
-    cuts = [e for u in uses_clauses(text.toks) for e in u.mut_cuts()]
-    return rng.choice(cuts).apply(text.data) if cuts else None
+def drop_mut(text: Text) -> list[Edit]:
+    """Returns the edits that take one `mut` out of a `uses` list. Empty when no `uses` list
+    has a `mut`."""
+    return [e for u in uses_clauses(text.toks) for e in u.mut_cuts()]
 
 
-def drop_uses(text: Text, rng: random.Random) -> FeSource | None:
-    """Returns `text` with one `uses` list taken out. Returns None when it has none."""
-    cuts = [u.cut() for u in uses_clauses(text.toks)]
-    return rng.choice(cuts).apply(text.data) if cuts else None
+def drop_uses(text: Text) -> list[Edit]:
+    """Returns the edits that take one `uses` list out. Empty when `text` has none."""
+    return [u.cut() for u in uses_clauses(text.toks)]
 
 
-def bool_for_int(text: Text, rng: random.Random) -> FeSource | None:
-    """Returns `text` with `true` in place of one integer literal that is an operand. Returns
-    None when it has none."""
+def bool_for_int(text: Text) -> list[Edit]:
+    """Returns the edits that put `true` in place of one integer literal that is an operand.
+    Empty when `text` has none."""
     atoms = operands(text.sig, lambda t: t.kind == Kind.NUMBER)
-    if not atoms:
-        return None
-    t = rng.choice(atoms)
-    return Edit(t.start, t.end, Keyword.TRUE.encode()).apply(text.data)
+    return [Edit.replacing(t, Keyword.TRUE.encode()) for t in atoms]
 
 
 def guards_generics(brackets: Brackets, pair: BracketPair) -> bool:
@@ -478,25 +560,89 @@ def added_by_gen(brackets: Brackets, pair: BracketPair) -> bool:
             and (guards_generics(brackets, pair) or guards_record(brackets, pair)))
 
 
-def unparen(text: Text, rng: random.Random) -> FeSource | None:
-    """Returns `text` without one pair of the parentheses that gen.py adds (task Tdf1kp,
-    "`unparen` is meaning-preserving"). Returns None when `text` has no such pair."""
+def unparen(text: Text) -> list[list[Edit]]:
+    """Returns, for each pair of the parentheses that gen.py adds, the edits that drop it
+    (DESIGN.md §11a, "`unparen` drops only parentheses of the two shapes that gen.py adds").
+    Empty when `text` has no such pair."""
     brackets = Brackets(text.sig)
-    cuts = [[Edit(t.start, t.end, b"") for t in (brackets.toks[p.open], brackets.toks[p.close])]
+    return [[Edit.replacing(brackets.toks[i], b"") for i in (p.open, p.close)]
             for p in brackets if added_by_gen(brackets, p)]
-    return apply_edits(text.data, rng.choice(cuts)) if cuts else None
 
 
-def unreachable(text: Text, rng: random.Random) -> FeSource | None:
-    """Returns `text` with a `let` statement right after a `return` statement, in the same
-    block (task Tdf1kp). Returns None when no `return` ends its line in its block."""
+def unreachable(text: Text) -> list[Edit]:
+    """Returns the edits that put a `let` statement right after a `return` statement, in the
+    same block. Empty when no `return` ends its line in its block."""
     ends = [end for i, t in enumerate(text.toks) if t.symbol == Keyword.RETURN
             and (end := statement_end(text.toks, TokenIndex(i))) is not None]
-    if not ends:
-        return None
-    t = rng.choice(ends)
     line = f"let {UNREACHABLE_LOCAL}: u256 = 0".encode()
-    return Edit(t.end, t.end, line + t.text).apply(text.data)
+    return [Edit(t.end, t.end, line + t.text) for t in ends]
+
+
+def before_let(text: Text, line: bytes) -> list[Edit]:
+    """Returns the edits that put `line` as a statement of its own right before one `let`
+    statement that starts its line. Empty when no `let` starts a line."""
+    return [Edit(t.start, t.start, line + nl.text + indent.text)
+            for nl, indent, t in zip(text.toks, text.toks[1:], text.toks[2:])
+            if nl.kind == Kind.NEWLINE and indent.kind == Kind.SPACE
+            and t.symbol == Keyword.LET]
+
+
+def fn_value(text: Text) -> list[Edit]:
+    """Returns the edits that put a `let` that binds one function right before one `let`
+    statement. Empty when the program has no function or no `let` that starts a line."""
+    return [e for f in named_after(text.sig, frozenset({Keyword.FN}))
+            for e in before_let(text, f"let {FN_VALUE_LOCAL} = {f}".encode())]
+
+
+def second_contract(text: Text) -> list[Edit]:
+    """Returns the edit that puts a second contract at the end of `text`. Empty when `text` has
+    no contract."""
+    if not any(t.symbol == Keyword.CONTRACT for t in text.sig):
+        return []
+    end = ByteOffset(len(text.data))
+    nl = b"" if text.data.endswith(b"\n") else b"\n"
+    return [Edit(end, end, nl + SECOND_CONTRACT_SOURCE)]
+
+
+def break_before_op(text: Text) -> list[Edit]:
+    """Returns the edits that put a line break, inside parentheses, in place of the space
+    between an operand and a binary operator. Empty when there is no such space."""
+    brackets = Brackets(text.toks)
+    breaks = [Edit.replacing(b, b"\n")
+              for i, (a, b, c) in enumerate(zip(text.toks, text.toks[1:], text.toks[2:]), 1)
+              if b.kind == Kind.SPACE and brackets.in_parens(TokenIndex(i))
+              and a.kind in (Kind.WORD, Kind.NUMBER, Kind.CLOSE) and c.symbol in BINARY_OPS]
+    return breaks
+
+
+def map_indexes(sig: list[Token]) -> list[TokenIndex]:
+    """Returns the index in `sig` of the `[` of each entry `m[k]` of a contract's map field."""
+    maps = {w for a, b, c in zip(sig, sig[1:], sig[2:])
+            if (w := a.word) and b.symbol == Op.COLON and c.word == MAP_TYPE}
+    return [TokenIndex(i + 1) for i, (a, b) in enumerate(zip(sig, sig[1:]))
+            if a.word in maps and b.symbol == Op.LBRACKET]
+
+
+def paren_map(text: Text) -> list[Edit]:
+    """Returns the edits that put parentheses around the map of one entry `m[k]`. Empty when
+    `text` reads no map entry."""
+    return [parenthesized(text.sig[o - 1]) for o in map_indexes(text.sig)]
+
+
+def map_get(text: Text) -> list[list[Edit]]:
+    """Returns, for each entry `m[k]` that is read, not written or indexed again, the edits
+    that replace it by `m.get(k)`. Empty when `text` reads no such entry."""
+    brackets = Brackets(text.sig)
+    reads = []
+    for o in map_indexes(text.sig):
+        close = brackets.close(o)
+        if close is None or close + 1 >= len(text.sig):
+            continue
+        after = text.sig[close + 1].symbol
+        if after not in ASSIGN_OPS and after != Op.LBRACKET:
+            reads.append([Edit.replacing(text.sig[o], b".get("),
+                          Edit.replacing(text.sig[close], b")")])
+    return reads
 
 
 def mutants(source: FeSource, rng: random.Random, count: int) -> list[Mutant]:
@@ -510,12 +656,37 @@ def mutants(source: FeSource, rng: random.Random, count: int) -> list[Mutant]:
     return out
 
 
-def known_narrowings() -> set[DiagCode]:
-    """Returns the codes of the reject programs that Fe accepts, which SPEC.md states as
-    narrowings of Fe's rules. A mutant that Fe accepts and Fe0 rejects with one of these codes
-    is not a finding, even when its case is not the one that the reject program shows."""
-    rejects = map(embed.Reject.load, sorted(embed.REJECTS.glob("*.fe")))
-    return {r.expected.code for r in rejects if r.fe_accepts}
+class Probe(NamedTuple):
+    """A reject program that shows a narrowing (DESIGN.md §11a)."""
+
+    # The program's path, relative to the repo root.
+    path: Path
+    code: DiagCode
+
+
+class Narrowings(NamedTuple):
+    """The narrowings that the reject programs show (DESIGN.md §11a)."""
+
+    # The codes of the probes.
+    known: frozenset[DiagCode]
+    # The probe that each narrowing mutation plants.
+    planted: Mapping[Mutation, Probe]
+
+    @classmethod
+    def load(cls) -> "Narrowings":
+        """Returns the narrowings that the reject programs show. Errors with ValueError when the
+        reject program that a mutation plants has no `// fe: accepts` line. Exits with a message
+        when a reject program does not load."""
+        rejects = {r.path: r for r in embed.load_rejects()}
+        planted = {}
+        for m in Mutation:
+            if (path := m.probe) is not None:
+                r = rejects[path.relative_to(ROOT)]
+                if not r.fe_accepts:
+                    raise ValueError(f"{r.path}, the probe of {m}, has no `fe: accepts` line")
+                planted[m] = Probe(r.path, r.expected.code)
+        known = frozenset(r.expected.code for r in rejects.values() if r.fe_accepts)
+        return cls(known, planted)
 
 
 class Original(NamedTuple):
@@ -535,7 +706,7 @@ class Agreement(Enum):
 
 
 class Finding(NamedTuple):
-    """A mutant that task Tdf1kp counts as a finding."""
+    """A mutant that DESIGN.md §11a counts as a finding."""
 
     # The mutant's path, relative to the repo root.
     path: Path
@@ -545,36 +716,44 @@ class Finding(NamedTuple):
         return f"{self.path}: {self.says}"
 
 
-def finding(m: Mutant, original: Original, path: Path,
-            known: set[DiagCode]) -> Finding | Agreement:
-    """Checks the mutant at `path` with both compilers, and returns the finding, or how the
+def classify(m: Mutant, original: Original, run: cli_check.Run, fe: str | None,
+             narrowings: Narrowings) -> Finding | Agreement:
+    """Classifies the mutant by what Fe0 did with it (`run`) and Fe's rejection of it (`fe`,
+    None when Fe accepts it). Returns a finding as DESIGN.md §11a counts one, or how the
     compilers agree when there is none."""
-    rel = path.relative_to(ROOT)
-    run = cli_check.Run.of(rel, m.source)
-    fe = embed.fe_rejection(rel)
+    probe = narrowings.planted.get(m.mutation)
     if run.compiled():
         if fe is not None:
-            return Finding(rel, f"Fe rejects it and Fe0 accepts it\n{fe.rstrip()}")
+            return Finding(run.path, f"Fe rejects it and Fe0 accepts it\n{fe.rstrip()}")
         if m.mutation.breaks_rule:
             return Agreement.MISSED
+        if probe is not None:
+            return Finding(run.path, f"Fe0 accepts it, although {probe.path} shows that it"
+                                     f" rejects this shape")
         if m.mutation.expect == Expect.SAME_CODE and run.program().code != original.code:
-            return Finding(rel, f"Fe0 compiles it to other bytes than {original.path}")
+            return Finding(run.path, f"Fe0 compiles it to other bytes than {original.path}")
         return Agreement.ACCEPTED
     if fe is not None:
         return Agreement.BOTH_REJECT
     error = run.error()
     if error is None:
-        return Finding(rel, f"Fe0 does not compile it cleanly: {run.said()}")
-    if error.code in known:
+        return Finding(run.path, f"Fe0 does not compile it cleanly: {run.said()}")
+    if probe is not None:
+        if error.code == probe.code:
+            return Agreement.KNOWN_NARROWING
+        return Finding(run.path, f"Fe accepts it and Fe0 rejects it with"
+                                 f" {error.describe(m.source)}, not with {probe.code} as"
+                                 f" {probe.path} does")
+    if error.code in narrowings.known:
         return Agreement.KNOWN_NARROWING
-    return Finding(rel, f"Fe accepts it and Fe0 rejects it: {error.describe(m.source)}")
+    return Finding(run.path, f"Fe accepts it and Fe0 rejects it: {error.describe(m.source)}")
 
 
-def originals(seed: int, n: int) -> list[Original]:
-    """Returns the corpus programs and the generated programs of seeds `seed` to `seed + n - 1`,
-    each with Fe0's bytes. Errors with RuntimeError when Fe0 does not compile one."""
+def originals(seeds: Iterable[Seed]) -> list[Original]:
+    """Returns the corpus programs and the generated programs of `seeds`, each with Fe0's bytes.
+    Errors with RuntimeError when Fe0 does not compile one."""
     named = [(p, FeSource(p.read_text())) for p in sorted(embed.CORPUS.glob("*.fe"))]
-    named += [(GEN / f"s{s}.fe", FeSource(Gen(s).program().program)) for s in range(seed, seed + n)]
+    named += [(GEN / program_file(s), Gen(s).program().program) for s in seeds]
     out = []
     for path, source in named:
         run = cli_check.Run.of(path.relative_to(ROOT), source)
@@ -582,6 +761,20 @@ def originals(seed: int, n: int) -> list[Original]:
             raise RuntimeError(f"Fe0 does not compile {run.path}: {run.said()}")
         out.append(Original(run.path, source, run.program().code))
     return out
+
+
+def print_agreements(agreements: Counter[tuple[Agreement, Mutation]]) -> None:
+    """Prints, for each agreement but ACCEPTED, how many mutants of each mutation it counted."""
+    rows: list[tuple[str, Agreement, list[Mutation]]] = [
+        ("both compilers reject", Agreement.BOTH_REJECT,
+         [m for m in Mutation if not m.breaks_rule]),
+        ("both compilers accept, so the rule was not broken", Agreement.MISSED,
+         [m for m in Mutation if m.breaks_rule]),
+        ("Fe accepts and Fe0 rejects with the probe's code", Agreement.KNOWN_NARROWING,
+         [m for m in Mutation if m.expect == Expect.NARROWING]),
+    ]
+    for label, agreement, mutations in rows:
+        print(f"{label}: " + ", ".join(f"{m} {agreements[agreement, m]}" for m in mutations))
 
 
 def main() -> None:
@@ -593,32 +786,29 @@ def main() -> None:
                     help="the number of mutants of each program (default 2)")
     args = ap.parse_args()
     cli_check.build()
-    known = known_narrowings()
+    narrowings = Narrowings.load()
     OUT.mkdir(parents=True, exist_ok=True)
     for old in OUT.glob("*.fe"):
         old.unlink()
     findings: list[Finding] = []
     agreements: Counter[tuple[Agreement, Mutation]] = Counter()
     checked = 0
-    for original in originals(args.seed, args.n):
-        rng = random.Random(f"{args.seed}:{original.path.stem}")
+    first = Seed(args.seed)
+    for original in originals(seeds_from(first, args.n)):
+        rng = random.Random(f"{first}:{original.path.stem}")
         for i, m in enumerate(mutants(original.source, rng, args.per_program)):
             path = OUT / f"{original.path.stem}_{m.mutation}_{i}.fe"
             path.write_text(m.source)
             checked += 1
-            match finding(m, original, path, known):
+            run = cli_check.Run.of(path.relative_to(ROOT), m.source)
+            match classify(m, original, run, embed.fe_rejection(run.path), narrowings):
                 case Finding() as found:
                     print(found, flush=True)
                     findings.append(found)
                 case Agreement() as agreement:
                     agreements[agreement, m.mutation] += 1
     print(f"{checked} mutants: {len(findings)} findings")
-    keep = [m for m in Mutation if not m.breaks_rule]
-    print("both compilers reject: "
-          + ", ".join(f"{m} {agreements[Agreement.BOTH_REJECT, m]}" for m in keep))
-    breaks = [m for m in Mutation if m.breaks_rule]
-    print("both compilers accept, so the rule was not broken: "
-          + ", ".join(f"{m} {agreements[Agreement.MISSED, m]}" for m in breaks))
+    print_agreements(agreements)
     sys.exit(1 if findings else 0)
 
 

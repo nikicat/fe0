@@ -779,7 +779,7 @@ The runtime dispatcher matches the official one (`mir/src/runtime/synthetic.rs:7
 
 ## 8. Conformance testing
 
-The subset rule is tested two ways.
+The subset rule is tested three ways.
 
 - **Accepted programs.** A differential test compiles one source with Fe and with Fe0, the
   latter running on the EVM, and deploys both builds with the same constructor arguments and
@@ -791,10 +791,13 @@ The subset rule is tested two ways.
 - **Rejected programs.** Fe0 must give the expected error code at the expected position, and
   Fe must reject the program too, unless the rule is one that Fe0 adds on top of Fe (such as
   §5.3's ban on `if` in a constant). Then Fe must accept it.
+- **Changed programs.** Accepted programs are changed by one mutation each. Fe0 and Fe must
+  then agree on whether each changed program is valid, unless the rule by which Fe0 rejects it
+  is one of the rules above that Fe0 adds on top of Fe (DESIGN.md §11a).
 
 The aim is a test of one of these kinds for every rule above that has a [✓] mark. The tests are
 in `corpus/`, `corpus/reject/` and `fe0/src/codegen_tests.fe`, and DESIGN.md §10 describes how
-the harness runs them.
+the harness runs them. `tools/mutate.py` makes the changed programs (DESIGN.md §11a).
 
 ## 9. Open questions
 

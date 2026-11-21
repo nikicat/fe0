@@ -35,7 +35,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, NewType
 
 import embed
 from embed import Args, DeployLine, InitLine, NamedCallLine, ScriptLine
@@ -44,6 +44,18 @@ from fegen import (MAX, PROBE_SELECTOR, ROOT, ExtraBytes, FeLine, FeName, FeSour
 
 GEN: Path = ROOT / "corpus/gen"
 OUT: Path = ROOT / "out/gen"
+
+Seed = NewType("Seed", int)
+
+
+def seeds_from(first: Seed, n: int) -> tuple[Seed, ...]:
+    """Returns the `n` seeds from `first` on, in order."""
+    return tuple(Seed(s) for s in range(first, first + n))
+
+
+def program_file(seed: Seed) -> str:
+    """Returns the file name of the program of `seed`."""
+    return f"s{seed}.fe"
 
 
 class Ty(StrEnum):
@@ -632,7 +644,7 @@ class Generated(NamedTuple):
 class Gen:
     """The generator of one program."""
 
-    def __init__(self, seed: int) -> None:
+    def __init__(self, seed: Seed) -> None:
         self.seed = seed
         self.rng = random.Random(seed)
         self.count = 0
@@ -802,10 +814,10 @@ class Gen:
         return "".join(line.render() + "\n" for line in lines)
 
 
-def write(seed: int) -> Path:
+def write(seed: Seed) -> Path:
     """Writes the program of `seed` and its call script to GEN, and returns the program's path."""
     generated = Gen(seed).program()
-    path = GEN / f"s{seed}.fe"
+    path = GEN / program_file(seed)
     path.write_text(generated.program)
     embed.calls_path(path).write_text(generated.calls)
     return path
@@ -818,7 +830,7 @@ def main() -> None:
     args = ap.parse_args()
     shutil.rmtree(GEN, ignore_errors=True)
     GEN.mkdir(parents=True)
-    paths = [write(s) for s in range(args.seed, args.seed + args.n)]
+    paths = [write(s) for s in seeds_from(Seed(args.seed), args.n)]
     programs = [embed.Program.load(p) for p in paths]
     embed.Corpus(programs, []).harness(OUT, embed.requested_fe_test(args))
 

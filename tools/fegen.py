@@ -700,6 +700,12 @@ class DiagCode(NamedTuple):
             raise ValueError(f"the error code {value} names no phase")
         return cls(PhaseLetter(PHASE_LETTERS[phase - 1]), value % 1000)
 
+    @property
+    def is_syntax(self) -> bool:
+        """True if Fe0's lexer or parser gives the error. False for an error of a later phase,
+        which comes from a program that Fe0 parsed."""
+        return self.letter in (PhaseLetter("L"), PhaseLetter("P"))
+
     def value(self) -> int:
         """Returns the value of the code, the inverse of `of_value`."""
         return (PHASE_LETTERS.index(self.letter) + 1) * 1000 + self.number
@@ -739,7 +745,8 @@ def check_diag() -> None:
     r"""Checks DiagCode and Diag against the example of fe0/src/diag.fe, the decoding of a
     CompileError, and one source with `\r`."""
     e116 = DiagCode(PhaseLetter("E"), 116)
-    assert str(e116) == "E116"
+    assert str(e116) == "E116" and not e116.is_syntax
+    assert DiagCode(PhaseLetter("P"), 1).is_syntax
     assert DiagCode.of_value(6034) == DiagCode(PhaseLetter("C"), 34)
     assert DiagCode.of_value(e116.value()) == e116
     at9 = Diag(e116, ByteOffset(9))

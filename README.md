@@ -113,6 +113,7 @@ The test harnesses:
 | `uv run --project tools tools/embed.py` | each corpus program against Fe, and each reject program's error (DESIGN.md §10) |
 | `uv run --project tools tools/gen.py -n 25` | the same, on random programs (DESIGN.md §11) |
 | `uv run --project tools tools/cli_check.py` | the native CLI against Fe0 on the EVM, byte for byte |
+| `uv run --project tools tools/mutate.py` | the corpus and random programs, each changed by one mutation, against Fe (DESIGN.md §11a) |
 | `uv run --project tools tools/node_check.py` | calls from several accounts, logs and storage writes against Fe, on anvil |
 | `uv run --project tools tools/chain_check.py` | the on-chain compiler against the native CLI, on anvil |
 

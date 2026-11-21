@@ -1,5 +1,5 @@
 """Fe0 source text as tokens, one tokenizer for every tool that rewrites programs as text
-(task Tdf1kp).
+(DESIGN.md §11a).
 
 The tokens follow Fe0's lexer (SPEC.md §1) closely enough to find places in a program that the
 lexer accepts. They do not check a program.
@@ -183,11 +183,14 @@ class Brackets:
         self.toks = toks
         # The closing bracket of each open bracket that is closed, by the open bracket.
         self._close: dict[TokenIndex, TokenIndex] = {}
+        # The innermost open bracket of each token, by the token's index.
+        self._innermost: list[Token | None] = []
         stack: list[TokenIndex] = []
         for i, t in enumerate(toks):
             if t.kind == Kind.OPEN:
                 stack.append(TokenIndex(i))
-            elif t.kind == Kind.CLOSE and stack:
+            self._innermost.append(toks[stack[-1]] if stack else None)
+            if t.kind == Kind.CLOSE and stack:
                 self._close[stack.pop()] = TokenIndex(i)
 
     def __iter__(self) -> Iterator[BracketPair]:
@@ -198,6 +201,12 @@ class Brackets:
         """Returns the index of the bracket that closes the one at `o`. Returns None when `o` is
         not an open bracket that is closed."""
         return self._close.get(o)
+
+    def in_parens(self, i: TokenIndex) -> bool:
+        """Checks whether the innermost open bracket around `toks[i]` is a `(`. A bracket counts
+        as inside the pair it opens or closes."""
+        o = self._innermost[i]
+        return o is not None and o.symbol == Op.LPAREN
 
     def top_level(self, pair: BracketPair) -> Iterator[Token]:
         """Yields, in order, the tokens inside `pair`, leaving out each inner bracket pair and

@@ -21,14 +21,16 @@ import re
 import subprocess
 import sys
 import tomllib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple, NewType
 
 import cli_check
+import embed
 from fegen import FE, ROOT, ByteOffset, FeSource, LineCol
 from fetokens import Kind, Op, Token, tokens
-from gen import Gen
+from gen import Gen, Seed, program_file, seeds_from
 from mutate import Text, reflow
 
 FE_STMTS: Path = ROOT / "tools/fe-stmts"
@@ -40,11 +42,6 @@ FE_STMTS_LOCK: Path = FE_STMTS / "Cargo.lock"
 FeVersion = NewType("FeVersion", str)
 # The first line of `fe --version`, such as `fe 26.7.0 (e6e6342b2)`.
 FE_VERSION = re.compile(r"fe (?P<version>\S+) ")
-# The first line of a reject program names the error Fe0 gives, such as `// expect: T004 4:5`.
-EXPECT = re.compile(r"// expect: (?P<letter>[A-Z])\d{3} ")
-# Fe0's lexer and parser report errors with these letters. Other errors come later, from a
-# program that Fe0 parsed.
-PARSE_LETTERS = {"L", "P"}
 
 
 class Span(NamedTuple):
@@ -154,23 +151,38 @@ def fe_stmts() -> Path:
     return FE_STMTS_EXE
 
 
+class FeBlock(NamedTuple):
+    """One block of a program, as Fe's parser reads it."""
+
+    open_brace: ByteOffset
+    stmts: list[Span]
+
+    @classmethod
+    def parse(cls, line: str) -> "FeBlock":
+        """Returns the block on one line that tools/fe-stmts prints, in the format that the doc
+        of tools/fe-stmts/src/main.rs states. Errors with ValueError when `line` is not in
+        that format."""
+        try:
+            open_brace, *stmts = line.split()
+            return cls(ByteOffset(int(open_brace)),
+                       [Span(ByteOffset(int(s)), ByteOffset(int(e)))
+                        for s, e in (stmt.split("-") for stmt in stmts)])
+        except ValueError as e:
+            raise ValueError(f"fe-stmts prints a line that is not a block: {line!r}") from e
+
+
 class FeParseError(Exception):
     """Fe's parser rejects a program."""
 
 
 def fe_blocks(exe: Path, path: Path) -> Blocks:
     """Returns the statements of each block of the program at `path`, as Fe's parser reads
-    them. Errors with FeParseError when Fe's parser rejects the program."""
+    them. Errors with FeParseError when Fe's parser rejects the program, and as FeBlock.parse
+    does on a line of tools/fe-stmts."""
     result = subprocess.run([str(exe), str(path)], capture_output=True, text=True)
     if result.returncode != 0:
         raise FeParseError(result.stderr.strip())
-    blocks: Blocks = {}
-    for line in result.stdout.splitlines():
-        open_brace, *stmts = line.split(" ")
-        blocks[ByteOffset(int(open_brace))] = [
-            Span(ByteOffset(int(s)), ByteOffset(int(e)))
-            for s, e in (stmt.split("-") for stmt in stmts if stmt)]
-    return blocks
+    return dict(FeBlock.parse(line) for line in result.stdout.splitlines())
 
 
 def differences(source: FeSource, fe0: Blocks, fe: Blocks) -> list[str]:
@@ -205,33 +217,31 @@ class Program(NamedTuple):
 
     path: Path
     source: FeSource
+    # True if the program is a generated one with line breaks added inside parentheses. False
+    # otherwise.
+    reflowed: bool = False
 
 
 def corpus() -> list[Program]:
     """Returns the corpus programs and the reject programs that Fe0's parser accepts."""
-    programs = [Program(p, FeSource(p.read_text())) for p in sorted((ROOT / "corpus").glob("*.fe"))]
-    for p in sorted((ROOT / "corpus/reject").glob("*.fe")):
-        text = FeSource(p.read_text())
-        m = EXPECT.match(text)
-        if m is None:
-            raise ValueError(f"{p} has no `// expect:` line")
-        if m["letter"] not in PARSE_LETTERS:
-            programs.append(Program(p, text))
-    return programs
+    programs = [Program(p, FeSource(p.read_text())) for p in sorted(embed.CORPUS.glob("*.fe"))]
+    return programs + [Program(ROOT / r.path, r.source) for r in embed.load_rejects()
+                       if not r.expected.code.is_syntax]
 
 
-def generated(seeds: int, out: Path) -> list[Program]:
-    """Writes the generated programs of seeds 1 to `seeds` to `out`, each also reflowed, and
-    returns them."""
+def generated(seeds: Iterable[Seed], out: Path) -> list[Program]:
+    """Writes the generated programs of `seeds` to `out`, each also reflowed, and returns
+    them."""
     out.mkdir(parents=True, exist_ok=True)
     programs = []
-    for seed in range(1, seeds + 1):
-        source = FeSource(Gen(seed).program().program)
-        reflowed = reflow(Text.of(source), random.Random(seed))
-        for path, text in [(out / f"s{seed}.fe", source),
-                           (out / f"s{seed}_reflowed.fe", reflowed)]:
-            path.write_text(text)
-            programs.append(Program(path, text))
+    for seed in seeds:
+        source = Gen(seed).program().program
+        flowed = reflow(Text.of(source), random.Random(seed))
+        path = out / program_file(seed)
+        programs += [Program(path, source),
+                     Program(path.with_stem(path.stem + "_reflowed"), flowed, reflowed=True)]
+    for p in programs:
+        p.path.write_text(p.source)
     return programs
 
 
@@ -240,7 +250,7 @@ def rejected_reflows(programs: list[Program]) -> list[str]:
     cli_check.build()
     out = []
     for p in programs:
-        if p.path.stem.endswith("_reflowed"):
+        if p.reflowed:
             run = cli_check.Run.of(p.path, p.source)
             if not run.compiled():
                 out.append(f"{p.path.relative_to(ROOT)}: Fe0 rejects it: {run.stderr.strip()}")
@@ -255,7 +265,7 @@ def main() -> None:
     args = ap.parse_args()
     check_parser_version()
     exe = fe_stmts()
-    programs = corpus() + generated(args.seeds, ROOT / "out/newline-check")
+    programs = corpus() + generated(seeds_from(Seed(1), args.seeds), ROOT / "out/newline-check")
     rejected = rejected_reflows(programs)
     for line in rejected:
         print(line)

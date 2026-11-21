@@ -514,6 +514,74 @@ of `tools/gen.py -n 25`.
 
 Shrinking a failing program is a stretch goal. It would delete lines while the failure stays.
 
+## 11a. Mutation tester (`tools/mutate.py`)
+
+gen.py (§11) makes only programs that both compilers accept, so its programs never test the
+rules by which Fe0 rejects a program. The mutation tester changes accepted programs. A mutation
+makes one change to a program, such as renaming one local everywhere it appears. `reflow`
+instead adds line breaks at several places inside parentheses. Each changed program is a mutant,
+and the tool checks it with both compilers. It takes the corpus programs and the programs that
+gen.py makes. Its `--help` says what the command does. The mutations are the members of
+`Mutation` in `tools/mutate.py`.
+
+A narrowing is a rule by which Fe0 rejects a program that Fe accepts. SPEC.md states each one.
+The reject program that shows a narrowing is its probe, and SPEC.md §8 says how a probe is
+tested.
+
+**Two verdicts per mutant.** Each compiler accepts or rejects the mutant. When Fe0 rejects it,
+the tool reads its error code too. Fe's verdict stands in for the `// expect:` line of a reject
+program, so a mutant needs none. These are findings for every mutant:
+- Fe rejects and Fe0 accepts: a subset bug ([ADR 0001](adr/0001-strict-subset.md)).
+- Fe accepts, and Fe0 fails without an error line, as when it crashes.
+- Fe accepts and Fe0 rejects with a code that no probe has: a narrowing that SPEC.md does not
+  state. One probe excuses its whole code, even for a case that the probe does not show.
+
+Each family below adds its own findings.
+
+A mutant that both compilers reject is not a finding, because it says nothing about the subset.
+The summary counts such mutants for each mutation that does not break a rule. So a mutation
+that mostly makes invalid programs shows up.
+
+**Three families of mutation.** Each mutation belongs to one. The family sets what the tool
+expects of its mutants:
+- **Meaning-preserving:** whitespace, comments, parentheses, a local's name, or unreachable
+  code. When both compilers accept such a mutant, Fe0 must compile it to the original's
+  bytecode. Unreachable code may change the bytecode, so for its mutants the two verdicts are
+  all that is checked.
+- **Rule-breaking:** each mutant breaks one rule, such as a local named after a type, or an
+  effect that `uses` does not list. Fe should reject it. When both compilers accept it, the
+  mutation missed its rule, and the summary counts that.
+- **Narrowings:** each plants the construct of one probe in the program, such as a second
+  contract or an `if` as a constant's value. When Fe accepts the mutant, Fe0 must reject it
+  with the code of that probe. Another probe's code does not excuse it. When both compilers
+  reject the mutant, the construct did not fit the program.
+
+**Mutations work on the finished text,** not inside gen.py. So they apply to the corpus too, and
+a new mutation needs no change to gen.py. A mutation finds its place with one tokenizer,
+`tools/fetokens.py`, which every tool that rewrites programs as text uses.
+
+**`paren` wraps only integer literals, `true`, `false` and the names of the program's locals,
+parameters, constants and fields.** Another keyword or a type name in parentheses would make an
+invalid program. In a program that both compilers accept, such a name is never a keyword or a
+type name, so the tool needs no copy of SPEC.md §1's word lists.
+
+**`unparen` drops only parentheses of the two shapes that gen.py adds,** which it finds by the
+tokens around them: the left operand of a `<`, as in `(a) < b`, and a block that starts a line,
+as in `({ x })`. gen.py adds them so that Fe reads no generic arguments or record literal
+(gen.py's `E.may_take_generics` and `E.may_read_as_record`). Without the parentheses, Fe rejects
+the program only when it reads one of those, so most of these mutants stay valid and keep the
+original's bytecode.
+
+**One mutant at a time.** The tool checks one mutant at a time, because the dev container's
+memory is small. `fe check` (Fe 26.7.0) takes about 0.5 s per mutant, and the native CLI
+about 5 ms.
+
+**CI runs fixed seeds,** so a failure never depends on chance. The seeds are in the mutants step
+of `.github/workflows/ci.yml`.
+
+**A bug that the tool finds** gets its own task, and a program in `corpus/reject/` or `corpus/`
+that pins it.
+
 ## 12. Hashing (`sol("…")` selectors, a stretch goal)
 
 - `sol("f()")` needs keccak at Fe0's own run time. Fe0 hashes a signature with
@@ -534,3 +602,4 @@ Shrinking a failing program is a stretch goal. It would delete lines while the f
 | Assembler | Pushes, and fixups of labels bound before and after their use |
 | End-to-end | The §10 harness, run by `tools/embed.py` over `corpus/` and `corpus/reject/`, and by `tools/gen.py` over `corpus/gen/` (§11) |
 | Native CLI | `tools/cli_check.py`, against Fe0 on the EVM (§10) |
+| Mutants | `tools/mutate.py`, the native CLI against Fe on changed programs (§11a) |
