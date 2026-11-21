@@ -325,7 +325,7 @@ The compiler does not fit the 24,576-byte limit, so each phase is its own contra
 | `Parser` | `parse(bytes src, uint256[] toks) -> uint256[]` | parse, then put the AST (`Ast.put`) |
 | `Checker` | `check(bytes src, uint256[] ast) -> uint256[]` | check, then put the checked program (`Checked.put`) |
 | `Back` | `generate(uint256[] ir) -> bytes` | take the checked program, generate and assemble, return the deploy code |
-| `Compiler` | `compile(bytes src) -> bytes`, `deploy(bytes src, bytes args) -> address` | `STATICCALL` each phase in turn; `deploy` appends `args` and runs `create_raw` |
+| `Compiler` | `compile(bytes src) -> bytes`, `deploy(bytes src, bytes args) -> address`, `version() -> string` | `STATICCALL` each phase in turn; `deploy` appends `args` and runs `create_raw`; `version` returns the version of its release (`fe0-chain/README.md`, "Releases") |
 
 The contracts are in `fe0-chain/`. Compiler takes the four phase addresses in its constructor.
 Callers use `fe0-chain/Compiler.abi.json`. `tools/chain_check.py` writes it and says why it
@@ -346,7 +346,7 @@ differs from the ABI that `fe build` writes.
   | Parser | 17,282 | 3.79M |
   | Checker | 20,101 | 4.40M |
   | Back | 17,216 | 3.78M |
-  | Compiler | 1,653 | 0.44M |
+  | Compiler | 1,699 | 0.45M |
 
   - **Deploying all five costs 13.7M gas.**
   - **Compiling costs up to 28.7M gas, for `corpus/amm.fe`.**

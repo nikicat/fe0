@@ -8,7 +8,8 @@ initcode fits EIP-3860. Then it deploys the phase contracts and Compiler on anvi
   be the CLI's, byte for byte;
 - compiles every reject program of corpus/reject/. Compiler must revert with the CompileError
   of the program's `// expect:` header;
-- deploys corpus/counter.fe with `deploy(bytes,bytes)` in a transaction, and calls it.
+- deploys corpus/counter.fe with `deploy(bytes,bytes)` in a transaction, and calls it;
+- calls `version()`, which must return the version in fe0-chain/fe.toml.
 
 It also checks that fe0-chain/Compiler.abi.json, the interface that callers use, is Compiler's
 ABI as `fe build` writes it, plus the errors of the phase contracts. Compiler passes those on
@@ -20,16 +21,18 @@ It prints the deploy gas of each contract and the gas of the largest compile.
 import argparse
 import json
 import sys
+import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import NamedTuple, Self
+from typing import NamedTuple, NewType, Self
 
 import web3.contract
 from eth_abi.exceptions import DecodingError
 from eth_typing import ABI, ABIElement, ABIError, ChecksumAddress, HexStr
 from hexbytes import HexBytes
+from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import TxParams
 
@@ -46,12 +49,23 @@ OUT: Path = ROOT / "out/chain"
 INTERFACE: Path = CHAIN / "Compiler.abi.json"
 # The option that writes INTERFACE instead of checking it.
 WRITE_ABI: str = "--write-abi"
+# The ingot file of fe0-chain, which holds its version.
+MANIFEST: Path = CHAIN / "fe.toml"
 # EIP-170 and EIP-3860.
 MAX_RUNTIME: int = 24_576
 MAX_INITCODE: int = 2 * MAX_RUNTIME
 # The program that check_counter deploys, and the start value it deploys it with.
 COUNTER: Path = embed.CORPUS / "counter.fe"
 START: int = 2
+
+
+# A version of fe0-chain, such as "0.1.0" (fe0-chain/README.md, "Releases").
+Version = NewType("Version", str)
+
+
+def version() -> Version:
+    """Returns the version of fe0-chain that MANIFEST holds."""
+    return Version(tomllib.loads(MANIFEST.read_text())["ingot"]["version"])
 
 
 class Contract(StrEnum):
@@ -213,6 +227,36 @@ class Deployed(NamedTuple):
         return cls(address, Gas(receipt["gasUsed"]))
 
 
+def counter_source() -> FeSource:
+    """Returns the source of COUNTER."""
+    return FeSource(COUNTER.read_text())
+
+
+def counter_args(w3: Web3) -> bytes:
+    """Returns the constructor arguments that COUNTER is deployed with: START."""
+    return w3.codec.encode(["uint256"], [START])
+
+
+class CounterGet(NamedTuple):
+    """What `Get` returns on a COUNTER deployed with `counter_args`."""
+
+    value: int
+
+    @classmethod
+    def call(cls, w3: Web3, counter: ChecksumAddress) -> Self:
+        """Returns what `Get` returns on the COUNTER at `counter`, called by `eth_call`."""
+        get = embed.selectors(counter_source()).of(FeName("Get")).to_bytes(4)
+        got = w3.eth.call({"to": counter, "data": HexBytes(get)})
+        return cls(w3.codec.decode(["uint256"], got)[0])
+
+    def failures(self) -> list[FailureMessage]:
+        """Returns a message when the value is not START."""
+        if self.value != START:
+            return [FailureMessage(f"{COUNTER.name} deployed by Compiler: Get returns"
+                                   f" {self.value}, not {START}")]
+        return []
+
+
 class ProgramCheck(NamedTuple):
     """The check of one corpus program on chain."""
 
@@ -307,15 +351,18 @@ class Chain:
     def check_counter(self) -> list[FailureMessage]:
         """Deploys COUNTER with START through Compiler, and checks that `Get` returns START."""
         w3 = self.node.w3
-        source = FeSource(COUNTER.read_text())
-        deployed = self.deploy_program(source, w3.codec.encode(["uint256"], [START]))
+        deployed = self.deploy_program(counter_source(), counter_args(w3))
         print(f"deploy({COUNTER.name}): {deployed.gas:,} gas, at {deployed.address}")
-        get = embed.selectors(source).of(FeName("Get")).to_bytes(4)
-        got = w3.eth.call({"to": deployed.address, "data": HexBytes(get)})
-        if w3.codec.decode(["uint256"], got)[0] != START:
-            return [FailureMessage(f"{COUNTER.name} deployed by Compiler: Get returns"
-                                   f" {got.hex()}")]
-        return []
+        return CounterGet.call(w3, deployed.address).failures()
+
+
+def check_version(got: str) -> list[FailureMessage]:
+    """Returns a message when `got` differs from `version`. `got` is what Compiler's `version()`
+    returned."""
+    if got != (want := version()):
+        return [FailureMessage(f"Compiler's version() returns {got!r}, but"
+                               f" {MANIFEST.relative_to(ROOT)} says {want!r}")]
+    return []
 
 
 def main() -> None:
@@ -344,6 +391,7 @@ def main() -> None:
         print(f"{len(paths)} programs and {len(rejects)} reject programs compiled on chain;"
               f" the most gas: {largest.gas:,} for {largest.path.name}")
         failures += chain.check_counter()
+        failures += check_version(chain.compiler.functions.version().call())
     sys.exit("\n".join(failures) or None)
 
 

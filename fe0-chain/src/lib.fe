@@ -41,6 +41,10 @@ pub msg CompilerMsg {
     // returns its address. Errors with CompileError when `src` has an error.
     #[selector = sol("deploy(bytes,bytes)")]
     Deploy { src: Bytes, args: Bytes } -> Address,
+    // Returns the version of the release that this Compiler was built from
+    // (fe0-chain/README.md, "Releases").
+    #[selector = sol("version()")]
+    Version -> String<5>,
 }
 
 // Reverts with `err` if it holds an error.
@@ -130,6 +134,9 @@ pub contract Compiler {
             initcode.extend_from(phases.compile(src).span())
             initcode.extend_from(args.span())
             create.create_raw(value: Wei::zero(), init_code: initcode.span())
+        }
+        Version -> String<5> {
+            "0.1.0"
         }
     }
 }

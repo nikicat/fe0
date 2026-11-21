@@ -60,6 +60,18 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "version",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
     "type": "error",
     "name": "CompileError",
     "inputs": [

@@ -29,7 +29,10 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
   commit, which goes in the form.
 
 ## Next
+- The deployed compiler predates 06ee1b4, which accepts chained comparisons such as
+  `a < b == true`, and it has no `version()`. So redeploy before submission: commit, tag
+  `v0.1.0` (fe0-chain/README.md, "Releases"), remove `deployments/42161.json` (deploy.py refuses a file
+  from another release), run `tools/deploy.py`, then update the addresses in docs/DEMO.md and
+  commit them with the new `deployments/42161.json`. Push the tag with the branch.
 - Push, make the repo public (Apache-2.0 LICENSE is in place), record the exact commit SHA and
   `fe 26.7.0`, and submit with the link in `docs/registration-confirmation.txt`.
-- If fe0, fe0-chain or their build changes before submission, redeploy with `tools/deploy.py`
-  (remove `deployments/42161.json` first) and update docs/DEMO.md.

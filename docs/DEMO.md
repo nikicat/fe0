@@ -12,7 +12,14 @@ Compiler calls them in turn (DESIGN.md §8). `tools/deploy.py` deployed them, an
 | Checker | [`0x6427ceD82919812daF51172E16cc5d1e5705B254`](https://arbiscan.io/address/0x6427ceD82919812daF51172E16cc5d1e5705B254) |
 | Back | [`0xF15cEFE0E5890Dc67DD075cc357a1573810C3F10`](https://arbiscan.io/address/0xF15cEFE0E5890Dc67DD075cc357a1573810C3F10) |
 
-`fe0-chain/README.md` describes Compiler's interface and its errors.
+`fe0-chain/README.md` describes Compiler's interface, its errors and its releases. This call
+prints the version of the release that Compiler was built from:
+
+```sh
+cast call --rpc-url https://arb1.arbitrum.io/rpc 0x6743f90Eb910D670d681635947fD8A63B3397C7B \
+  "version()(string)"
+# "0.1.0"
+```
 
 ## 1. Compile a program, for free
 
@@ -62,8 +69,9 @@ cast call --rpc-url https://arb1.arbitrum.io/rpc 0xd34823a55Cae65c980e3535a992e2
 
 ## 4. Run it all again
 
-`tools/deploy.py --rehearse` deploys the five contracts on a local anvil node and runs this
-demo there. Without `--rehearse`, it deploys to Arbitrum One. Each transaction opens an
-approval page in the browser, and the user signs it in their own wallet through
-`browser-web3-signer`, so no private key is needed. The five deployments and the demo cost
-about 18M gas, about 0.0004 ETH at Arbitrum's 0.02 gwei.
+`tools/deploy.py --rehearse` deploys the five contracts on a local anvil node and runs this demo
+there. Without `--rehearse`, it deploys to Arbitrum One, and only from a release: a commit with
+the tag `v<version>` (`fe0-chain/README.md`). Each transaction opens an approval page in the
+browser, and the user signs it in their own wallet through `browser-web3-signer`, so no private
+key is needed. The five deployments and the demo cost about 18M gas, about 0.0004 ETH at
+Arbitrum's 0.02 gwei.

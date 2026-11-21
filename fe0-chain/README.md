@@ -19,10 +19,25 @@ interface ICompiler {
     // `args` is the ABI encoding of the program's `init` arguments, or empty.
     // Returns the new contract's address.
     function deploy(bytes calldata src, bytes calldata args) external returns (address);
+
+    // Returns the version of the release that this Compiler was built from, such as "0.1.0".
+    function version() external pure returns (string memory);
 }
 ```
 
 The constructor takes the addresses of Lexer, Parser, Checker and Back, in that order.
+
+## Releases
+
+A release is a commit that has the git tag `v<version>`, where the version is the one in this
+ingot's `fe.toml`. A deployed Compiler's `version()` returns that version, so its tag gives the
+commit that Compiler was built from. `tools/deploy.py` refuses to deploy any other commit to a
+real chain, and records the version and the commit in `deployments/<chain id>.json`.
+
+To make a release, raise the version in `fe.toml` and in `version()` in `src/lib.fe`, commit,
+and tag the commit. `tools/chain_check.py` fails when the two versions differ. The return type
+of `version()` is `String<N>`, where `N` is the length of the version, so a longer or shorter
+version needs a new `N` there.
 
 ## Errors
 

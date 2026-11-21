@@ -18,9 +18,9 @@ from hexbytes import HexBytes
 from web3 import HTTPProvider, Web3
 from web3.exceptions import ContractLogicError
 
-from chain_check import INTERFACE, Reverted
+from chain_check import INTERFACE, Contract, Reverted
 from cli_check import ExitCode
-from deploy import ARBITRUM_ONE, ARBITRUM_RPC, DEPLOYMENTS
+from deploy import ARBITRUM_ONE, ARBITRUM_RPC, Deployment
 from fegen import FE0, ROOT, DiagCode, FeSource, LineCol
 
 MESSAGES: Path = ROOT / "fe0-cli/src/messages.fe"
@@ -38,11 +38,10 @@ def messages() -> dict[DiagCode, str]:
     return {codes[name]: text for name, text in MESSAGE.findall(MESSAGES.read_text())}
 
 
-def compiler(w3: Web3, chain_id: int) -> ChecksumAddress:
-    """Returns the address of Compiler that deployments/<chain id>.json records. Errors with
-    KeyError when it records none."""
-    saved: dict[str, str] = json.loads((DEPLOYMENTS / f"{chain_id}.json").read_text())
-    return w3.to_checksum_address(saved["Compiler"])
+def compiler(chain_id: int) -> ChecksumAddress:
+    """Returns the address of Compiler that deployments/<chain id>.json records. Errors as
+    `Deployment.read` does, or with KeyError when it records none."""
+    return Deployment.read(Deployment.file(chain_id)).addresses[Contract.COMPILER]
 
 
 def main() -> None:
@@ -55,7 +54,10 @@ def main() -> None:
     source = FeSource(args.program.read_text())
     w3 = Web3(HTTPProvider(args.rpc))
     abi: ABI = json.loads(INTERFACE.read_text())
-    contract = w3.eth.contract(compiler(w3, args.chain), abi=abi)
+    try:
+        contract = w3.eth.contract(compiler(args.chain), abi=abi)
+    except RuntimeError as e:
+        sys.exit(str(e))
     try:
         code: bytes = contract.functions.compile(source.encode()).call()
     except ContractLogicError as e:
