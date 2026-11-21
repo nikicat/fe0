@@ -1,0 +1,20 @@
+// expect: P002 17:1
+// A line break before the `:` of a field in an event's literal (SPEC §1).
+msg M {
+    #[selector = 1]
+    Go { n: u256 },
+}
+#[event]
+struct E {
+    #[indexed]
+    to: Address,
+    n: u256,
+}
+contract C uses (log: mut Log) {
+    recv M {
+        Go { n } uses (mut log) {
+            log.emit(E { to: Address::zero(), n
+: n })
+        }
+    }
+}

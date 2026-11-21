@@ -10,6 +10,7 @@ use ingot::diag::{
     P_EXPECTED_ITEM,
     P_EXPECTED_TOKEN,
     P_EXPECTED_TYPE,
+    P_FIELD_COLON,
     P_FIELD_NOT_MUT,
     P_GENERIC_ARGS,
     P_RECORD_LITERAL,
@@ -1050,6 +1051,24 @@ fn record_literal() {
         27,
     )
     parse_text("fn f() {\n    let a = (b)\n    { a }\n}")
+}
+
+#[test]
+fn record_field_colon() {
+    // The cases of SPEC.md §1, "No space before a record field's `:`".
+    rejects("fn f() { log.emit(E { a : 1 }) }", P_FIELD_COLON, 24)
+    rejects("fn f() { t.call(M::V { a\t: 1 }) }", P_FIELD_COLON, 25)
+    rejects("fn f() { log.emit(E { a\n: 1 }) }", P_EXPECTED_TOKEN, 24)
+    rejects(
+        "fn f() { log.emit(E { a // c\n: 1 }) }",
+        P_EXPECTED_TOKEN,
+        29,
+    )
+    tail_is("fn f() { g(a : 1) }", "(call g (a:1))")
+    parse_text("fn f(a : u256) {\n    let q : u256 = a\n}")
+    parse_text(
+        "contract C {\n    recv M {\n        Go { t : u } {}\n    }\n}",
+    )
 }
 
 #[test]

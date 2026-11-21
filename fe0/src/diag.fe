@@ -96,6 +96,8 @@ pub const P_FIELD_NOT_MUT: DiagCode = DiagCode { raw: 2010 }
 pub const P_GENERIC_ARGS: DiagCode = DiagCode { raw: 2011 }
 // A `{` at the start of a line after a statement that ends with a name (SPEC.md §3.4).
 pub const P_RECORD_LITERAL: DiagCode = DiagCode { raw: 2012 }
+// A space before the `:` of a field in an event's literal or a call's variant (SPEC.md §1).
+pub const P_FIELD_COLON: DiagCode = DiagCode { raw: 2013 }
 
 // Names
 

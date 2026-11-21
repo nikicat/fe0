@@ -12,6 +12,7 @@ use ingot::diag::{
     P_EXPECTED_ITEM,
     P_EXPECTED_TOKEN,
     P_EXPECTED_TYPE,
+    P_FIELD_COLON,
     P_FIELD_NOT_MUT,
     P_GENERIC_ARGS,
     P_RECORD_LITERAL,
@@ -52,6 +53,8 @@ const BINDS: ListOf = ListOf { code: 4 }
 const USES: ListOf = ListOf { code: 5 }
 const ARGS: ListOf = ListOf { code: 6 }
 const EVENT_FIELDS: ListOf = ListOf { code: 7 }
+// The values of the fields of a record literal (SPEC.md §1).
+const FIELD_VALUES: ListOf = ListOf { code: 8 }
 
 // How tightly a binary operator binds its operands, from 1 for `||` to 9 for `*`.
 pub struct Power { level: usize }
@@ -226,6 +229,11 @@ impl Parser {
         self.tok_at(self.at - 1)
     }
 
+    // Checks whether the current token starts where the token before it ends.
+    fn touches_prev(self) -> bool {
+        self.tok().span.start == self.prev_tok().span.end()
+    }
+
     fn prev(self) -> Tok {
         self.prev_tok().kind
     }
@@ -308,8 +316,8 @@ impl Parser {
         if elem == EFFECTS {
             return self.effect()
         }
-        // The only list left is ARGS.
-        self.arg()
+        // The only lists left are ARGS and FIELD_VALUES.
+        self.arg(record: elem == FIELD_VALUES)
     }
 
     fn enter(mut self) -> Result<Diag, ()> {
@@ -838,11 +846,16 @@ impl Parser {
         k == O_BANG || k == O_TILDE || (k == O_PLUS && self.prev() != T_NEWLINE)
     }
 
+    // Checks whether the current token is a name followed by `:`.
+    fn at_label(self) -> bool {
+        self.peek() == T_IDENT && self.peek2() == P_COLON
+    }
+
     // Whether a contract field starts here: `mut`, or a name and `:`, which is a field that lacks
     // its `mut` (SPEC.md §3.1, rule `cfield`). `init` and `recv` are names too (SPEC.md §1), so
     // the `:` tells a field from an `init` or a `recv` block.
     fn at_field(self) -> bool {
-        self.peek() == K_MUT || self.peek() == T_IDENT && self.peek2() == P_COLON
+        self.peek() == K_MUT || self.at_label()
     }
 
     // Index of the token after the bracket group that opens at token `start`, or of the T_EOF
@@ -953,14 +966,12 @@ impl Parser {
         )
     }
 
-    // The rest of rule `emit`, from the word `emit` on, for the effect `effect` at `pos`. The
-    // values of the event's fields are read with rule `args`, so that they take labels as the
-    // arguments of a call do.
+    // The rest of rule `emit`, from the word `emit` on, for the effect `effect` at `pos`.
     fn emit(mut self, _ pos: Pos, _ effect: Sym) -> Result<Diag, NodeId> {
         self.bump()
         self.expect(P_LPAREN)?
         let event = self.ident()?
-        let args = self.braced_list(ARGS)?
+        let args = self.braced_list(FIELD_VALUES)?
         self.expect(P_RPAREN)?
         Result::Ok(
             self.ast.add_node(Node::new_emit(pos, effect, event, args)),
@@ -968,7 +979,7 @@ impl Parser {
     }
 
     // The rest of rule `msg_call`, from the word `call` on, for the address named `target` at
-    // `pos`. The values of the variant's fields are read as those of `emit` are.
+    // `pos`.
     fn msg_call(mut self, _ pos: Pos, _ target: Sym) -> Result<Diag, NodeId> {
         let name = self.ast.add_node(Node::new_name(pos, name: target))
         self.bump()
@@ -976,7 +987,7 @@ impl Parser {
         let msg_name = self.ident()?
         self.path_sep()?
         let variant = self.ident()?
-        let args = self.braced_list(ARGS)?
+        let args = self.braced_list(FIELD_VALUES)?
         self.expect(P_RPAREN)?
         Result::Ok(
             self.ast.add_node(
@@ -987,8 +998,8 @@ impl Parser {
 
     // Reads `::`, whose colons must touch (SPEC.md §1).
     fn path_sep(mut self) -> Result<Diag, ()> {
-        let colon = self.expect(P_COLON)?
-        if self.tok().span.start != colon.span.end() {
+        self.expect(P_COLON)?
+        if !self.touches_prev() {
             return Result::Err(self.err(P_EXPECTED_TOKEN))
         }
         self.expect(P_COLON)?
@@ -1023,12 +1034,16 @@ impl Parser {
         Result::Ok(self.ast.add_node(Node::new_call(pos, name, args)))
     }
 
-    // SPEC.md §3.1, rule `arg`.
-    fn arg(mut self) -> Result<Diag, NodeId> {
+    // SPEC.md §3.1, rule `arg`. Errors with P_FIELD_COLON when `record` is true and the label
+    // has a space before its `:` (SPEC.md §1).
+    fn arg(mut self, record: bool) -> Result<Diag, NodeId> {
         let pos = self.tok().span.start
         var label = NO_SYM
-        if self.peek() == T_IDENT && self.peek2() == P_COLON {
+        if self.at_label() {
             label = self.ident()?
+            if record && !self.touches_prev() {
+                return Result::Err(self.err(P_FIELD_COLON))
+            }
             self.bump()
         }
         let value = self.expr()?

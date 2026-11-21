@@ -59,6 +59,16 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
   selector, `#[indexed]` or an event's `struct`, and before a name with no doc comment or
   attribute ahead of it **[✓]**. Fe0 allows all of these. The probes are
   `corpus/doc_comments.fe` and, for a field with no doc comment, `corpus/amm.fe`.
+- **No space before a record field's `:`.** In an event's literal, such as `E { n: x }`, and in
+  the variant of a call, such as `t.call(M::V { n: x })` (§6, "Calls"), a field's `:` must touch
+  its name. Fe rejects a space or a tab there (`1-0001`) **[✓]**. This is a bug in Fe's parser
+  (argotorg/fe#2057), and Fe0 follows it, because of the subset rule (top of this page). Fe0
+  rejects it with `P013`. The probe is `corpus/reject/record_field_space.fe`. Fe also rejects a
+  comment or a line break before the `:` (`1-0001`) **[✓]**, and Fe0 rejects both with `P002`.
+  The probes are `corpus/reject/record_field_comment.fe` and
+  `corpus/reject/record_field_line_break.fe`. Fe and Fe0 accept a space before the `:` of a
+  call's label, such as `g(a : n)`, of a type in a parameter, a `let` or a field's declaration,
+  and of a bind in an arm's pattern, such as `Go { t : t }` **[✓]**.
 - **No block comments.** Fe's compiler lexer has none, even though the tree-sitter grammar does.
 - **Doc comments.** A comment that starts with `///`, including `////`, is a doc comment. It may
   come only before an item, a contract field, `init`, `recv`, an arm, a variant or a field of a

@@ -16,7 +16,7 @@ impl Display for Message {
 }
 
 // One message per error code in fe0/src/diag.fe.
-const MESSAGES: [Message; 54] = [
+const MESSAGES: [Message; 55] = [
     Message { code: L_UNEXPECTED_CHAR, text: "unexpected character" },
     Message { code: L_UNTERMINATED_STRING, text: "unterminated string" },
     Message { code: L_BAD_ESCAPE, text: "unknown escape in a string" },
@@ -35,6 +35,7 @@ const MESSAGES: [Message; 54] = [
     Message { code: P_FIELD_NOT_MUT, text: "a contract field must be mut" },
     Message { code: P_GENERIC_ARGS, text: "ambiguous `<` after a name" },
     Message { code: P_RECORD_LITERAL, text: "ambiguous `{` at line start" },
+    Message { code: P_FIELD_COLON, text: "space before a field's `:`" },
     Message { code: N_DUPLICATE, text: "name declared twice" },
     Message { code: N_UNKNOWN_NAME, text: "unknown name" },
     Message { code: N_NOT_A_VALUE, text: "not a value" },
