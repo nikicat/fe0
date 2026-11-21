@@ -11,9 +11,14 @@ official compiler's `fe check` each accept or reject it. Fe0 is a strict subset 
 - a mutant that should keep the program's code, such as one with an added comment, and that Fe0
   compiles to other bytes.
 
+Some mutations preserve the program's meaning. The others each break one rule, such as ordering
+a `bool` or making a constant depend on itself, so Fe should reject the mutant, and Fe0 must
+reject it too.
+
 A mutant that both compilers reject is not a finding, because it says nothing about the subset.
-The summary counts these mutants for each mutation, so that a mutation that mostly makes invalid
-programs shows up.
+The summary counts these mutants for each meaning-preserving mutation, so that a mutation that
+mostly makes invalid programs shows up. It also counts the rule-breaking mutants that both
+compilers accept, because then the mutation missed its rule.
 
 The programs are corpus/*.fe and the generated programs of the seeds. The same seed always
 gives the same mutants. Each mutant is written to out/mutate/, so a finding can be read there.
@@ -37,22 +42,37 @@ from gen import GEN, Gen
 
 OUT: Path = ROOT / "out/mutate"
 
+COMPARISONS: frozenset[Op] = frozenset({Op.LT, Op.GT, Op.LE, Op.GE, Op.EQ, Op.NE})
 # Fe0's binary operators, as `Tok.is_binary` in fe0/src/lexer.fe names them. Inside
 # parentheses, a line may end with one.
-BINARY_OPS: frozenset[Op] = frozenset({
+BINARY_OPS: frozenset[Op] = COMPARISONS | {
     Op.PLUS, Op.MINUS, Op.STAR, Op.SLASH, Op.PERCENT, Op.AMP, Op.PIPE, Op.CARET, Op.SHL, Op.SHR,
-    Op.LT, Op.GT, Op.LE, Op.GE, Op.EQ, Op.NE, Op.ANDAND, Op.OROR})
+    Op.ANDAND, Op.OROR}
 # An atom right after one of these tokens is an operand. `:` is left out, because a type
 # comes after it too.
 BEFORE_OPERAND: frozenset[Op | Keyword] = BINARY_OPS | {
     Op.LPAREN, Op.COMMA, Op.ASSIGN, Op.BANG, Op.TILDE, Keyword.RETURN, Op.PLUS_ASSIGN,
     Op.MINUS_ASSIGN, Op.STAR_ASSIGN, Op.SLASH_ASSIGN, Op.PERCENT_ASSIGN, Op.AMP_ASSIGN,
     Op.PIPE_ASSIGN, Op.CARET_ASSIGN, Op.SHL_ASSIGN, Op.SHR_ASSIGN}
-# An operand may end right before one of these tokens, or before a line end. `:` is left out,
-# because a call's label comes before it too.
+# An operand may end right before one of these tokens. `:` is left out, because a call's label
+# comes before it too.
 AFTER_OPERAND: frozenset[Op] = BINARY_OPS | {Op.RPAREN, Op.COMMA, Op.RBRACE}
 DECLARERS: frozenset[Keyword] = frozenset({Keyword.LET, Keyword.VAR, Keyword.CONST, Keyword.MUT})
+LOCAL_DECLARERS: frozenset[Keyword] = frozenset({Keyword.LET, Keyword.VAR})
+# A local may take the name of a function or a msg, which it then hides (SPEC.md §5.2). It may
+# not take the name of the contract, an event or a constant (N018), or start uppercase (N017).
+HIDEABLE_DECLARERS: frozenset[Keyword] = frozenset({Keyword.FN, Keyword.MSG})
 BOOLS: frozenset[Keyword] = frozenset({Keyword.TRUE, Keyword.FALSE})
+# Names that Fe and Fe0 both allow for a local, though they look like a keyword or a type:
+# the contextual words, and integer widths that Fe has no type for (SPEC.md §1).
+ODD_NAMES: tuple[FeName, ...] = tuple(map(FeName, ["init", "recv", "assert", "with", "u7", "i24"]))
+# Type names. Fe and Fe0 both reject each of them as a local's name (SPEC.md §1, and §5.2 for
+# `String` and `Address`, which Fe reads as a pattern).
+TYPE_NAMES: tuple[FeName, ...] = tuple(map(FeName, [
+    "u8", "u256", "i128", "usize", "bool", "String", "Address"]))
+# No program of the corpus or of gen.py uses this name, so a local of this name hides nothing
+# that a later line uses.
+UNREACHABLE_LOCAL = FeName("mutant_unreachable")
 
 
 def reflow(source: FeSource, rng: random.Random) -> FeSource:
@@ -90,19 +110,79 @@ def reflow(source: FeSource, rng: random.Random) -> FeSource:
 
 
 class Expect(Enum):
-    """What a mutation keeps of the program it mutates."""
+    """What the oracle expects of a mutant, by its mutation's family (task Tdf1kp, "Three
+    families of mutation")."""
 
     # When both compilers accept the mutant, Fe0 gives the original's bytes (task Tdf1kp).
     SAME_CODE = "same code"
+    # Fe0 may give other bytes, because the mutant adds code.
+    ANY_CODE = "any code"
+    # Fe should reject the mutant, because it breaks one rule.
+    REJECT = "reject"
 
 
 class Mutation(StrEnum):
-    """A meaning-preserving mutation (task Tdf1kp, "Three families of mutation")."""
+    """A meaning-preserving or a rule-breaking mutation (task Tdf1kp, "Three families of
+    mutation")."""
 
     COMMENT = "comment"
     SPACE = "space"
     PAREN = "paren"
     REFLOW = "reflow"
+    RENAME = "rename"
+    UNREACHABLE = "unreachable"
+    TYPE_NAME = "type_name"
+    CHAIN = "chain"
+    CONST_CYCLE = "const_cycle"
+    DROP_MUT = "drop_mut"
+    DROP_USES = "drop_uses"
+    BOOL_FOR_INT = "bool_for_int"
+
+    @property
+    def expect(self) -> Expect:
+        match self:
+            case Mutation.UNREACHABLE:
+                return Expect.ANY_CODE
+            case (Mutation.COMMENT | Mutation.SPACE | Mutation.PAREN | Mutation.REFLOW
+                  | Mutation.RENAME):
+                return Expect.SAME_CODE
+            case (Mutation.TYPE_NAME | Mutation.CHAIN | Mutation.CONST_CYCLE | Mutation.DROP_MUT
+                  | Mutation.DROP_USES | Mutation.BOOL_FOR_INT):
+                return Expect.REJECT
+
+    @property
+    def breaks_rule(self) -> bool:
+        """True if the mutation is rule-breaking (task Tdf1kp, "Three families of mutation").
+        False otherwise."""
+        return self.expect == Expect.REJECT
+
+    def mutate(self, source: FeSource, rng: random.Random) -> FeSource | None:
+        """Returns a mutant of `source`, or None when `source` has no place for the mutation."""
+        match self:
+            case Mutation.COMMENT:
+                return comment(source, rng)
+            case Mutation.SPACE:
+                return space(source, rng)
+            case Mutation.PAREN:
+                return paren(source, rng)
+            case Mutation.REFLOW:
+                return reflow(source, rng)
+            case Mutation.RENAME:
+                return rename(source, rng)
+            case Mutation.UNREACHABLE:
+                return unreachable(source, rng)
+            case Mutation.TYPE_NAME:
+                return type_name(source, rng)
+            case Mutation.CHAIN:
+                return chain(source, rng)
+            case Mutation.CONST_CYCLE:
+                return const_cycle(source, rng)
+            case Mutation.DROP_MUT:
+                return drop_mut(source, rng)
+            case Mutation.DROP_USES:
+                return drop_uses(source, rng)
+            case Mutation.BOOL_FOR_INT:
+                return bool_for_int(source, rng)
 
 
 class Mutant(NamedTuple):
@@ -110,7 +190,6 @@ class Mutant(NamedTuple):
 
     mutation: Mutation
     source: FeSource
-    expect: Expect
 
 
 class Edit(NamedTuple):
@@ -179,6 +258,17 @@ def declared(sig: list[Token]) -> set[FeName]:
     return names
 
 
+def ends_operand(t: Token) -> bool:
+    """True if an operand may end right before `t`. False otherwise."""
+    return t.kind == Kind.NEWLINE or t.symbol in AFTER_OPERAND
+
+
+def operands(sig: list[Token], atom: Callable[[Token], bool]) -> list[Token]:
+    """Returns the tokens of `sig` that `atom` accepts and that stand alone as an operand."""
+    return [b for a, b, c in zip(sig, sig[1:], sig[2:])
+            if atom(b) and a.symbol in BEFORE_OPERAND and ends_operand(c)]
+
+
 def paren(source: FeSource, rng: random.Random) -> FeSource | None:
     """Returns `source` with parentheses around one operand that is an integer literal, `true`,
     `false` or a name the program declares (task Tdf1kp). Returns None when there is no such
@@ -186,20 +276,175 @@ def paren(source: FeSource, rng: random.Random) -> FeSource | None:
     data = source.encode()
     sig = significant(tokens(data))
     names = declared(sig)
-    atoms = [b for a, b, c in zip(sig, sig[1:], sig[2:])
-             if (b.kind == Kind.NUMBER or b.symbol in BOOLS or b.word in names)
-             and a.symbol in BEFORE_OPERAND
-             and (c.kind == Kind.NEWLINE or c.symbol in AFTER_OPERAND)]
+    atoms = operands(sig, lambda t: t.kind == Kind.NUMBER or t.symbol in BOOLS or t.word in names)
     if not atoms:
         return None
     t = rng.choice(atoms)
     return Edit(t.start, t.end, Op.LPAREN.encode() + t.text + Op.RPAREN.encode()).apply(data)
 
 
-# Returns a mutant of the source, or None when the source has no place for the mutation.
-MutationFn = Callable[[FeSource, random.Random], FeSource | None]
-MUTATIONS: dict[Mutation, MutationFn] = {Mutation.COMMENT: comment, Mutation.SPACE: space,
-                                         Mutation.PAREN: paren, Mutation.REFLOW: reflow}
+def named_after(sig: list[Token], keywords: frozenset[Keyword]) -> list[FeName]:
+    """Returns the words that come right after one of `keywords`, sorted."""
+    return sorted({w for a, b in zip(sig, sig[1:]) if a.symbol in keywords and (w := b.word)})
+
+
+def rename_word(data: bytes, old: FeName, new: FeName) -> FeSource:
+    """Returns `data` with every word `old` changed to `new`."""
+    out = bytearray()
+    last = 0
+    for t in tokens(data):
+        if t.word == old:
+            out += data[last:t.start] + new.encode()
+            last = t.end
+    return FeSource((out + data[last:]).decode())
+
+
+def rename(source: FeSource, rng: random.Random) -> FeSource | None:
+    """Returns `source` with one local renamed, at every place it appears, to a name that Fe and
+    Fe0 both allow for a local (task Tdf1kp, "Three families of mutation"). Returns None when the
+    program has no local, or when each such name already names a local, a parameter, a constant
+    or a field."""
+    data = source.encode()
+    sig = significant(tokens(data))
+    locals_ = named_after(sig, LOCAL_DECLARERS)
+    taken = declared(sig)
+    hideable = [n for n in named_after(sig, HIDEABLE_DECLARERS) if n[:1].islower()]
+    names = sorted(n for n in {*ODD_NAMES, *hideable} if n not in taken)
+    if not locals_ or not names:
+        return None
+    return rename_word(data, rng.choice(locals_), rng.choice(names))
+
+
+def type_name(source: FeSource, rng: random.Random) -> FeSource | None:
+    """Returns `source` with one local's name, at every place it appears, changed to a type
+    name. Returns None when the program has no local."""
+    data = source.encode()
+    locals_ = named_after(significant(tokens(data)), LOCAL_DECLARERS)
+    if not locals_:
+        return None
+    return rename_word(data, rng.choice(locals_), rng.choice(TYPE_NAMES))
+
+
+def chain(source: FeSource, rng: random.Random) -> FeSource | None:
+    """Returns `source` with ` < 1` after the right operand of a comparison, so that the `bool`
+    the comparison gives is ordered. Fe rejects that, because `bool` has no `Ord` (SPEC.md §3.2).
+    Returns None when no comparison has an atom on its right."""
+    data = source.encode()
+    sig = significant(tokens(data))
+    rights = [b for a, b, c in zip(sig, sig[1:], sig[2:])
+              if a.symbol in COMPARISONS and b.kind in (Kind.WORD, Kind.NUMBER)
+              and (ends_operand(c) or c.symbol == Op.LBRACE)]
+    if not rights:
+        return None
+    t = rng.choice(rights)
+    return Edit(t.end, t.end, b" < 1").apply(data)
+
+
+def statement_end(toks: list[Token], i: int) -> Token | None:
+    """Returns the line end that ends the statement holding `toks[i]`, or None when a bracket
+    closes before it."""
+    depth = 0
+    for u in toks[i + 1:]:
+        if u.kind == Kind.OPEN:
+            depth += 1
+        elif u.kind == Kind.CLOSE:
+            depth -= 1
+            if depth < 0:
+                return None
+        elif u.kind == Kind.NEWLINE and depth == 0:
+            return u
+    return None
+
+
+def const_cycle(source: FeSource, rng: random.Random) -> FeSource | None:
+    """Returns `source` with one constant's value replaced by the constant itself. Returns None
+    when the program has no constant."""
+    data = source.encode()
+    toks = [t for t in tokens(data) if t.kind != Kind.COMMENT]
+    edits = []
+    for i, t in enumerate(toks):
+        if t.symbol != Keyword.CONST:
+            continue
+        name = next(u for u in toks[i + 1:] if not u.kind.trivia)
+        j = next(k for k in range(i + 1, len(toks)) if toks[k].symbol == Op.ASSIGN)
+        if (end := statement_end(toks, j)) is not None:
+            edits.append(Edit(toks[j].end, end.start, b" " + name.text))
+    return rng.choice(edits).apply(data) if edits else None
+
+
+class UsesClause(NamedTuple):
+    """A `uses` clause, as indexes into a token list."""
+
+    # The `uses` token.
+    uses: int
+    # The `)` that closes the clause's list.
+    close: int
+
+
+def uses_clauses(toks: list[Token]) -> list[UsesClause]:
+    """Returns each `uses` clause of `toks`."""
+    out = []
+    for i, t in enumerate(toks):
+        if t.symbol != Keyword.USES:
+            continue
+        depth = 0
+        for k in range(i + 1, len(toks)):
+            if toks[k].kind == Kind.OPEN:
+                depth += 1
+            elif toks[k].kind == Kind.CLOSE:
+                depth -= 1
+                if depth == 0:
+                    out.append(UsesClause(i, k))
+                    break
+    return out
+
+
+def drop_mut(source: FeSource, rng: random.Random) -> FeSource | None:
+    """Returns `source` with one `mut` taken out of a `uses` list. Returns None when no `uses`
+    list has a `mut`."""
+    data = source.encode()
+    toks = list(tokens(data))
+    muts = [toks[k] for u in uses_clauses(toks) for k in range(u.uses, u.close)
+            if toks[k].symbol == Keyword.MUT and toks[k + 1].kind == Kind.SPACE]
+    if not muts:
+        return None
+    t = rng.choice(muts)
+    return Edit(t.start, ByteOffset(t.end + 1), b"").apply(data)
+
+
+def drop_uses(source: FeSource, rng: random.Random) -> FeSource | None:
+    """Returns `source` with one `uses` list taken out. Returns None when it has none."""
+    data = source.encode()
+    toks = list(tokens(data))
+    cuts = [Edit(toks[u.uses - 1 if toks[u.uses - 1].kind == Kind.SPACE else u.uses].start,
+                 toks[u.close].end, b"")
+            for u in uses_clauses(toks)]
+    return rng.choice(cuts).apply(data) if cuts else None
+
+
+def bool_for_int(source: FeSource, rng: random.Random) -> FeSource | None:
+    """Returns `source` with `true` in place of one integer literal that is an operand. Returns
+    None when it has none."""
+    data = source.encode()
+    atoms = operands(significant(tokens(data)), lambda t: t.kind == Kind.NUMBER)
+    if not atoms:
+        return None
+    t = rng.choice(atoms)
+    return Edit(t.start, t.end, Keyword.TRUE.encode()).apply(data)
+
+
+def unreachable(source: FeSource, rng: random.Random) -> FeSource | None:
+    """Returns `source` with a `let` statement right after a `return` statement, in the same
+    block (task Tdf1kp). Returns None when no `return` ends its line in its block."""
+    data = source.encode()
+    toks = list(tokens(data))
+    ends = [end for i, t in enumerate(toks)
+            if t.symbol == Keyword.RETURN and (end := statement_end(toks, i)) is not None]
+    if not ends:
+        return None
+    t = rng.choice(ends)
+    line = f"let {UNREACHABLE_LOCAL}: u256 = 0".encode()
+    return Edit(t.end, t.end, line + t.text).apply(data)
 
 
 def mutants(source: FeSource, rng: random.Random, count: int) -> list[Mutant]:
@@ -207,8 +452,8 @@ def mutants(source: FeSource, rng: random.Random, count: int) -> list[Mutant]:
     out = []
     for _ in range(count):
         mutation = rng.choice(list(Mutation))
-        if (mutant := MUTATIONS[mutation](source, rng)) is not None:
-            out.append(Mutant(mutation, mutant, Expect.SAME_CODE))
+        if (mutant := mutation.mutate(source, rng)) is not None:
+            out.append(Mutant(mutation, mutant))
     return out
 
 
@@ -231,6 +476,8 @@ class Agreement(Enum):
     ACCEPTED = auto()
     BOTH_REJECT = auto()
     KNOWN_NARROWING = auto()
+    # Both compilers accept a rule-breaking mutant, so its mutation missed the rule.
+    MISSED = auto()
 
 
 def finding(m: Mutant, original: Original, path: Path, known: set[DiagCode]) -> str | Agreement:
@@ -242,7 +489,9 @@ def finding(m: Mutant, original: Original, path: Path, known: set[DiagCode]) -> 
     if run.compiled():
         if fe is not None:
             return f"{rel}: Fe rejects it and Fe0 accepts it\n{fe.rstrip()}"
-        if m.expect == Expect.SAME_CODE and run.program().code != original.code:
+        if m.mutation.breaks_rule:
+            return Agreement.MISSED
+        if m.mutation.expect == Expect.SAME_CODE and run.program().code != original.code:
             return f"{rel}: Fe0 compiles it to other bytes than {original.path}"
         return Agreement.ACCEPTED
     if fe is not None:
@@ -283,7 +532,7 @@ def main() -> None:
     for old in OUT.glob("*.fe"):
         old.unlink()
     findings = []
-    both_reject: Counter[Mutation] = Counter()
+    agreements: Counter[tuple[Agreement, Mutation]] = Counter()
     checked = 0
     for original in originals(args.seed, args.n):
         rng = random.Random(f"{args.seed}:{original.path.stem}")
@@ -295,10 +544,15 @@ def main() -> None:
                 case str() as line:
                     print(line, flush=True)
                     findings.append(line)
-                case Agreement.BOTH_REJECT:
-                    both_reject[m.mutation] += 1
+                case Agreement() as agreement:
+                    agreements[agreement, m.mutation] += 1
     print(f"{checked} mutants: {len(findings)} findings")
-    print("both compilers reject: " + ", ".join(f"{m} {both_reject[m]}" for m in Mutation))
+    keep = [m for m in Mutation if not m.breaks_rule]
+    print("both compilers reject: "
+          + ", ".join(f"{m} {agreements[Agreement.BOTH_REJECT, m]}" for m in keep))
+    breaks = [m for m in Mutation if m.breaks_rule]
+    print("both compilers accept, so the rule was not broken: "
+          + ", ".join(f"{m} {agreements[Agreement.MISSED, m]}" for m in breaks))
     sys.exit(1 if findings else 0)
 
 

@@ -16,7 +16,7 @@ impl Display for Message {
 }
 
 // One message per error code in fe0/src/diag.fe.
-const MESSAGES: [Message; 55] = [
+const MESSAGES: [Message; 54] = [
     Message { code: L_UNEXPECTED_CHAR, text: "unexpected character" },
     Message { code: L_UNTERMINATED_STRING, text: "unterminated string" },
     Message { code: L_BAD_ESCAPE, text: "unknown escape in a string" },
@@ -31,7 +31,6 @@ const MESSAGES: [Message; 55] = [
     Message { code: P_EXPECTED_TYPE, text: "expected a type" },
     Message { code: P_EXPECTED_EXPR, text: "expected an expression" },
     Message { code: P_EXPECTED_END, text: "expected the end of a line" },
-    Message { code: P_CHAINED_COMPARISON, text: "comparisons cannot be chained" },
     Message { code: P_TOO_DEEP, text: "nested too deeply" },
     Message { code: P_FIELD_NOT_MUT, text: "a contract field must be mut" },
     Message { code: P_GENERIC_ARGS, text: "ambiguous `<` after a name" },

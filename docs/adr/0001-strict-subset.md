@@ -21,9 +21,9 @@ Where SPEC.md and the compiler disagree, the compiler wins and the spec is fixed
 confirmed by a probe are marked [V] in SPEC.md.
 
 SPEC.md §10 lists every stricter rule. Among them:
-- **Uppercase locals are rejected (`N017`).** Fe rejects a local only when it names a struct,
-  an enum or a variant of Fe's prelude. Matching that rule needs a table of those names in the
-  Checker, and the table made the Checker contract 891 bytes larger (Fe 26.6.0, `-O s`).
+- **Uppercase locals are rejected (`N017`).** Matching Fe's narrower rule (SPEC.md §5.2) needs
+  a table in the Checker of the names that Fe reads as patterns. That table made the Checker
+  contract 891 bytes larger (Fe 26.6.0, `-O s`).
   Uppercase parameters are accepted, as in Fe.
 
 In the cases below, a stricter rule would reject Fe programs, and following Fe costs the

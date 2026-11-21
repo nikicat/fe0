@@ -1,0 +1,17 @@
+// expect: N017 13:13
+// fe: accepts
+// A `let` local may not start with an uppercase letter (SPEC §5.2).
+// Fe accepts such a local when its name is no type or variant in scope, such as `Foo`.
+msg M {
+    #[selector = 1]
+    Get { x: u256 } -> u256,
+}
+
+contract C {
+    recv M {
+        Get { x } -> u256 {
+            let Foo: u256 = x
+            Foo
+        }
+    }
+}

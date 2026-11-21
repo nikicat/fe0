@@ -343,7 +343,7 @@ differs from the ABI that `fe build` writes.
   | Contract | Runtime bytes | Deploy gas |
   |---|---|---|
   | Lexer | 5,751 | 1.28M |
-  | Parser | 17,356 | 3.81M |
+  | Parser | 17,282 | 3.79M |
   | Checker | 20,101 | 4.40M |
   | Back | 17,216 | 3.78M |
   | Compiler | 1,653 | 0.44M |
@@ -401,7 +401,7 @@ the parser and the checker differ: they report the error in a field instead
 | Phase | Examples |
 |---|---|
 | Lexer | bad character, unterminated string, malformed integer |
-| Parser | expected token, end of statement, chained comparison, literal over 256 bits (`L004`) |
+| Parser | expected token, end of statement, `<` read as generic arguments, literal over 256 bits (`L004`) |
 | Names | unknown name, duplicate item, parameter named like a `uses` entry |
 | Types | mismatch, missing return path |
 | Effects | field not in `uses`, write without `mut`, unknown field |

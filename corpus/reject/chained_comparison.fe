@@ -1,5 +1,6 @@
-// expect: P007 4:11
-// Comparisons do not chain (SPEC §3.2).
+// expect: T001 5:7
+// A chain of comparisons reads from the left, so `a < b < c` compares a `bool` with `c`
+// (SPEC §3.2).
 fn f(_ a: u256, _ b: u256, _ c: u256) -> bool {
     a < b < c
 }

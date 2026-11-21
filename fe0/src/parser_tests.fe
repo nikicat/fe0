@@ -4,7 +4,6 @@ use ingot::diag::{
     DiagCode,
     L_INT_TOO_LARGE,
     L_RESERVED_WORD,
-    P_CHAINED_COMPARISON,
     P_EXPECTED_END,
     P_EXPECTED_EXPR,
     P_EXPECTED_IDENT,
@@ -615,6 +614,8 @@ fn binary_precedence() {
         "(|| (&& (!= (| (^ (& (<< (+ (* a b) c) d) e) f) g) h) i) j)",
     )
     tail_is("fn f() { a - b - c }", "(- (- a b) c)")
+    // Comparisons chain from the left, as in Fe (SPEC.md §3.2).
+    tail_is("fn f() { a < b == c != d }", "(!= (== (< a b) c) d)")
     tail_is("fn f() { a / (b % c) >> 2 }", "(>> (/ a (% b c)) 2)")
 }
 
@@ -990,8 +991,6 @@ fn errors() {
     assert!(
         parse_err("fn f() { let for = 1 }").code == L_RESERVED_WORD,
     )
-    // The error points at the offending token.
-    rejects("fn f() { a < b < c }", P_CHAINED_COMPARISON, 15)
 }
 
 #[test]

@@ -95,8 +95,10 @@ class Keyword(StrEnum):
     CONST = "const"
     MUT = "mut"
     FN = "fn"
+    MSG = "msg"
     INIT = "init"
     RETURN = "return"
+    USES = "uses"
     TRUE = "true"
     FALSE = "false"
 

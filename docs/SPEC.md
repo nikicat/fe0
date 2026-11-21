@@ -63,16 +63,16 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 - **Doc comments.** A comment that starts with `///`, including `////`, is a doc comment. It may
   come only before an item, a contract field, `init`, `recv`, an arm, a variant or a field of a
   variant or of an event. Only newlines and other comments may come between it and what it
-  documents, except a plain comment line right before a name (above). A doc comment may also stand at the end of the line where a contract field, `init`,
-  `recv`, an arm, a variant, a variant's field or an event's field ends. It then documents the
-  next of these. It may not stand at the end of the line where an item ends, because only a
-  newline or a plain comment may follow an item on its line (§3.1). It may also end the line of
-  the `{` that opens a `msg`, an event, a contract, a `recv` block or a variant's fields. A
-  variant's doc comment may come before or after its selector, but not on the selector's line.
-  In the same way, an event's doc comment may come before or after its `#[event]`, and the doc
-  comment of an event's field may come before or after its `#[indexed]`. A doc comment must come
-  before what it documents, so one right before `}` or at the end of the file is a syntax error.
-  Fe allows doc comments in the same places:
+  documents, except a plain comment line right before a name (above). A doc comment may also stand
+  at the end of the line where a contract field, `init`, `recv`, an arm, a variant, a variant's
+  field or an event's field ends. It then documents the next of these. It may not stand at the end
+  of the line where an item ends, because only a newline or a plain comment may follow an item on
+  its line (§3.1). It may also end the line of the `{` that opens a `msg`, an event, a contract, a
+  `recv` block or a variant's fields. A variant's doc comment may come before or after its
+  selector, but not on the selector's line. In the same way, an event's doc comment may come
+  before or after its `#[event]`, and the doc comment of an event's field may come before or after
+  its `#[indexed]`. A doc comment must come before what it documents, so one right before `}` or
+  at the end of the file is a syntax error. Fe allows doc comments in the same places:
   - Fe accepts each of these places **[✓]**. The program `corpus/doc_comments.fe` has one of
     each.
   - Fe rejects a doc comment in a block (`1-0001`) **[✓]**. The probe is
@@ -207,7 +207,7 @@ TERM        = NL | (* before "}" or at end of input *) ;   (* see §3.4 *)
 expr        = or ;
 or          = and { "||" and } ;
 and         = cmp { "&&" cmp } ;
-cmp         = bitor [ CMPOP bitor ] ;             (* comparisons don't chain *)
+cmp         = bitor { CMPOP bitor } ;
 bitor       = bitxor { "|" bitxor } ;
 bitxor      = bitand { "^" bitand } ;
 bitand      = shift { "&" shift } ;
@@ -245,13 +245,15 @@ tightest:
 `||` < `&&` < comparisons < `|` < `^` < `&` < `<<` `>>` < `+` `-` < `*` `/` `%` < unary < call
 and index
 
-- All binary operators associate to the left.
+- All binary operators associate to the left, comparisons included, as in Fe. So `a < b == true`
+  is `(a < b) == true`. The types must fit at each step: `a < b < c` compares the `bool` `a < b`
+  with `c`. Fe rejects that with `8-0016`, because `bool` has no `Ord` **[✓]**, and Fe0 rejects it
+  with `T001`. Both accept `a < b == true` and `a == b == true` **[✓]**. The probes are
+  `corpus/reject/chained_comparison.fe` and `corpus/chained_comparisons.fe`.
 - Unary `+` takes a `u256` and gives it back unchanged. Fe rejects it on `bool` and `Address`
   with `8-0052` **[✓]**. The probes are `corpus/unary_plus.fe`, `corpus/reject/plus_bool.fe`
   and `corpus/reject/plus_address.fe`. Fe has no unary `-` on `u256`: it rejects `-x` with
   `8-0016`, because `u256` has no `Neg` **[✓]**. The probe is `corpus/reject/minus_u256.fe`.
-- Comparisons do not chain: `a < b < c` is rejected. Fe rejects it too **[✓]**, with `8-0016`,
-  because `bool` has no `Ord`.
 - **Generic arguments.** After a name, Fe reads `<` as the start of generic arguments when
   a comma-separated list of arguments follows and `>` closes it. So it reads `x < y >> z` as
   `x<y>` followed by `> z`, and rejects it with `2-0011` **[✓]**. An argument may be a name,
@@ -426,10 +428,11 @@ ABI-encoded string. A message of any length is encoded whole **[✓]**. The prob
      event as a pattern with too few fields (`8-0004`) **[✓]**. The probes are the
      `corpus/reject/shadow_item_*.fe` programs.
    - The name of a local may not start with an uppercase letter (`N017`).
-   - Fe's rule for locals is narrower. Fe reads an uppercase local or bind that names a type or
-     a variant in scope, such as `let Some` or `x: Option`, as a pattern, and rejects it
-     **[✓]**. It accepts any other uppercase local, such as `let Foo` **[✓]**. Fe0 keeps the
-     stricter rule for locals ([ADR 0001](adr/0001-strict-subset.md)).
+   - Fe rejects fewer uppercase locals than Fe0. Fe reads an uppercase local or bind that names a
+     type or a variant in scope, such as `let Some` or `x: Option`, as a pattern, and rejects it
+     **[✓]**. It accepts any other uppercase local, such as `let Foo` **[✓]**. The probe is
+     `corpus/reject/uppercase_let_not_a_type.fe`. Fe0 uses the stricter rule for locals
+     ([ADR 0001](adr/0001-strict-subset.md)).
    - Fe accepts every uppercase parameter, even `_ Option: u256` **[✓]**, and so does Fe0. The
      probe is `corpus/uppercase_params.fe`.
 3. **Constants** are evaluated at compile time with the §4 semantics. Overflow is a compile-time

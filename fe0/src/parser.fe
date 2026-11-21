@@ -6,7 +6,6 @@ use ingot::diag::{
     Diag,
     DiagCode,
     diag,
-    P_CHAINED_COMPARISON,
     P_EXPECTED_END,
     P_EXPECTED_EXPR,
     P_EXPECTED_IDENT,
@@ -83,9 +82,6 @@ pub const NOT_BINARY: Power = Power { level: 0 }
 // The power of `||`, the loosest binary operator.
 const LOOSEST: Power = Power { level: 1 }
 
-// The power of the comparisons, which don't chain (SPEC.md §3.2).
-const CMP_POWER: Power = Power { level: 3 }
-
 // Returns the binding power of a token, or `NOT_BINARY`.
 pub fn binding_power(_ t: Tok) -> Power {
     if t == O_OROR {
@@ -95,7 +91,7 @@ pub fn binding_power(_ t: Tok) -> Power {
         return Power { level: 2 }
     }
     if t.is_comparison() {
-        return CMP_POWER
+        return Power { level: 3 }
     }
     if t == O_PIPE {
         return Power { level: 4 }
@@ -797,9 +793,6 @@ impl Parser {
             let t = self.bump()
             let rhs = self.binary(power.tighter())?
             lhs = self.ast.add_node(Node::new_binary(t.span.start, op: t.kind, lhs, rhs))
-            if power == CMP_POWER && binding_power(self.peek()) == CMP_POWER {
-                return Result::Err(self.err(P_CHAINED_COMPARISON))
-            }
         }
         self.leave()
         Result::Ok(lhs)

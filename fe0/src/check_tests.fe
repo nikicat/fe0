@@ -95,6 +95,15 @@ fn types_of_operators() {
         43,
     )
     rejects("fn f(_ a: u256) -> bool { a == true }", T_MISMATCH, 31)
+    accepts("fn f(_ a: u256, _ b: u256) -> bool { a < b == true }")
+    accepts(
+        "fn f(_ a: u256, _ b: u256) -> bool { a == b != (b == a) }",
+    )
+    rejects(
+        "fn f(_ a: u256, _ b: u256, _ c: u256) -> bool { a < b < c }",
+        T_MISMATCH,
+        50,
+    )
     rejects("fn f(_ a: u256) -> bool { !a }", T_MISMATCH, 27)
     rejects("fn f(_ b: bool) -> bool { ~b }", T_MISMATCH, 27)
     rejects("fn f(_ b: bool) -> bool { +b }", T_MISMATCH, 27)

@@ -1,0 +1,23 @@
+// Comparisons chain from the left, as in Fe (SPEC §3.2).
+msg ChainMsg {
+    #[selector = 1]
+    Below { a: u256, b: u256 } -> bool,
+    #[selector = 2]
+    Equal { a: u256, b: u256 } -> bool,
+    #[selector = 3]
+    OnePairEqual { a: u256, b: u256, c: u256 } -> bool,
+}
+
+contract Chains {
+    recv ChainMsg {
+        Below { a, b } -> bool {
+            a < b == true
+        }
+        Equal { a, b } -> bool {
+            a == b == true
+        }
+        OnePairEqual { a, b, c } -> bool {
+            a == b != (b == c)
+        }
+    }
+}

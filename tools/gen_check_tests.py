@@ -165,6 +165,10 @@ TestName("types_of_operators"): [
     err("fn f(_ a: u256) -> bool { |a && true }", "T_MISMATCH"),
     err("fn f(_ a: Address, _ b: Address) -> bool { |a < b }", "T_MISMATCH"),
     err("fn f(_ a: u256) -> bool { a == |true }", "T_MISMATCH"),
+    # A chain of comparisons reads from the left, so its types must fit (SPEC.md §3.2).
+    ok("fn f(_ a: u256, _ b: u256) -> bool { a < b == true }"),
+    ok("fn f(_ a: u256, _ b: u256) -> bool { a == b != (b == a) }"),
+    err("fn f(_ a: u256, _ b: u256, _ c: u256) -> bool { a |< b < c }", "T_MISMATCH"),
     err("fn f(_ a: u256) -> bool { !|a }", "T_MISMATCH"),
     err("fn f(_ b: bool) -> bool { ~|b }", "T_MISMATCH"),
     err("fn f(_ b: bool) -> bool { +|b }", "T_MISMATCH"),
