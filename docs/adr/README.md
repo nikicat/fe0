@@ -43,3 +43,4 @@ To add one, copy the shape of an existing record and take the next number. When 
 | [0028](0028-one-transaction-deploy.md) | Deploy the five contracts in one transaction through Multicall3 and CreateX | Nov 22 | accepted |
 | [0029](0029-levels-not-in-ci.md) | CI does not run `node_check.py --levels` | Nov 22 | accepted |
 | [0030](0030-mutations-on-text.md) | Mutations rewrite the finished program text | Nov 21 | accepted |
+| [0031](0031-deployment-registry.md) | A registry of programs deployed through any Compiler | Nov 22 | proposed |
