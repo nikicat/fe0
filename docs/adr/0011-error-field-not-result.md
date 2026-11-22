@@ -15,6 +15,12 @@ whatever was built before it.
 Code generation returns `Result<Diag, DeployCode>`. It has no partial data to keep on error,
 and a `Result` cannot hold code and an error at once.
 
+Inside the lexer, the parser and the checker, a function that can fail returns
+`Result<Diag, T>`, or `Result<Diag, ()>` when it has no value. Callers pass the error on with
+`?`. These functions use `Result` itself, not a result type of their own, because a `?` after
+each call is the shortest way to stop at the first error. Only the entry points report the
+error in a field.
+
 ## Alternatives
 The probes in `spike-sizes/` measure these on Fe 26.6.0 at `-O s`.
 - **`parse() -> Result<Diag, Ast>`:** adds 733 to 845 bytes to ParseProbe, and about 2,600

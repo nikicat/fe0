@@ -52,3 +52,7 @@ Then with tests that call Fe0's in-EVM compile:
 
 - 70 reject tests take 142 s on the EVM backend and 4.7 s on `--backend native`.
 - `fe test --grouped` does not help: 98 s against 101 s.
+- A batch ingot can depend on `fe0` by path (`spike-deps/user`), and a program fits in a
+  string literal: a one-off probe passed a 32 KB `DynString` literal to a function, and
+  `fe test -O 0` built and ran it in about 0.1 s (Fe 26.5.1). The largest corpus program,
+  `corpus/amm.fe`, is about 8 KB.

@@ -7,7 +7,8 @@
 Fe has recursive types only through raw `*T`, which needs `unsafe`. A tree of boxed nodes is
 therefore not an option. `MemVec` growth is linear on the EVM (`spike-limits/`): 851–902 gas
 per item across three interleaved vectors on Fe 26.5.x, so about 1M gas for the AST of a 2 KB
-program.
+program. On Fe master `d217a51bf`, growth stays linear at 237 gas per pushed byte for 1k, 4k
+and 16k items.
 
 ## Decision
 Nodes live in flat `MemVec`s and refer to each other by index, with index 0 meaning "none".

@@ -34,6 +34,13 @@ master removes nothing before we move to a release that has it.
 - An attribute must sit on its own line (`#[test]` then a newline, then `fn`).
 - An argument must be labelled unless its parameter is declared as `_ name`.
 - A unit `recv` arm needs `Name {}` before its body.
+- **`fe test` enforces neither EIP-170 nor EIP-3860** (Fe master `d217a51bf`). Runtimes of
+  24,577 and 49,152 bytes deploy, and so does 49,153 bytes of initcode. Local `anvil`
+  (Foundry 1.8.4, hardfork BPO1) deploys a 24,576-byte runtime and rejects 24,577 bytes. A
+  Fe-built `.bin` behaves the same there: the spec Counter returns `get() = 2` after two
+  increments, and its runtime is `fe build`'s `.runtime.bin` (99 bytes). So the differential
+  tests check both limits on Fe0's builds (`fits_chain` in `fe0/src/difftest.fe`), and
+  `tools/chain_check.py` deploys Fe0's own contracts on anvil.
 - **Compile time:** `fe test -O 0` is about 3× faster than `-O 1` (Fe 26.5.1). Use `-O 0`
   while iterating. CI runs `fe test` in `fe0/` at the default level. That is the level of the
   reference build of the subset rule (SPEC.md). The corpus and generated-programs steps run

@@ -38,6 +38,12 @@ the same behaviour.
      at most 16 live words.
   3. A peephole pass in the assembler. For example, when a store is followed by a load of the
      same slot, the pass keeps the word on the stack with a `DUP` and drops the load.
+- **Two more steps wait until gas matters:**
+  - Reuse frame slots. Every local has a fixed slot assigned by the checker, with no slot
+    reuse, so a frame holds all of a function's locals (`ponytail: frame size = all locals;
+    reuse slots if gas matters`).
+  - A binary search over sorted selectors in the dispatcher, as the official compiler does.
+    The arms are a linear chain of `EQ`s.
 
 ## Alternatives
 - **Locals on the stack everywhere, as Fe does:** the stack-scheduling work that

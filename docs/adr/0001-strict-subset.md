@@ -59,7 +59,7 @@ argotorg/fe#1987). A `Ctx` effect may be written `mut Ctx`, as in Fe.
   the main evidence that the compiler is right.
 
 ## Consequences
-- Each reject test also runs `fe check`, which must reject the file too (DESIGN.md §10).
+- Each reject test also runs `fe check`, which must reject the file too (`tools/embed.py`).
 - In Fe a contract field without `mut` is a code-backed immutable, not storage, so Fe0 v1
   requires `mut` on every field.
 - Rejecting a field listed twice in `uses` costs the Checker contract 58 bytes (Fe 26.7.0,

@@ -80,7 +80,7 @@ source ─▶ Lexer ─▶ Parser ─▶ Checker ─▶ Back (code generation, a
   programs that `tools/gen.py` writes. That directory is not in git.
 - `tools/` holds the test harnesses and the deployment script.
 
-DESIGN.md §1 lists every file. DESIGN.md §8 gives the size and gas of each contract.
+DESIGN.md §1 lists every top-level directory, and §8 gives the size and gas of each contract.
 
 ## Build and test
 

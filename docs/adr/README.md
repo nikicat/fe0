@@ -36,3 +36,10 @@ To add one, copy the shape of an existing record and take the next number. When 
 | [0021](0021-frames-gas-and-depth.md) | Keep frames in memory for now; reduce their cost in steps | Nov 12 | accepted |
 | [0022](0022-move-to-26-7-0.md) | Move to Fe 26.7.0 | Nov 19 | accepted |
 | [0023](0023-frame-pointer-on-the-stack.md) | Keep a function's frame pointer on the stack | Nov 22 | accepted |
+| [0024](0024-newline-span-carries-comment-line.md) | A newline token's span carries the last plain comment line | Nov 20 | accepted |
+| [0025](0025-constants-in-passes.md) | Constants are evaluated in passes, not on first use | Nov 20 | accepted |
+| [0026](0026-two-byte-jump-labels.md) | Jumps always push 2-byte labels, assembled in one pass | Oct 28 | accepted |
+| [0027](0027-phase-contracts-trust-input.md) | Phase contracts trust their input | Nov 14 | accepted |
+| [0028](0028-one-transaction-deploy.md) | Deploy the five contracts in one transaction through Multicall3 and CreateX | Nov 22 | accepted |
+| [0029](0029-levels-not-in-ci.md) | CI does not run `node_check.py --levels` | Nov 22 | accepted |
+| [0030](0030-mutations-on-text.md) | Mutations rewrite the finished program text | Nov 21 | accepted |

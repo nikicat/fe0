@@ -4,7 +4,29 @@
 The programs are corpus/*.fe and the generated programs of the seeds. The same seed always gives
 the same mutants. Each mutant is written to out/mutate/, so a finding can be read there. The
 tool prints each finding and a summary, and exits with 1 when it finds one. DESIGN.md §11a
-says what counts as a finding and which families of mutation there are.
+says why the tool exists.
+
+Each mutation belongs to one of three families, which sets what the tool expects of its mutants:
+- Meaning-preserving: whitespace, comments, parentheses, a local's name, or unreachable code.
+  When both compilers accept such a mutant, Fe0 must compile it to the original's bytecode.
+  Unreachable code may change the bytecode, so for its mutants only the verdicts are checked.
+- Rule-breaking: each mutant breaks one rule, such as a local named after a type, or an effect
+  that `uses` does not list. When both compilers accept it, the mutation missed its rule, and
+  the summary counts that.
+- Narrowing: each plants the construct of one probe, such as a second contract. When Fe accepts
+  the mutant, Fe0 must reject it with that probe's code, and no other probe's code excuses it.
+  When both reject it, the construct did not fit the program.
+
+For every family, these mutants are findings:
+- Fe rejects and Fe0 accepts: a subset bug (ADR 0001).
+- Fe accepts, and Fe0 fails without an error line, as when it crashes.
+- Fe accepts and Fe0 rejects with a code that no probe has: a narrowing that SPEC.md does not
+  state. One probe excuses its whole code, even for a case that the probe does not show.
+A mutant that both compilers reject is not a finding. The summary counts such mutants for each
+mutation that is not rule-breaking, so a mutation that mostly makes invalid programs shows up.
+
+The tool checks one mutant at a time, because the dev container's memory is small. `fe check`
+takes about 0.5 s per mutant and the native CLI about 5 ms (Fe 26.7.0).
 
 usage: mutate.py [--seed N] [-n N] [--per-program N]
 """
@@ -133,8 +155,7 @@ def reflow(text: Text, rng: random.Random) -> FeSource:
 
 
 class Expect(Enum):
-    """What the tool expects of a mutant, by its mutation's family (DESIGN.md §11a, "Three
-    families of mutation")."""
+    """What the tool expects of a mutant, by its mutation's family (the module docstring)."""
 
     SAME_CODE = "same code"
     ANY_CODE = "any code"
@@ -143,8 +164,7 @@ class Expect(Enum):
 
 
 class Mutation(StrEnum):
-    """A meaning-preserving, rule-breaking or narrowing mutation (DESIGN.md §11a, "Three
-    families of mutation")."""
+    """A meaning-preserving, rule-breaking or narrowing mutation (the module docstring)."""
 
     COMMENT = "comment"
     SPACE = "space"
@@ -187,8 +207,8 @@ class Mutation(StrEnum):
 
     @property
     def probe(self) -> Path | None:
-        """The reject program whose construct a narrowing mutation plants (DESIGN.md §11a). None
-        for a mutation of another family."""
+        """The reject program whose construct a narrowing mutation plants. None for a mutation
+        of another family."""
         match self:
             case Mutation.UPPER_LOCAL:
                 return embed.REJECTS / "uppercase_let_not_a_type.fe"
@@ -211,8 +231,7 @@ class Mutation(StrEnum):
 
     @property
     def breaks_rule(self) -> bool:
-        """True if the mutation is rule-breaking (DESIGN.md §11a, "Three families of mutation").
-        False otherwise."""
+        """True if the mutation is rule-breaking (the module docstring). False otherwise."""
         return self.expect == Expect.REJECT
 
     def mutate(self, text: Text, rng: random.Random) -> FeSource | None:
@@ -365,7 +384,7 @@ def operands(sig: list[Token], atom: Callable[[Token], bool]) -> list[Token]:
 
 def paren(text: Text) -> list[Edit]:
     """Returns the edits that put parentheses around one operand that is an integer literal,
-    `true`, `false` or a name the program declares (DESIGN.md §11a). Empty when there is no such
+    `true`, `false` or a name the program declares (ADR 0030). Empty when there is no such
     operand."""
     names = declared(text.sig)
     atoms = operands(text.sig,
@@ -393,9 +412,8 @@ def rename_local(text: Text, names: Sequence[FeName]) -> list[list[Edit]]:
 
 def rename(text: Text) -> list[list[Edit]]:
     """Returns the changes that each rename one local, everywhere it appears, to a name that Fe
-    and Fe0 both allow for a local (DESIGN.md §11a, "Three families of mutation"). Empty when
-    the program has no local, or when each such name already names a local, a parameter, a
-    constant or a field."""
+    and Fe0 both allow for a local. Empty when the program has no local, or when each such name
+    already names a local, a parameter, a constant or a field."""
     taken = declared(text.sig)
     hideable = [n for n in named_after(text.sig, HIDEABLE_DECLARERS) if n[:1].islower()]
     return rename_local(text, sorted(n for n in {*ODD_NAMES, *hideable} if n not in taken))
@@ -561,9 +579,14 @@ def added_by_gen(brackets: Brackets, pair: BracketPair) -> bool:
 
 
 def unparen(text: Text) -> list[list[Edit]]:
-    """Returns, for each pair of the parentheses that gen.py adds, the edits that drop it
-    (DESIGN.md §11a, "`unparen` drops only parentheses of the two shapes that gen.py adds").
-    Empty when `text` has no such pair."""
+    """Returns, for each pair of the parentheses that gen.py adds, the edits that drop it.
+    Empty when `text` has no such pair.
+
+    gen.py adds two shapes, so that Fe reads no generic arguments or record literal: the left
+    operand of a `<`, as in `(a) < b`, and a block that starts a line, as in `({ x })`
+    (`E.may_take_generics` and `E.may_read_as_record` in gen.py). Without them, Fe rejects the
+    program only when it reads one of those, so most of these mutants stay valid and keep the
+    original's bytecode."""
     brackets = Brackets(text.sig)
     return [[Edit.replacing(brackets.toks[i], b"") for i in (p.open, p.close)]
             for p in brackets if added_by_gen(brackets, p)]
@@ -657,7 +680,7 @@ def mutants(source: FeSource, rng: random.Random, count: int) -> list[Mutant]:
 
 
 class Probe(NamedTuple):
-    """A reject program that shows a narrowing (DESIGN.md §11a)."""
+    """A reject program that shows a narrowing (SPEC.md §8)."""
 
     # The program's path, relative to the repo root.
     path: Path
@@ -665,7 +688,7 @@ class Probe(NamedTuple):
 
 
 class Narrowings(NamedTuple):
-    """The narrowings that the reject programs show (DESIGN.md §11a)."""
+    """The narrowings that the reject programs show (SPEC.md §8)."""
 
     # The codes of the probes.
     known: frozenset[DiagCode]
@@ -706,7 +729,7 @@ class Agreement(Enum):
 
 
 class Finding(NamedTuple):
-    """A mutant that DESIGN.md §11a counts as a finding."""
+    """A mutant that the module docstring counts as a finding."""
 
     # The mutant's path, relative to the repo root.
     path: Path
@@ -719,7 +742,7 @@ class Finding(NamedTuple):
 def classify(m: Mutant, original: Original, run: cli_check.Run, fe: str | None,
              narrowings: Narrowings) -> Finding | Agreement:
     """Classifies the mutant by what Fe0 did with it (`run`) and Fe's rejection of it (`fe`,
-    None when Fe accepts it). Returns a finding as DESIGN.md §11a counts one, or how the
+    None when Fe accepts it). Returns a finding as the module docstring counts one, or how the
     compilers agree when there is none."""
     probe = narrowings.planted.get(m.mutation)
     if run.compiled():

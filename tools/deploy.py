@@ -4,9 +4,10 @@
 It deploys only a release (fe0-chain/README.md, "Releases"), so it errors unless HEAD has the
 release's tag and the working tree has no changes outside deployments/.
 It builds fe0-chain at `-O s`, then deploys the four phase contracts and Compiler in one
-transaction, so either all five are created or none is (DESIGN.md §8, "Deployment"). The
-user approves each transaction in their browser wallet through browser-web3-signer, so no
-private key is in the repo or the shell. Then the demo:
+transaction, so either all five are created or none is
+(docs/adr/0028-one-transaction-deploy.md). The user approves each transaction in their browser
+wallet through browser-web3-signer, so no private key is in the repo or the shell. Then the
+demo:
 
 - calls `version()`, which must return the release's version;
 - compiles corpus/counter.fe with `compile(bytes)` by `eth_call`, which costs nothing;
@@ -82,7 +83,7 @@ CREATEX_ABI: ABI = [{
     "outputs": [{"name": "newContract", "type": "address"}]}]
 # CreateX's `_guard` mixes neither the sender nor the chain id into this salt, because its
 # first 20 bytes are zero and its 21st byte is 0x00. So each contract's address depends only
-# on its initcode (DESIGN.md §8, "Deployment").
+# on its initcode (docs/adr/0028-one-transaction-deploy.md).
 SALT: Hash32 = Hash32(bytes(32))
 
 
@@ -113,7 +114,7 @@ class Call3(NamedTuple):
 
 def deployment_data(initcodes: Iterable[Initcode]) -> HexBytes:
     """Returns the data of the call of MULTICALL3 that creates a contract from each of
-    `initcodes` (DESIGN.md §8, "Deployment")."""
+    `initcodes` (docs/adr/0028-one-transaction-deploy.md)."""
     w3 = Web3()
     createx = w3.eth.contract(CREATEX, abi=CREATEX_ABI)
     calls = [Call3(target=CREATEX, allow_failure=False,
@@ -125,7 +126,7 @@ def deployment_data(initcodes: Iterable[Initcode]) -> HexBytes:
 
 class Plan(NamedTuple):
     """The contracts of a build as the deployment transaction creates them, with addresses known
-    before it is sent (DESIGN.md §8, "Deployment")."""
+    before it is sent (docs/adr/0028-one-transaction-deploy.md)."""
 
     initcode: dict[Contract, Initcode]
     addresses: dict[Contract, ChecksumAddress]
@@ -256,7 +257,7 @@ class DeploymentFile(TypedDict):
 class DeploymentRecord(NamedTuple):
     """A release of fe0-chain deployed on one chain, as its file records it. The file never
     records a partial deployment, because the five contracts are created in one transaction
-    (DESIGN.md §8, "Deployment")."""
+    (docs/adr/0028-one-transaction-deploy.md)."""
 
     release: Release
     addresses: dict[Contract, ChecksumAddress]
@@ -326,10 +327,10 @@ class Deployment:
 
     def deploy_all(self, sender: Sender) -> ChecksumAddress:
         """Deploys each contract that has no code at its address yet, in one transaction that
-        creates all of them or none (DESIGN.md §8, "Deployment"). Records every address in the
-        deployment's file, and returns Compiler's address. Errors as `Sender.send` does, or with
-        RuntimeError when the transaction leaves a contract without code, or as
-        `require_deployers` does."""
+        creates all of them or none (docs/adr/0028-one-transaction-deploy.md). Records every
+        address in the deployment's file, and returns Compiler's address. Errors as
+        `Sender.send` does, or with RuntimeError when the transaction leaves a contract without
+        code, or as `require_deployers` does."""
         require_deployers(sender.w3)
         missing = self.without_code(sender.w3, self.plan.addresses)
         for c, address in self.plan.addresses.items():

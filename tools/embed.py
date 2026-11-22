@@ -36,6 +36,10 @@ The header gives the error code, then the line and column where the error points
 from 1, and the column counts bytes. Another header line, `// fe: accepts`, marks a rule that
 Fe0 adds on top of Fe, so the official compiler must accept the program (SPEC.md §8).
 
+A program that Fe rejects would fail its whole batch, so the tool first runs fe check on each
+program alone, in parallel, at about 0.3 s each (Fe 26.7.0). It leaves out and reports the
+programs that fe check rejects.
+
 With --no-run, fe check still runs on every program.
 """
 import argparse
