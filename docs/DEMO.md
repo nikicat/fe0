@@ -6,17 +6,17 @@ Compiler calls them in turn (DESIGN.md §8). `tools/deploy.py` deployed them, an
 
 | Contract | Address |
 |---|---|
-| Compiler | [`0x6743f90Eb910D670d681635947fD8A63B3397C7B`](https://arbiscan.io/address/0x6743f90Eb910D670d681635947fD8A63B3397C7B) |
-| Lexer | [`0xE81863dbaa6Cc6649F9c8B43a19B76cc8D6B1aC1`](https://arbiscan.io/address/0xE81863dbaa6Cc6649F9c8B43a19B76cc8D6B1aC1) |
-| Parser | [`0xFf3eeBe9F5deAF46610205Cde6cC5A5132D0A030`](https://arbiscan.io/address/0xFf3eeBe9F5deAF46610205Cde6cC5A5132D0A030) |
-| Checker | [`0x6427ceD82919812daF51172E16cc5d1e5705B254`](https://arbiscan.io/address/0x6427ceD82919812daF51172E16cc5d1e5705B254) |
-| Back | [`0xF15cEFE0E5890Dc67DD075cc357a1573810C3F10`](https://arbiscan.io/address/0xF15cEFE0E5890Dc67DD075cc357a1573810C3F10) |
+| Compiler | [`0xD7131e490e0194fb306dfE93dfb686081FBCB0b4`](https://arbiscan.io/address/0xD7131e490e0194fb306dfE93dfb686081FBCB0b4) |
+| Lexer | [`0xD98A2b13cE4820A4F82fAa17b92066507B353FA6`](https://arbiscan.io/address/0xD98A2b13cE4820A4F82fAa17b92066507B353FA6) |
+| Parser | [`0x3568d59585B96366ee9F519E3Fef57f71E7b22A6`](https://arbiscan.io/address/0x3568d59585B96366ee9F519E3Fef57f71E7b22A6) |
+| Checker | [`0x6459F8eCA5796E33e9b0ECC76423Ed2fd0e86dcb`](https://arbiscan.io/address/0x6459F8eCA5796E33e9b0ECC76423Ed2fd0e86dcb) |
+| Back | [`0xB7d731a2ACD18A2FeAB48963A9C3A41fD080Db57`](https://arbiscan.io/address/0xB7d731a2ACD18A2FeAB48963A9C3A41fD080Db57) |
 
 `fe0-chain/README.md` describes Compiler's interface, its errors and its releases. This call
 prints the version of the release that Compiler was built from:
 
 ```sh
-cast call --rpc-url https://arb1.arbitrum.io/rpc 0x6743f90Eb910D670d681635947fD8A63B3397C7B \
+cast call --rpc-url https://arb1.arbitrum.io/rpc 0xD7131e490e0194fb306dfE93dfb686081FBCB0b4 \
   "version()(string)"
 # "0.1.0"
 ```
@@ -34,7 +34,7 @@ The output is the same as the native CLI's (`out/cli/fe0_cli < corpus/counter.fe
 byte. Without our tools, Foundry's `cast` does the same:
 
 ```sh
-cast call --rpc-url https://arb1.arbitrum.io/rpc 0x6743f90Eb910D670d681635947fD8A63B3397C7B \
+cast call --rpc-url https://arb1.arbitrum.io/rpc 0xD7131e490e0194fb306dfE93dfb686081FBCB0b4 \
   "compile(bytes)(bytes)" "$(cast from-utf8 "$(cat corpus/counter.fe)")"
 ```
 
@@ -56,14 +56,14 @@ line 5, column 5.
 `deploy(bytes src, bytes args)` compiles the source and deploys it with the constructor
 arguments `args`. The demo deployed the counter with start value 2:
 
-- the transaction: [`0xdb6f7b7e…`](https://arbiscan.io/tx/0xdb6f7b7e76451807757c88886e5c37462a7633a5309d63efaa474379a8e16044),
-  2,125,480 gas;
-- the new contract: [`0xd34823a55Cae65c980e3535a992e2c23505b858F`](https://arbiscan.io/address/0xd34823a55Cae65c980e3535a992e2c23505b858F).
+- the transaction: [`0x3326fcee…`](https://arbiscan.io/tx/0x3326fceef46210efd34f7641e05949a16c3808ca377f3129cbd12c348fd7e626),
+  2,103,265 gas;
+- the new contract: [`0x3c673F8AC1120f54443c4DfdEA569FDf37B2EBE0`](https://arbiscan.io/address/0x3c673F8AC1120f54443c4DfdEA569FDf37B2EBE0).
 
 Its `get()` returns 2:
 
 ```sh
-cast call --rpc-url https://arb1.arbitrum.io/rpc 0xd34823a55Cae65c980e3535a992e2c23505b858F \
+cast call --rpc-url https://arb1.arbitrum.io/rpc 0x3c673F8AC1120f54443c4DfdEA569FDf37B2EBE0 \
   "get()(uint256)"
 ```
 
@@ -73,5 +73,5 @@ cast call --rpc-url https://arb1.arbitrum.io/rpc 0xd34823a55Cae65c980e3535a992e2
 there. Without `--rehearse`, it deploys to Arbitrum One, and only from a release: a commit with
 the tag `v<version>` (`fe0-chain/README.md`). Each transaction opens an approval page in the
 browser, and the user signs it in their own wallet through `browser-web3-signer`, so no private
-key is needed. The five deployments and the demo cost about 18M gas, about 0.0004 ETH at
+key is needed. The five deployments and the demo cost about 16M gas, about 0.0003 ETH at
 Arbitrum's 0.02 gwei.
