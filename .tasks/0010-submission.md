@@ -25,19 +25,19 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
 
 ## State
 - Code is frozen. Release `v0.1.0` is the tag on e149684. tools/deploy.py deployed it to
-  Arbitrum One on Nov 22, and its demo passed: `version()` returns "0.1.0", and counter.fe
-  deployed through Compiler returns 2. DEMO.md and `deployments/42161.json` have the new
-  addresses, and DEMO.md's commands were run against them.
-- README.md is written and reviewed. Its gas table and ADR 0021's were remeasured on
-  Fe 26.7.0 (whole corpus 1.43).
-- The starter's SUBMISSION.md is gone, but the registration email lists what a submission must
-  include: a public GitHub repository, the exact commit, an OSI license, the Fe version, tests,
-  build instructions, a README, a demo and disclosures. The README covers all of them but the
-  commit, which goes in the form.
+  Arbitrum One on Nov 22, and the demo that deploy.py runs passed: `version()` returns "0.1.0",
+  and the counter.fe it deployed through Compiler returns 2 from `get()`. DEMO.md and
+  `deployments/42161.json` have the release's addresses, and DEMO.md's commands were run against
+  them.
+- README.md is written and reviewed. Its gas table and ADR 0021's were measured on Fe 26.7.0:
+  over the whole corpus, Fe0's gas is 1.43 times that of Fe's build at `-O 1`.
+- The registration email lists what a submission must include: a public GitHub repository, the
+  exact commit, an OSI license, the Fe version, tests, build instructions, a README, a demo and
+  disclosures. The README covers all of them but the commit, which goes in the form.
 
 ## Next
 - A fix from now on needs a new release (v0.1.1) and a new deploy.
 - Nov 24: push the branch and the tag, make the repo public (Apache-2.0 LICENSE is in place),
-  and submit through the link in `docs/registration-confirmation.txt`. The form takes the SHA
-  of the final HEAD (the commit after the tag, so that DEMO.md shows the live addresses) and
-  the Fe version, `fe 26.7.0`.
+  and submit through the link in `docs/registration-confirmation.txt`. The form takes the SHA of
+  the final HEAD, the commit after the tag that gives DEMO.md the live addresses, not e149684.
+  It also takes the Fe version, `fe 26.7.0`.

@@ -54,7 +54,7 @@ line 5, column 5.
 ## 3. Deploy a program through Compiler
 
 `deploy(bytes src, bytes args)` compiles the source and deploys it with the constructor
-arguments `args`. The demo deployed the counter with start value 2:
+arguments `args`. `tools/deploy.py` deployed the counter this way, with start value 2:
 
 - the transaction: [`0x3326fcee…`](https://arbiscan.io/tx/0x3326fceef46210efd34f7641e05949a16c3808ca377f3129cbd12c348fd7e626),
   2,103,265 gas;
@@ -67,11 +67,11 @@ cast call --rpc-url https://arb1.arbitrum.io/rpc 0x3c673F8AC1120f54443c4DfdEA569
   "get()(uint256)"
 ```
 
-## 4. Run it all again
+## 4. Deploy the compiler
 
 `tools/deploy.py --rehearse` deploys the five contracts on a local anvil node and runs this demo
 there. Without `--rehearse`, it deploys to Arbitrum One, and only from a release: a commit with
 the tag `v<version>` (`fe0-chain/README.md`). Each transaction opens an approval page in the
 browser, and the user signs it in their own wallet through `browser-web3-signer`, so no private
 key is needed. The five deployments and the demo cost about 16M gas, about 0.0003 ETH at
-Arbitrum's 0.02 gwei.
+a gas price of 0.02 gwei.
