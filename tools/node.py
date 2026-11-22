@@ -255,6 +255,15 @@ class Node:
                 return
         raise RuntimeError(f"the node does not revert its snapshot: {reply.get('error')}")
 
+    def set_code(self, address: ChecksumAddress, code: HexBytes) -> None:
+        """Makes `code` the code at `address`. Errors with RuntimeError when the node does not
+        take it."""
+        match reply := self.w3.provider.make_request(RPCEndpoint("anvil_setCode"),
+                                                     [address, code.to_0x_hex()]):
+            case {"result": None}:
+                return
+        raise RuntimeError(f"the node does not take code at {address}: {reply.get('error')}")
+
     def _await_start(self) -> None:
         deadline = time.monotonic() + START_TIMEOUT
         while not self.w3.is_connected():

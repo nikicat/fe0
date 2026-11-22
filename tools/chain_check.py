@@ -2,7 +2,7 @@
 """Check the compiler on chain (fe0-chain, DESIGN.md §8) on a local anvil node.
 
 It builds fe0-chain at `-O s` and checks that each contract's runtime code fits EIP-170 and its
-initcode fits EIP-3860. Then it deploys the phase contracts and Compiler on anvil, and:
+deploy code fits EIP-3860. Then it deploys the phase contracts and Compiler on anvil, and:
 
 - compiles every program of corpus/ with `compile(bytes)` by `eth_call`. The deploy code must
   be the CLI's, byte for byte;
@@ -24,6 +24,7 @@ import argparse
 import json
 import sys
 import tomllib
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
@@ -108,11 +109,17 @@ class Contract(StrEnum):
         return entries
 
 
+# The code that `fe build` writes to the .bin of a contract.
+DeployCode = NewType("DeployCode", bytes)
+# The code that creates a contract: its deploy code, then the arguments of its constructor.
+Initcode = NewType("Initcode", bytes)
+
+
 class Build(NamedTuple):
     """The code of one contract of fe0-chain."""
 
     contract: Contract
-    initcode: bytes
+    deploy_code: DeployCode
     runtime: bytes
 
     @classmethod
@@ -120,18 +127,18 @@ class Build(NamedTuple):
         """Returns what `fe build` wrote for `contract`."""
         def code(suffix: str) -> bytes:
             return bytes.fromhex(contract.artifact(suffix).read_text().strip())
-        return cls(contract, code(".bin"), code(".runtime.bin"))
+        return cls(contract, DeployCode(code(".bin")), code(".runtime.bin"))
 
     def size_line(self) -> str:
         """Returns the line that reports the sizes of the code."""
         return (f"{self.contract}: runtime {len(self.runtime):,} bytes,"
-                f" initcode {len(self.initcode):,} bytes")
+                f" deploy code {len(self.deploy_code):,} bytes")
 
     def oversize(self) -> list[FailureMessage]:
         """Returns a message for each EIP-170 or EIP-3860 limit that the code exceeds."""
         return [FailureMessage(f"{self.contract}: {what} is {len(code)} bytes, over {limit}")
                 for what, code, limit in [("runtime code", self.runtime, MAX_RUNTIME),
-                                          ("initcode", self.initcode, MAX_INITCODE)]
+                                          ("deploy code", self.deploy_code, MAX_INITCODE)]
                 if len(code) > limit]
 
 
@@ -151,6 +158,17 @@ class Builds(NamedTuple):
     def all(self) -> list[Build]:
         """Returns every contract, the phases first."""
         return [*self.phases, self.compiler]
+
+    def phase_initcode(self) -> dict[Contract, Initcode]:
+        """Returns the initcode of each phase contract. A phase's constructor takes no
+        arguments."""
+        return {b.contract: Initcode(b.deploy_code) for b in self.phases}
+
+    def compiler_initcode(self, phases: Mapping[Contract, ChecksumAddress]) -> Initcode:
+        """Returns the initcode of Compiler whose constructor gets the phases at `phases`."""
+        factory = Web3().eth.contract(abi=interface(), bytecode=self.compiler.deploy_code)
+        args = {c.constructor_arg(): a for c, a in phases.items()}
+        return Initcode(HexBytes(factory.constructor(**args).data_in_transaction))
 
     def size_report(self) -> str:
         """Returns the lines that report the sizes of each contract's code."""
@@ -239,7 +257,7 @@ class Deployed(NamedTuple):
     gas: Gas
 
     @classmethod
-    def create(cls, node: Node, initcode: bytes) -> Self:
+    def create(cls, node: Node, initcode: Initcode) -> Self:
         """Deploys `initcode` in a transaction. Errors with RuntimeError when the transaction
         fails or creates no contract."""
         receipt = node.transact({"data": HexBytes(initcode)})
@@ -302,14 +320,11 @@ class Chain:
     def deploy(cls, node: Node, builds: Builds) -> Self:
         """Deploys the phase contracts, then Compiler with their addresses. Errors as
         `Deployed.create` does."""
-        phases = [Deployed.create(node, b.initcode) for b in builds.phases]
-        abi = interface()
-        args = {b.contract.constructor_arg(): d.address
-                for b, d in zip(builds.phases, phases, strict=True)}
-        factory = node.w3.eth.contract(abi=abi, bytecode=builds.compiler.initcode)
-        compiler = Deployed.create(node, HexBytes(factory.constructor(**args).data_in_transaction))
-        gas = {b.contract: d.gas for b, d in zip(builds.all(), [*phases, compiler], strict=True)}
-        return cls(node, node.w3.eth.contract(compiler.address, abi=abi), gas)
+        phases = {c: Deployed.create(node, code) for c, code in builds.phase_initcode().items()}
+        compiler = Deployed.create(node, builds.compiler_initcode(
+            {c: d.address for c, d in phases.items()}))
+        gas = {c: d.gas for c, d in (phases | {Contract.COMPILER: compiler}).items()}
+        return cls(node, node.w3.eth.contract(compiler.address, abi=interface()), gas)
 
     def gas_report(self) -> str:
         """Returns the lines that report each deployment's gas and their total."""

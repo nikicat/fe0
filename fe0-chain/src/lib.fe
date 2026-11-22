@@ -142,7 +142,7 @@ pub contract Compiler {
             created
         }
         Version -> String<5> {
-            "0.1.1"
+            "0.1.2"
         }
     }
 }

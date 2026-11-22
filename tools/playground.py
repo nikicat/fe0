@@ -9,7 +9,7 @@ from eth_typing import ABI, ChecksumAddress
 
 from chain_check import Contract, committed_interface
 from compile_on_chain import messages
-from deploy import ARBITRUM, Chain, Deployment, Tag, Url, git
+from deploy import ARBITRUM, Chain, DeploymentRecord, Tag, Url, git
 from embed import CORPUS
 from fegen import ROOT, FeSource
 
@@ -47,13 +47,13 @@ def repo() -> Url:
 
 
 def data() -> Data:
-    """Returns the contents of data.json. Errors as `Deployment.on` does."""
-    deployment = Deployment.on(ARBITRUM["id"])
+    """Returns the contents of data.json. Errors as `DeploymentRecord.on` does."""
+    record = DeploymentRecord.on(ARBITRUM["id"])
     examples = {p.stem: FeSource(p.read_text()) for p in sorted(CORPUS.glob("*.fe"))}
     first = {FIRST_EXAMPLE: examples.pop(FIRST_EXAMPLE)}
     return Data(repo=repo(), chain=ARBITRUM,
-                compiler=deployment.addresses[Contract.COMPILER],
-                tag=deployment.release.tag, abi=committed_interface(),
+                compiler=record.addresses[Contract.COMPILER],
+                tag=record.release.tag, abi=committed_interface(),
                 messages={str(code.value()): Message(code=str(code), text=text)
                           for code, text in messages().items()},
                 examples=first | examples)

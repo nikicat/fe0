@@ -28,6 +28,13 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
   when CREATE creates no contract; v0.1.0 returned the zero address, so a transaction with a
   tight gas estimate succeeded and created nothing. chain_check checks it with
   corpus/init_args.fe.
+- Release v0.1.2 is committed but not tagged. It exists because tools/deploy.py
+  changed after the v0.1.1 tag, and deploy.py deploys only a tagged commit. Its contracts
+  differ from v0.1.1's only in `version()`. tools/deploy.py deploys the five contracts in one
+  transaction, through Multicall3 and CreateX's `deployCreate2`, at CREATE2 addresses known
+  before the transaction. The rehearsal on anvil (`--rehearse`) passes (13.7M gas), and an
+  `eth_call` of the batch on Arbitrum One returns the predicted addresses with a 13.9M gas
+  estimate, which includes Arbitrum's fee for posting the calldata to L1.
 - Arbitrum One still runs v0.1.0, deployed on Nov 22 from e149684. DEMO.md and
   `deployments/42161.json` hold its addresses, and its demo passed.
 - The playground (playground/README.md) is written and checked in jsdom on an anvil fork,
@@ -40,7 +47,8 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
   disclosures. The README covers all of them but the commit, which goes in the form.
 
 ## Next
-- Deploy v0.1.1: `rm deployments/42161.json`, run `tools/deploy.py` from the tag, then update
+- Tag v0.1.2, then deploy it: `rm deployments/42161.json`, run `tools/deploy.py`
+  from the tag (one approval for the contracts, one for the demo), then update
   the addresses and the demo transaction in docs/DEMO.md and commit them with the new
   `deployments/42161.json`. Try the playground in a browser against it.
 - Nov 24: push, make the repo public (Apache-2.0 LICENSE is in place), turn on Pages, and

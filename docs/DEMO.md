@@ -74,7 +74,12 @@ cast call --rpc-url https://arb1.arbitrum.io/rpc 0x3c673F8AC1120f54443c4DfdEA569
 
 `tools/deploy.py --rehearse` deploys the five contracts on a local anvil node and runs this demo
 there. Without `--rehearse`, it deploys to Arbitrum One, and only from a release: a commit with
-the tag `v<version>` (`fe0-chain/README.md`). Each transaction opens an approval page in the
-browser, and the user signs it in their own wallet through `browser-web3-signer`, so no private
-key is needed. The five deployments and the demo cost about 16M gas, about 0.0003 ETH at
-a gas price of 0.02 gwei.
+the tag `v<version>` (`fe0-chain/README.md`). It sends two transactions. The first deploys the
+five contracts through [Multicall3](https://www.multicall3.com) and
+[CreateX](https://github.com/pcaversaccio/createx), so either all five are created or none is
+(DESIGN.md §8, "Deployment"). A contract that already has code at its address is left out, so a
+run after a full deployment sends only the second transaction. The second transaction deploys
+the counter of step 3 through the new Compiler. Each transaction opens an approval page in the
+browser, and the user signs it in their own wallet through `browser-web3-signer`, so the script
+never sees a private key. The first transaction takes about 14M gas and the second 2.1M, about
+0.0003 ETH in all at a gas price of 0.02 gwei.

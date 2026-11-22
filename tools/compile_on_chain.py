@@ -18,7 +18,7 @@ from web3.exceptions import ContractLogicError
 
 from chain_check import Contract, Reverted, committed_interface, revert_data
 from cli_check import ExitCode
-from deploy import ARBITRUM, Deployment, Url
+from deploy import ARBITRUM, DeploymentRecord, Url
 from fegen import FE0, ROOT, DiagCode, FeSource, LineCol
 
 MESSAGES: Path = ROOT / "fe0-cli/src/messages.fe"
@@ -38,8 +38,8 @@ def messages() -> dict[DiagCode, str]:
 
 def compiler(chain_id: int) -> ChecksumAddress:
     """Returns the address of Compiler that deployments/<chain id>.json records. Errors as
-    `Deployment.on` does, or with KeyError when it records none."""
-    return Deployment.on(chain_id).addresses[Contract.COMPILER]
+    `DeploymentRecord.on` does."""
+    return DeploymentRecord.on(chain_id).addresses[Contract.COMPILER]
 
 
 def main() -> None:

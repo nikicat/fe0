@@ -351,6 +351,19 @@ differs from the ABI that `fe build` writes.
   intended caller, gives each phase the previous phase's output. A direct caller that sends
   malformed words gets a revert or a wrong result, and only for itself: the phases keep no
   state, so the call changes nothing on chain. Checks would cost bytes in every phase contract.
+- **Deployment:** `tools/deploy.py` deploys all five contracts in one transaction. The
+  transaction calls Multicall3's `aggregate3`, which calls CreateX's `deployCreate2` once per
+  contract with a zero salt. Multicall3 reverts when any call fails, so either all five
+  contracts are created or none is. CreateX mixes neither the sender nor the chain id into a
+  zero salt, so each address depends only on the contract's deploy code and constructor
+  arguments. The addresses are known before the transaction, so Compiler's constructor gets
+  the four phase addresses in the same transaction. Anyone can create the same contracts at
+  those addresses first, but the code there is then the same, and the transaction leaves out
+  each contract that already has code. The transaction is an ordinary one, so
+  `browser-web3-signer` sends it as it is, and the rehearsal on anvil runs the same path.
+  Separate transactions are not atomic. An EIP-5792 wallet batch can be atomic, but
+  `browser-web3-signer` has no `wallet_sendCalls`, and no test shows whether a wallet runs a
+  batch of contract creations.
 - **Measured on Fe 26.7.0 at `-O s`:**
 
   | Contract | Runtime bytes | Deploy gas |
