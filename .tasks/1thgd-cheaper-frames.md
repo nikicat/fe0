@@ -15,10 +15,11 @@ measured reason.
 
 ## State
 - Step 1 is in, as ADR 0023: 5.0% less gas over the corpus (Fe0 ÷ Fe `-O 1` from 1.51 to
-  1.43), and Back 80 bytes larger. The full check passes. Not committed yet.
+  1.43), and Back 80 bytes larger. Committed in e855022.
 - With step 1, the EVM stack bounds Fe0's recursion. ADR 0023 has the measured depths, and
   SPEC.md's subset rule leaves out a call near either build's stack limit.
 
 ## Next
 - Step 2, after the code freeze of Nov 23 (T0010): leaf functions with at most 16 live words
   keep parameters and locals on the stack.
+- Step 3, after step 2: the peephole pass, measured on the code that step 2 emits.
