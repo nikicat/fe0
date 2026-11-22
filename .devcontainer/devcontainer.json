@@ -1,5 +1,5 @@
 {
-  "name": "fe-contest",
+  "name": "fe0",
   "build": { "dockerfile": "Containerfile" },
   "remoteUser": "vscode",
   // the Fe extension's language server runs the image's compiler

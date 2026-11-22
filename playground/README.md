@@ -3,7 +3,7 @@
 A web page for compiling and deploying Fe0 programs with the compiler on Arbitrum One. Fe0 is
 a subset of Fe, the smart contract language ([docs/SPEC.md](../docs/SPEC.md)). Its compiler
 runs on chain as five contracts, and the page talks to the one named Compiler
-([docs/DEMO.md](../docs/DEMO.md)). It is published at <https://nikicat.github.io/fe-contest/>.
+([docs/DEMO.md](../docs/DEMO.md)). It is published at <https://nikicat.github.io/fe0/>.
 
 - **Compile.** The page compiles the program in the editor 0.5 s after each edit, by an
   `eth_call` of Compiler's `compile(bytes)`, so a compile is free and needs no wallet. It

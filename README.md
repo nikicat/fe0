@@ -126,7 +126,7 @@ installs anvil with Foundry.
 shows an error, and deploys a program through the on-chain compiler. `tools/deploy.py
 --rehearse` runs the same demo on a local anvil node.
 
-The [playground](https://nikicat.github.io/fe-contest/) is a web page for the same compiler
+The [playground](https://nikicat.github.io/fe0/) is a web page for the same compiler
 ([playground/README.md](playground/README.md)).
 
 ## Results
