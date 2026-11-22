@@ -14,9 +14,10 @@ the document is fixed.
 - The rule holds given enough gas. Fe0's and Fe's builds use different amounts of gas, so a call
   with a tight gas limit may fail under one and succeed under the other. DESIGN.md §10 names
   the gas limits that the tests use.
-- The rule holds below Fe's recursion limit. Fe keeps return addresses on the EVM stack, and
-  Fe0 keeps frames in memory. So a call that recurses past the stack's limit reverts under Fe
-  and succeeds under Fe0 ([ADR 0021](adr/0021-frames-gas-and-depth.md) gives the depth).
+- The rule holds below the recursion limits of both builds. Each build keeps words on the
+  1,024-slot EVM stack for every pending call, but not the same words. So a call near either
+  limit may revert under one build and succeed under the other
+  ([ADR 0023](adr/0023-frame-pointer-on-the-stack.md) gives depths).
 
 Marks used below:
 - **[V]** — behaviour not yet confirmed against the official compiler. Each one becomes a
@@ -864,7 +865,7 @@ rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is
 |---|---|---|
 | `const` | ◐ literals, other constants and operators only | §5.3 |
 | Functions with positional and labelled parameters | ✅ | §5.4 |
-| Recursion | ◐ deeper than Fe's stack limit, Fe0 differs | the subset rule, §5.4 |
+| Recursion | ◐ near either build's stack limit, Fe0 may differ | the subset rule, §5.4 |
 | `mod`, `use`, `extern`, `unsafe`, `with` blocks | ❌ | §3.3 |
 | A local or a parameter named like a field or an item | ✅ | §5.2 |
 | Uppercase parameters | ✅ | §5.2 |

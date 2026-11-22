@@ -35,3 +35,4 @@ To add one, copy the shape of an existing record and take the next number. When 
 | [0020](0020-external-calls.md) | Step 4: typed calls to other contracts | Nov 12 | accepted |
 | [0021](0021-frames-gas-and-depth.md) | Keep frames in memory for now; reduce their cost in steps | Nov 12 | accepted |
 | [0022](0022-move-to-26-7-0.md) | Move to Fe 26.7.0 | Nov 19 | accepted |
+| [0023](0023-frame-pointer-on-the-stack.md) | Keep a function's frame pointer on the stack | Nov 22 | accepted |

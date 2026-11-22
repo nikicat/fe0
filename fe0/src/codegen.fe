@@ -116,7 +116,7 @@ impl PanicCode {
 
 // The memory layout (DESIGN.md §6.1). The table there says what each region holds.
 const SCRATCH: MemAddr = MemAddr { a: 0 }
-const FP: MemAddr = MemAddr { a: 0x40 }
+const FP_COPY: MemAddr = MemAddr { a: 0x40 }
 const FRAMES: MemAddr = MemAddr { a: 0x80 }
 const WORD: Size = Size { n: 32 }
 
@@ -217,13 +217,24 @@ struct Body {
     // The type of the body's value, or TY_UNIT.
     ret: Ty,
     frame: Size,
-    // The words that the body has on the stack. Code that leaves early pops them.
+    // The words that the body has on the stack, above a FN's FP. Code that leaves early pops
+    // them, and a FN reads FP with DUP(depth + 1), so each word is counted before FP is read
+    // (ADR 0023).
     depth: usize,
 }
 
 impl Body {
     fn leaves(self) -> Leaves {
         Leaves::of(self.ret)
+    }
+
+    // Checks whether the body runs in the first frame, at FRAMES, because nothing calls it
+    // (DESIGN.md §6.1).
+    fn in_first_frame(self) -> bool {
+        match self.kind {
+            BodyKind::Fn => false,
+            BodyKind::Init(_) | BodyKind::Arm => true,
+        }
     }
 }
 
@@ -485,19 +496,11 @@ impl Gen {
         }
     }
 
-    // Starts the body of FN, INIT or ARM `owner`. INIT and ARM bodies use the first frame
-    // (DESIGN.md §6.1).
+    // Starts the body of FN, INIT or ARM `owner`.
     fn begin(mut self, _ owner: NodeId, _ kind: BodyKind) {
         let n = self.node(owner)
         let frame = frame_size(self.c.frame_slots(owner))
         self.body = Body { kind, ret: n.ty().or_unit(), frame, depth: 0 }
-        match kind {
-            BodyKind::Fn => {},
-            BodyKind::Init(_) | BodyKind::Arm => {
-                self.push(FRAMES.word())
-                self.store_at(FP)
-            },
-        }
     }
 
     // Emits BLOCK `b` as the whole body, then leaves the body with its value.
@@ -506,16 +509,16 @@ impl Gen {
         self.leave()
     }
 
-    // Gives FP back to the caller and pushes the current frame's return address.
+    // Sets the copy of FP to the caller's FP and pushes the current frame's return address. It
+    // pops the FP on top of the stack.
     fn unlink_frame(mut self) {
-        self.fp()
         self.op(OP_DUP1)
         self.push(RET_ADDR.word())
         self.op(OP_ADD)
         self.op(OP_MLOAD)
         self.op(OP_SWAP1)
         self.op(OP_MLOAD)
-        self.store_at(FP)
+        self.store_at(FP_COPY)
     }
 
     // Leaves the body. Its value, if it has one, is on top of the stack.
@@ -530,6 +533,7 @@ impl Gen {
                     self.op(OP_POP)
                     k += 1
                 }
+                if value { self.op(OP_SWAP1) }
                 self.unlink_frame()
                 self.op(OP_JUMP)
             },
@@ -545,28 +549,39 @@ impl Gen {
         }
     }
 
-    // Pushes FP.
+    // Pushes FP. A FN keeps its FP on the stack, under its words (DESIGN.md §6.1, ADR 0023).
     fn fp(mut self) {
-        self.push(FP.word())
-        self.op(OP_MLOAD)
+        if self.body.in_first_frame() {
+            self.push(FRAMES.word())
+        } else if self.body.depth < MAX_DUP {
+            self.op(dup_op(self.body.depth + 1))
+        } else {
+            self.push(FP_COPY.word())
+            self.op(OP_MLOAD)
+        }
     }
 
     // Pushes FP + `off`.
     fn fp_plus(mut self, _ off: FrameOff) {
+        if self.body.in_first_frame() {
+            self.push(FRAMES.at(off).word())
+            return
+        }
         self.fp()
         self.push(off.word())
         self.op(OP_ADD)
     }
 
-    // Emits code that pops the top word into the frame at `off`. Marked `#[inline(never)]`, it
-    // makes Back 101 bytes larger (Fe 26.7.0, -O s).
+    // Emits code that pops the top word into the frame at `off`, and removes the word from
+    // Body.depth.
     fn store_frame(mut self, _ off: FrameOff) {
         self.fp_plus(off)
         self.op(OP_MSTORE)
+        self.body.depth -= 1
     }
 
-    // Emits code that pushes the word in the frame at `off`. Out of line, it makes Back 3 bytes
-    // smaller (Fe 26.7.0, -O s).
+    // Emits code that pushes the word in the frame at `off`. Out of line, it makes Back 15
+    // bytes smaller (Fe 26.7.0, -O s).
     #[inline(never)]
     fn load_frame(mut self, _ off: FrameOff) {
         self.fp_plus(off)
@@ -582,10 +597,12 @@ impl Gen {
     // Pops the top word into the variable that `d` declares: a local or a contract field.
     fn store(mut self, _ d: Id<Decl>) {
         match self.c.narrow<Field>(d) {
-            Option::Some(f) => self.store_field(self.c.storage_place(f)),
+            Option::Some(f) => {
+                self.store_field(self.c.storage_place(f))
+                self.body.depth -= 1
+            },
             Option::None => self.store_frame(self.local_offset(d)),
         }
-        self.body.depth -= 1
     }
 
     // Pops the top word into the field at `p`. A field that shares its slot replaces only its
@@ -753,9 +770,9 @@ impl Gen {
         self.non_payable()
         let init = self.c.contract_node().init()
         if !init.is_none() {
-            self.init_args(init, rt, end)
             let exit = self.piece.asm.label()
             self.begin(init, BodyKind::Init(exit))
+            self.init_args(init, rt, end)
             self.body_end(self.node(init).body())
             self.piece.asm.bind(exit)
         }
@@ -785,13 +802,12 @@ impl Gen {
         self.push(rt.word())
         self.piece.asm.push_label(end)
         self.op(OP_ADD)
-        self.push(FRAMES.at(FRAME_HEAD).word())
+        self.fp_plus(FRAME_HEAD)
         self.op(OP_CODECOPY)
         var k: usize = 0
         while k < self.len(params) {
             let param = self.elem(params, k)
-            self.push(FRAMES.at(self.local_offset(decl(param))).word())
-            self.op(OP_MLOAD)
+            self.load_frame(self.local_offset(decl(param)))
             self.validate(self.node(param).ty())
             self.op(OP_POP)
             k += 1
@@ -978,7 +994,6 @@ impl Gen {
             k -= 1
             self.store_frame(self.dest_offset(dest, self.elem(args, k), k))
         }
-        self.body.depth -= self.len(args)
     }
 
     fn dest_offset(self, _ dest: ArgDest, _ a: NodeId, _ k: usize) -> FrameOff {
@@ -1003,6 +1018,7 @@ impl Gen {
         self.store_args(args, ArgDest::Params(params, next))
         let back = self.piece.asm.label()
         self.piece.asm.push_label(back)
+        self.body.depth += 1
         self.store_frame(RET_ADDR.past(next))
         self.link_frame(next)
         self.piece.asm.jump(self.piece.fn_label(f))
@@ -1014,8 +1030,8 @@ impl Gen {
         LEAVES_WORD
     }
 
-    // Moves FP `next` bytes forward, to the callee's frame. The callee's frame keeps the old
-    // FP in its first word, so that `unlink_frame` can give it back.
+    // Saves FP in the callee's frame, `next` bytes on, sets the copy of FP to the callee's FP,
+    // and pushes the callee's FP (DESIGN.md §6.2).
     fn link_frame(mut self, _ next: Size) {
         self.fp()
         self.op(OP_DUP1)
@@ -1025,7 +1041,8 @@ impl Gen {
         self.op(OP_SWAP2)
         self.op(OP_SWAP1)
         self.op(OP_MSTORE)
-        self.store_at(FP)
+        self.op(OP_DUP1)
+        self.store_at(FP_COPY)
     }
 
     // Emits IF `i` with its `else if` chain, and returns what it leaves on the stack.
@@ -1203,14 +1220,18 @@ impl Gen {
         let data = self.c.data_words(e)
         var w = self.c.event_fields(e).len(self.c.ast)
         let indexed = w - data
+        let before = self.body.depth
         while w > data {
             w -= 1
             self.load_frame(self.log_offset(LogWord::at(w)))
+            self.body.depth += 1
         }
         self.push(self.c.topic0(e))
         self.push(words(data).word())
+        self.body.depth += 2
         self.fp_plus(self.log_offset(FIRST_LOG_WORD))
         self.op(log_op(indexed + 1))
+        self.body.depth = before
     }
 
     // Returns the offset from FP of word `w` of the log data. The log data starts where the frame
@@ -1249,13 +1270,16 @@ impl Gen {
         self.store_args(args, ArgDest::CallArgs(fields))
         // The selector goes in the low bytes of the word where the frame ends.
         self.push(self.c.selector(v))
+        self.body.depth += 1
         self.store_frame(self.past_frame(bytes(0)))
         // CALL takes the gas on top, then the address, the value, the calldata's offset and size,
         // and the offset and size of the return data to copy, which is none.
         // a -> 0 0 size offset 0 a
         self.push(0)
         self.push(selector_and_words(fields.len(self.c.ast)).word())
+        self.body.depth += 2
         self.fp_plus(self.call_data())
+        self.body.depth -= 2
         self.push(0)
         self.push(0)
         self.op(OP_SWAP5)

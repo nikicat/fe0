@@ -182,21 +182,29 @@ Opcodes are emitted straight from the AST, with no IR
 | Range | Use |
 |---|---|
 | `0x00–0x3f` | Scratch: return value, panic payload head, the key and slot that a map entry's slot is hashed from |
-| `0x40` | **FP**, the current frame pointer |
+| `0x40` | A copy of **FP**, the current frame pointer ("FP on the stack", below) |
 | `0x60–0x7f` | Reserved (EVM convention, unused) |
 | `0x80…` | Frames, growing upward. While `log.emit` runs, its data and topics are in the words past the current frame. While `a.call(…)` runs, its calldata is there |
 
-Revert data is written from scratch onward and may be any length, so it can run over FP and the
-frames. This is safe because `REVERT` follows at once, and nothing reads memory after it.
+Revert data is written from scratch onward and may be any length, so it can run over FP's
+copy and the frames. This is safe because `REVERT` follows at once, and nothing reads memory
+after it.
 
 **Frames.** Each function has a frame of `2 + params + locals` words at FP:
-- `[FP+0]` saved FP of the caller;
+- `[FP+0]` saved FP of the caller, which a return puts back in the copy at `0x40` (§6.2);
 - `[FP+32]` return address;
 - `[FP+64…]` parameters, then locals.
 
 Every local has a fixed slot assigned by the checker, with no slot reuse
 (`ponytail: frame size = all locals; reuse slots if gas matters`). `init` and each arm run in
-the first frame, at `0x80`, since nothing calls them (`Gen.begin`).
+the first frame, at `0x80`, since nothing calls them (`Body.in_first_frame`). So their FP is the
+constant `0x80`, and their code addresses their frame with constants.
+
+**FP on the stack.** A function keeps its FP on the stack, under the words it pushes, and
+copies it with `DUP(k+1)` when `k` words sit above it
+([ADR 0023](adr/0023-frame-pointer-on-the-stack.md)). When 16 or more words sit above FP,
+`DUP16` cannot reach it, so the function loads the copy at `0x40` (`Gen.fp`). Every call and
+return keeps the copy current (§6.2).
 
 ### 6.2 Calling convention
 
@@ -205,13 +213,17 @@ the first frame, at `0x80`, since nothing calls them (`Gen.begin`).
 2. `newFP = FP + caller_frame_size`.
 3. Store the arguments into `[newFP+64+32i]`, the return label into `[newFP+32]`, and FP into
    `[newFP+0]`.
-4. Set `FP = newFP` and `JUMP` to the callee.
+4. Set the copy at `0x40` to `newFP`, push `newFP` for the callee, and `JUMP` to the callee.
+   A calling function's FP stays on the stack, under its pending words.
 
-**Callee on return:** the result is on the stack (§6.3, "Leaving early"). The callee restores
-`FP = [FP+0]` and jumps to the saved return address.
+**Callee on return:** the result, if the function has one, is on the stack above the callee's
+FP (§6.3, "Leaving early"). The callee brings its FP to the top, reads the return label at
+`[FP+32]`, sets the copy at `0x40` to `[FP+0]`, and jumps to the return label
+(`Gen.leave`).
 
-This supports recursion, and memory grows with call depth. Gas bounds both recursion depth and
-memory cost.
+This supports recursion, and memory grows with call depth. Gas bounds the memory cost. The
+1,024-slot EVM stack bounds the depth, since each pending call keeps its FP and the words it
+has pushed there ([ADR 0023](adr/0023-frame-pointer-on-the-stack.md) gives depths).
 
 The initcode and the runtime code each hold a copy of the functions they call, after their own
 bodies (`Gen.functions` in `fe0/src/codegen.fe`).
@@ -223,7 +235,7 @@ Each expression leaves exactly one word on the stack (unit-typed ones leave noth
 | Construct | Emitted |
 |---|---|
 | Literal | `PUSHn` (the minimal n), `PUSH0` for 0 |
-| Local | `MLOAD(FP + off)`: `PUSH1 0x40 MLOAD PUSHn off ADD MLOAD` |
+| Local | `MLOAD(FP + off)`. In a function: `DUPn PUSHn off ADD MLOAD`, with `PUSH1 0x40 MLOAD` in place of `DUPn` when FP is too deep (§6.1, "FP on the stack"). In `init` and arms: `PUSHn addr MLOAD` |
 | Field | `PUSHn slot SLOAD`, then `SHR` and `AND` only when it shares the slot (SPEC §6) |
 | `a + b` | eval a, eval b, `DUP2 ADD`, `DUP1 SWAP2 GT` → `JUMPI panic_11` |
 | `a - b` | eval a, eval b, `DUP2 DUP2 GT` → `JUMPI panic_11`, `SWAP1 SUB` |
@@ -252,10 +264,10 @@ instructions.
   code holds the ones it jumps to (`Stub` in `fe0/src/codegen.fe`). A panic stub stores
   `0x4e487b71 << 224` at 0 and the code at 4, then `REVERT(0, 0x24)`.
 - **Leaving early:** a body can leave while it still has words on the stack, such as the `1`
-  pending in `1 + { return 2 }`. A function pops the words under its result before it returns
-  (`Gen.leave`). `break` and `continue` pop down to the depth at the start of the loop
-  (`Gen.drop_to`). Arms end in `RETURN` or `STOP`, and `init` jumps to the code that returns the
-  runtime code, so leftover words do not matter there.
+  pending in `1 + { return 2 }`. A function pops the words between its result and its FP
+  before it returns (`Gen.leave`). `break` and `continue` pop down to the depth at the start of
+  the loop (`Gen.drop_to`). Arms end in `RETURN` or `STOP`, and `init` jumps to the code that
+  returns the runtime code, so leftover words do not matter there.
 - **Control flow:** `if`, `while`, `break` and `continue` lower to labels and `JUMPI`. The
   codegen keeps a loop-label stack for `break` and `continue`.
 
@@ -344,13 +356,13 @@ differs from the ABI that `fe build` writes.
   | Contract | Runtime bytes | Deploy gas |
   |---|---|---|
   | Lexer | 5,751 | 1.28M |
-  | Parser | 17,282 | 3.79M |
+  | Parser | 17,358 | 3.81M |
   | Checker | 20,101 | 4.40M |
-  | Back | 17,216 | 3.78M |
+  | Back | 17,296 | 3.79M |
   | Compiler | 1,699 | 0.45M |
 
   - **Deploying all five costs 13.7M gas.**
-  - **Compiling costs up to 28.7M gas, for `corpus/amm.fe`.**
+  - **Compiling costs up to 28.5M gas, for `corpus/amm.fe`.**
     - That program is 8,141 bytes of source.
     - Lexing takes about 1,240 gas per byte of source.
     - No tool measures the cost of the boundaries.
@@ -369,10 +381,8 @@ Measured on Fe master `d217a51bf` (`spike-limits/`, 30M gas per call):
   1,024-slot EVM stack, and functions with more live values get less depth.
   - **Consequence:** the parser caps its nesting depth and reports `P_TOO_DEEP` instead of
     overflowing the stack ([ADR 0012](adr/0012-max-depth.md), with the measurements).
-  - This limits only the compiler running on chain. Code *generated by* Fe0 keeps its frames
-    in memory (§6.1), so it has no such limit. A program that recurses past Fe's limit
-    therefore behaves differently, and SPEC's subset rule leaves it out
-    ([ADR 0021](adr/0021-frames-gas-and-depth.md)).
+  - Code *generated by* Fe0 has the stack bound of §6.2, at a depth that may differ from
+    Fe's. SPEC's subset rule leaves out a call near either limit.
 - **`fe test` does not enforce EIP-170:** 24,577 and 49,152-byte runtimes deploy fine.
   - The harness therefore asserts sizes itself: Fe0's own contracts (the phase contracts and
     Compiler) at most 24,576 bytes of runtime code, and Fe0's output for every corpus program

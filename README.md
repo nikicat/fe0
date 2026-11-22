@@ -23,7 +23,7 @@ formalizing the language in Lean, which the Fe team wants to do for a subset of 
 - **A strict subset.** Fe accepts every program that Fe0 accepts, and runs it the same way. Fe0
   may reject programs that Fe accepts, never the other way round
   ([ADR 0001](docs/adr/0001-strict-subset.md)). SPEC.md states the rule and its two limits:
-  gas, and Fe's recursion depth.
+  gas, and the recursion depth of each build.
 - **A written specification.** SPEC.md gives the grammar, the semantics of each expression, and
   the rules for names, types and effects. Each rule marked **[✓]** was confirmed against Fe by
   a probe: a small program that Fe compiles or rejects. The probes are in `spike-*/`,
@@ -139,10 +139,10 @@ shows an error, and deploys a program through the on-chain compiler. `tools/depl
   | Kind of program | Fe0 ÷ Fe |
   |---|---|
   | storage-bound, such as `tokens.fe`, `vault.fe`, `escrow.fe` | 1.00 to 1.03 |
-  | `amm.fe`, a Uniswap v2–style pair | 1.02 |
-  | arithmetic and loops, such as `isqrt`, `power`, `primes` | 2.0 to 3.5 |
-  | calls, such as `fib`, `ackermann`, `many_params` | 2.2 to 3.1 |
-  | the whole corpus, in total gas | 1.51 |
+  | `amm.fe`, a Uniswap v2–style pair | 1.01 |
+  | arithmetic and loops, such as `isqrt`, `power`, `primes` | 1.9 to 3.2 |
+  | calls, such as `fib`, `ackermann`, `many_params` | 1.7 to 2.8 |
+  | the whole corpus, in total gas | 1.43 |
 
   Storage costs thousands of gas per access in both builds, so for real contracts the
   difference is a few percent. ADR 0021 plans how to reduce it.
@@ -157,8 +157,8 @@ shows an error, and deploys a program through the on-chain compiler. `tools/depl
 - Every contract field must be declared `mut`. Fe also allows a field without `mut`, and keeps
   it out of storage (SPEC.md §6).
 - Each phase stops at the first error ([ADR 0006](docs/adr/0006-no-error-recovery.md)).
-- Fe0 behaves as Fe does only below Fe's recursion depth and with enough gas (SPEC.md, the
-  subset rule).
+- Fe0 behaves as Fe does only below the recursion depth of both builds and with enough gas
+  (SPEC.md, the subset rule).
 
 ## Fe0 as a subset to formalize
 
@@ -181,7 +181,7 @@ theorem about Fe0's programs is a theorem about those Fe programs.
 - The model takes as inputs the values of the `Ctx` methods, such as the caller (SPEC.md §6), and
   what each external call returns. It may treat `keccak256`, which places map entries and names
   events, as an injective function.
-- The subset rule leaves out gas and Fe's recursion limit. So the model needs neither.
+- The subset rule leaves out gas and the builds' recursion limits. So the model needs neither.
 
 **What a model could prove.**
 - Type safety: a body that the checker accepts gives a value of its type, or fails with the
