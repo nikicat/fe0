@@ -44,7 +44,7 @@ the same behaviour.
   [0007](0007-codegen-from-ast.md) ruled out.
 - **Reject recursive calls:** the subset rule would hold exactly. But Fe0 would refuse every
   recursive program, including the shallow ones that behave the same, to match a limit that
-  comes from the size of Fe's stack, not from the language.
+  comes from the EVM stack, not from the language.
 - **An IR with optimization passes:** ruled out by [0007](0007-codegen-from-ast.md) for size
   and time, and still too large for the window.
 

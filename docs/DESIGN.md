@@ -256,7 +256,7 @@ Each expression leaves exactly one word on the stack (unit-typed ones leave noth
 | `a.call(M::V { … })` | eval `a`, then each value as written. `MSTORE` each value past the frame at word 1 plus its field's index, and the selector at word 0, so that its 4 bytes end that word. `CALL` with `GAS`, no value, the calldata from byte 28 and no return buffer, then `ISZERO` → `JUMPI revert_returndata`. With a return type: fewer than 32 bytes of return data → `revert_empty`, then `RETURNDATACOPY` the first word to scratch, `MLOAD` it and check it as an arm checks an argument |
 
 The table sketches each sequence. `Gen.apply` and its neighbours in `fe0/src/codegen.fe` emit
-the exact ones. The differential tests of §13 check their results against Fe, not the
+the exact ones. The differential tests of §10 check their results against Fe, not the
 instructions.
 
 - **Stubs:** one shared block per panic code (`0x01`, `0x11`, `0x12`), one that reverts with
