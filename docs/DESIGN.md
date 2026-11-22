@@ -58,10 +58,10 @@ The `fe0` library is shared by every target. Only the edge ingots know where byt
 
 ## 2. Lexer
 
-- **Input:** the lexer pulls bytes one at a time through `uses (input: mut Source)` and keeps one
-  byte of lookahead. It appends each byte to the source buffer, a `Text`, as it reads it.
-  `Source` is fe0's own effect, and [ADR 0010](adr/0010-source-effect.md) says why it is
-  not std I/O.
+- **Input:** the lexer pulls bytes one at a time through `uses (input: mut Source)` and keeps
+  one byte of lookahead. It appends each byte to the source buffer, a `Text`, as it reads it.
+  `Source` is fe0's own effect, and [ADR 0010](adr/0010-source-effect.md) says why it is not std
+  I/O.
 - **Tokens** are spans of the source buffer, so the lexer never copies the text. `Token` is
   declared in `fe0/src/lexer.fe`.
 - **Integer literals:** the lexer checks only their syntax. The parser computes each value once,
@@ -93,8 +93,8 @@ length-prefixed run in one array. Ids, operators and written types are typed (`N
 `ListId`, `Sym`, `WordId`, `Tok`, `Ty`), so none of them travels as a bare integer.
 `fe0/src/ast.fe` declares `Ast`, `Node` and the fields of each node kind.
 
-- **Building lists:** one stack, `Parser.pending` in `fe0/src/parser.fe`, serves all lists, since
-  inner lists close before outer ones.
+- **Building lists:** one stack, `Parser.pending` in `fe0/src/parser.fe`, serves all lists,
+  since inner lists close before outer ones.
 - **Interning:** a linear scan over `syms`, in `Ast.intern`.
 - **Check results go in side tables** (`types`, `res` and `slots` indexed by node, `places` by
   field and `events` by event, §5). The AST's nodes are never mutated after parsing. The
@@ -243,13 +243,14 @@ Each expression leaves exactly one word on the stack (unit-typed ones leave noth
 | `log.emit(E { … })` | eval each value as written, then `MSTORE` each past the frame at its field's word, `MLOAD` the indexed ones back as topics, then `PUSH topic0`, the data's size and offset, `LOGn` |
 | `a.call(M::V { … })` | eval `a`, then each value as written. `MSTORE` each value past the frame at word 1 plus its field's index, and the selector at word 0, so that its 4 bytes end that word. `CALL` with `GAS`, no value, the calldata from byte 28 and no return buffer, then `ISZERO` → `JUMPI revert_returndata`. With a return type: fewer than 32 bytes of return data → `revert_empty`, then `RETURNDATACOPY` the first word to scratch, `MLOAD` it and check it as an arm checks an argument |
 
-The table sketches each sequence. `Gen.apply` and its neighbours in `fe0/src/codegen.fe` emit the
-exact ones. The differential tests of §13 check their results against Fe, not the instructions.
+The table sketches each sequence. `Gen.apply` and its neighbours in `fe0/src/codegen.fe` emit
+the exact ones. The differential tests of §13 check their results against Fe, not the
+instructions.
 
-- **Stubs:** one shared block per panic code (`0x01`, `0x11`, `0x12`), one that reverts
-  with empty data, and one that reverts with the return data of the call that failed. Each piece of code holds the ones it jumps to (`Stub` in
-  `fe0/src/codegen.fe`). A panic stub stores `0x4e487b71 << 224` at 0 and the code at 4, then
-  `REVERT(0, 0x24)`.
+- **Stubs:** one shared block per panic code (`0x01`, `0x11`, `0x12`), one that reverts with
+  empty data, and one that reverts with the return data of the call that failed. Each piece of
+  code holds the ones it jumps to (`Stub` in `fe0/src/codegen.fe`). A panic stub stores
+  `0x4e487b71 << 224` at 0 and the code at 4, then `REVERT(0, 0x24)`.
 - **Leaving early:** a body can leave while it still has words on the stack, such as the `1`
   pending in `1 + { return 2 }`. A function pops the words under its result before it returns
   (`Gen.leave`). `break` and `continue` pop down to the depth at the start of the loop
@@ -451,10 +452,10 @@ The codegen tests (`fe0/src/codegen_tests.fe`) are differential tests of the sam
 live in the `fe0` ingot, so that `fe test` there runs them, and their generator shares
 `tools/fegen.py` with `embed.py`.
 
-Path dependencies between ingots work (`spike-deps/user`). Embedding sources as string
-literals is fine too. The largest corpus program, `corpus/amm.fe`, is about 8 KB. A one-off probe, which is not
-in the repository, passed a 32 KB `DynString` literal to a function. `fe test -O 0` built and
-ran it in about 0.1 s (Fe 26.5.1).
+Path dependencies between ingots work (`spike-deps/user`). Embedding sources as string literals
+is fine too. The largest corpus program, `corpus/amm.fe`, is about 8 KB. A one-off probe, which
+is not in the repository, passed a 32 KB `DynString` literal to a function. `fe test -O 0` built
+and ran it in about 0.1 s (Fe 26.5.1).
 
 Each batch ingot holds `BATCH` programs and depends on `fe0` by path. One `fe test --jobs 0`
 run tests all the batches. [ADR 0003](adr/0003-own-corpus-and-generator.md#measurements) gives
@@ -467,9 +468,16 @@ build and Fe's build and sends each entry from the account its `from=N` names. T
 `node_check.py` lists what the two builds must agree on. `tools/gas_compare.py` runs the same
 way and reports each build's gas.
 
-**Gas and level.** `embed.py` and `node_check.py` build Fe's side at `-O 1` (SPEC.md, the
-subset rule). Each call inside `fe test` gets `CALL_GAS` gas (fe0/src/difftest.fe), and each
-transaction on the node gets `TX_GAS` (tools/node.py).
+**Gas and level.** `embed.py` and `node_check.py` build Fe's side at its reference level
+(SPEC.md, the subset rule). Each call inside `fe test` gets `CALL_GAS` gas
+(fe0/src/difftest.fe), and each transaction on the node gets `TX_GAS` (tools/node.py).
+
+**Fe's other levels.** `node_check.py --levels` also checks Fe's other optimisation levels,
+for bugs in Fe. The docstring of `node_check.py` says what it compares and how it reports a
+difference. CI does not run it, because on the corpus and `corpus/gen/` it makes a
+`node_check.py` run take 380 s instead of 119 s and finds no difference (Fe 26.7.0). Fe is
+pinned ([ADR 0022](adr/0022-move-to-26-7-0.md)), so a new difference could come only from a new
+or changed program. Run it by hand after such a change or an upgrade of Fe.
 
 A call script may first deploy other programs for the program to call (SPEC §6, "Calls"), as
 in `deploy token.fe as t0`, pass the address as `@t0` and call it, as in `@t0 Transfer @this 5`.

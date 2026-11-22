@@ -54,7 +54,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from pathlib import Path
-from typing import ClassVar, Never, NamedTuple, NewType, Protocol, Self
+from typing import ClassVar, Literal, Never, NamedTuple, NewType, Protocol, Self, cast, get_args
 
 import fegen
 from fegen import (DEPLOYMENT_NAME, MAX, NO_LINE, ROOT, THIS, Accepted, Account, AccountIndex, Arg,
@@ -79,8 +79,11 @@ class ScriptError(Exception):
 
 # A message that says what failed and where, one of those that the harness exits with.
 FailureMessage = NewType("FailureMessage", str)
-# An optimization level of `fe test`, such as "1".
-OptLevel = NewType("OptLevel", str)
+# An optimization level of `fe build` and `fe test`.
+OptLevel = Literal["0", "1", "2", "s"]
+# The level of Fe's reference build, the one that Fe0's build must match (SPEC.md, the subset
+# rule).
+REFERENCE_LEVEL: OptLevel = "1"
 
 
 # Integer expressions in call scripts.
@@ -1051,7 +1054,8 @@ def parser(doc: str | None) -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description=doc.split("\n")[0] if doc else None,
         epilog="The environment variable FE gives the path of the fe binary (default: the fe on PATH).")
-    ap.add_argument("-O", dest="opt", default="1", help="the optimization level of fe test")
+    ap.add_argument("-O", dest="opt", default=REFERENCE_LEVEL, choices=get_args(OptLevel),
+                    help="the optimization level of fe test")
     ap.add_argument("--no-run", action="store_true", help="skip fe test")
     return ap
 
@@ -1059,7 +1063,7 @@ def parser(doc: str | None) -> argparse.ArgumentParser:
 def requested_fe_test(args: argparse.Namespace) -> FeTest | None:
     """Returns the fe test command that `args`, the options parsed by `parser`, ask for. Returns
     None when they hold --no-run."""
-    return None if args.no_run else FeTest(OptLevel(args.opt))
+    return None if args.no_run else FeTest(cast(OptLevel, args.opt))
 
 
 def check_header() -> None:

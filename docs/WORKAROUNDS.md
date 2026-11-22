@@ -34,10 +34,11 @@ master removes nothing before we move to a release that has it.
 - An attribute must sit on its own line (`#[test]` then a newline, then `fn`).
 - An argument must be labelled unless its parameter is declared as `_ name`.
 - A unit `recv` arm needs `Name {}` before its body.
-- **Compile time:** `fe test -O 0` is about 3× faster than `-O 1` and 6× faster than the
-  default. Use `-O 0` while iterating. CI runs `fe test` in `fe0/` at the default level,
-  because that is what deploys. The corpus and generated-programs steps run `tools/embed.py`
-  and `tools/gen.py`. These pass `-O 1` to `fe test` unless `-O` is given.
+- **Compile time:** `fe test -O 0` is about 3× faster than `-O 1` (Fe 26.5.1). Use `-O 0`
+  while iterating. CI runs `fe test` in `fe0/` at the default level. That is the level of the
+  reference build of the subset rule (SPEC.md). The corpus and generated-programs steps run
+  `tools/embed.py` and `tools/gen.py`. These pass the reference level to `fe test` unless they
+  get `-O`.
 
 ## Open bugs
 

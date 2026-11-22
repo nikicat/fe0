@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Literal, NamedTuple, NewType, Self, cast
+from typing import NamedTuple, NewType, Self, cast
 
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
@@ -21,8 +21,9 @@ from web3.types import (CallTrace, DiffModeTrace, RPCEndpoint, TraceConfig, Trac
 import cli_check
 import embed
 import gen
-from fegen import (DISPATCH, FE, NO_LINE, ROOT, THIS, Account, AccountIndex, AddressArg, CallCase,
-                   Case, DeploymentName, Payload, Probe, ProbeIndex, Word, script_place)
+from fegen import (DISPATCH, FE, NO_LINE, ROOT, THIS, Account, AccountIndex, AddressArg,
+                   CallCase, Case, DeploymentName, Payload, Probe, ProbeIndex, Word,
+                   script_place)
 
 # The node's hardfork. Cancun has no calldata floor price (EIP-7623), so the gas of a call less
 # the gas of the same transaction to an account with no code is what the code spent.
@@ -32,14 +33,16 @@ URL: str = f"http://127.0.0.1:{PORT}"
 # How long anvil may take to answer after it starts, in seconds.
 START_TIMEOUT: float = 10
 # An address with no code, which gives the gas of a transaction without execution.
-NO_CODE: ChecksumAddress = Web3.to_checksum_address("0x000000000000000000000000000000000000dead")
+NO_CODE: ChecksumAddress = Web3.to_checksum_address(
+    "0x000000000000000000000000000000000000dead")
 OUT: Path = ROOT / "out/node"
 # The errors of loading, compiling and running one program.
 PROGRAM_ERRORS = (RuntimeError, embed.ScriptError, OSError)
 
 # An amount of gas.
 Gas = NewType("Gas", int)
-# The gas limit of each transaction: the in-EVM harness's CALL_GAS (fe0/src/difftest.fe) and more.
+# The gas limit of each transaction: the in-EVM harness's CALL_GAS (fe0/src/difftest.fe) and
+# more.
 TX_GAS: Gas = Gas(30_000_000)
 # The gas limit of a block on the node.
 BLOCK_GAS: Gas = Gas(2 * TX_GAS)
@@ -56,13 +59,15 @@ Addresses = dict[DeploymentName, ChecksumAddress]
 class Build(Enum):
     """A compiler and its options."""
 
-    _value_: Literal["1", "s"] | None
+    _value_: embed.OptLevel | None
     FE0 = None
+    FE_O0 = "0"
     FE_O1 = "1"
+    FE_O2 = "2"
     FE_OS = "s"
 
     @property
-    def level(self) -> Literal["1", "s"] | None:
+    def level(self) -> embed.OptLevel | None:
         """Fe's optimization level, or None for Fe0's build."""
         return self._value_
 
@@ -70,6 +75,11 @@ class Build(Enum):
     def label(self) -> str:
         """The build's name in reports, such as "Fe -O 1"."""
         return "Fe0" if self.level is None else f"Fe -O {self.level}"
+
+    @classmethod
+    def reference(cls) -> Build:
+        """Returns Fe's reference build (embed.REFERENCE_LEVEL)."""
+        return cls(embed.REFERENCE_LEVEL)
 
     @classmethod
     def fe(cls) -> list[Build]:
@@ -118,7 +128,8 @@ class Effects(NamedTuple):
     """The part of what a transaction did that two builds of a program must agree on."""
 
     success: bool
-    # The return data of a call that succeeds, and the revert data of any transaction that fails.
+    # The return data of a call that succeeds, and the revert data of any transaction that
+    # fails.
     output: bytes
     logs: tuple[Log, ...]
     # The storage slots that changed, with their new words, of each deployment of the build by
@@ -270,11 +281,12 @@ class Node:
         return self.accounts[index]
 
     def transact(self, tx: TxParams) -> TxReceipt:
-        """Sends `tx`, from account 0 with TX_GAS unless `tx` sets them, and returns the receipt.
-        Errors with RuntimeError when the transaction fails."""
+        """Sends `tx`, from account 0 with TX_GAS unless `tx` sets them, and returns the
+        receipt. Errors with RuntimeError when the transaction fails."""
         receipt = self.receipt({"from": self.accounts[0], "gas": TX_GAS, **tx})
         if not _succeeded(receipt):
-            raise RuntimeError(f"the transaction {receipt['transactionHash'].to_0x_hex()} failed")
+            tx_hash = receipt['transactionHash'].to_0x_hex()
+            raise RuntimeError(f"the transaction {tx_hash} failed")
         return receipt
 
     def receipt(self, tx: TxParams) -> TxReceipt:
@@ -296,9 +308,9 @@ class Node:
 
     @contextmanager
     def session(self, compiled: Compiled, build: Build) -> Iterator[Session]:
-        """Yields a Session of `build` of `compiled` that starts from the node's state now, so that
-        every build gets the same addresses (DESIGN.md §10, "On a node"). Errors as Node.isolated
-        does."""
+        """Yields a Session of `build` of `compiled` that starts from the node's state now, so
+        that every build gets the same addresses (DESIGN.md §10, "On a node"). Errors as
+        Node.isolated does."""
         with self.isolated():
             yield Session(self, compiled, build)
 
@@ -320,9 +332,9 @@ def _storage(accounts: dict[ChecksumAddress, TraceData], account: ChecksumAddres
 
 
 def _changed_slots(pre: Storage, post: Storage) -> Storage:
-    """Returns each slot of `pre` or `post` with its word in `post`, or the zero word when `post`
-    lacks it. The two are one account's storage in a prestate trace in diff mode, which lists
-    only the slots that the transaction changed."""
+    """Returns each slot of `pre` or `post` with its word in `post`, or the zero word when
+    `post` lacks it. The two are one account's storage in a prestate trace in diff mode, which
+    lists only the slots that the transaction changed."""
     return {s: post.get(s, ZERO_WORD) for s in sorted(pre.keys() | post.keys())}
 
 
@@ -445,7 +457,8 @@ class Session:
         logs = tuple(Log(tuple(e["topics"]), e["data"]) for e in receipt["logs"])
         return Effects(success, output, logs, storage)
 
-    def _storage_diff(self, receipt: TxReceipt, book: Addresses) -> dict[DeploymentName, Storage]:
+    def _storage_diff(self, receipt: TxReceipt,
+                      book: Addresses) -> dict[DeploymentName, Storage]:
         """Returns the storage slots of each deployment of `book` that the transaction of
         `receipt` changed, leaving out the deployments with none."""
         diff = self.node.state_diff(receipt)

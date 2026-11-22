@@ -21,6 +21,10 @@ import cli_check
 import node
 from node import Build, Compiled, Entry, Gas, Label, Node, Session
 
+# The builds of the gas table in docs/adr/0021-frames-gas-and-depth.md.
+FE_BUILDS: tuple[Build, ...] = (Build.FE_O1, Build.FE_OS)
+BUILDS: tuple[Build, ...] = (Build.FE0, *FE_BUILDS)
+
 
 class CallGas(NamedTuple):
     """The gas each build's code spent on one call."""
@@ -50,10 +54,10 @@ class Measured(NamedTuple):
 def measure(n: Node, path: Path) -> ProgramGas:
     """Deploys each build of the program at `path` and sends it the calls of its call script.
     Errors with RuntimeError when a build does not deploy, and as node.Compiled.load does."""
-    compiled = Compiled.load(path, Build)
+    compiled = Compiled.load(path, BUILDS)
     entries = compiled.calls()
     columns = []
-    for b in Build:
+    for b in BUILDS:
         with n.session(compiled, b) as s:
             columns.append(_measure_build(s, entries))
     out = []
@@ -61,7 +65,8 @@ def measure(n: Node, path: Path) -> ProgramGas:
         if _disagree(measured):
             print(f"warning: {path.name} {entry.label}: the builds disagree on success",
                   file=sys.stderr)
-        out.append(CallGas(entry.label, {b: m.gas for b, m in zip(Build, measured, strict=True)}))
+        gas = {b: m.gas for b, m in zip(BUILDS, measured, strict=True)}
+        out.append(CallGas(entry.label, gas))
     return ProgramGas(compiled.program.path.stem, out)
 
 
@@ -93,17 +98,18 @@ def line(name: str, cells: Iterable[object], ratios: Iterable[str]) -> str:
 
 def row(name: str, gas: dict[Build, Gas]) -> str:
     """Returns the line of the gas of each build and Fe0's ratio to each Fe build."""
-    return line(name, (gas[b] for b in Build), (ratio(gas[Build.FE0], gas[b]) for b in Build.fe()))
+    return line(name, (gas[b] for b in BUILDS),
+                (ratio(gas[Build.FE0], gas[b]) for b in FE_BUILDS))
 
 
 def report(results: list[ProgramGas], show_calls: bool) -> None:
-    print(line("program", (b.label for b in Build), (f"/O{b.level}" for b in Build.fe())))
+    print(line("program", (b.label for b in BUILDS), (f"/O{b.level}" for b in FE_BUILDS)))
     for p in results:
-        print(row(p.name, {b: p.total(b) for b in Build}))
+        print(row(p.name, {b: p.total(b) for b in BUILDS}))
         if show_calls:
             for c in p.calls:
                 print(row(f"  {c.label}", c.gas))
-    print(row("all", {b: Gas(sum(p.total(b) for p in results)) for b in Build}))
+    print(row("all", {b: Gas(sum(p.total(b) for p in results)) for b in BUILDS}))
 
 
 def main() -> None:

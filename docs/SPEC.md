@@ -8,9 +8,10 @@ and must behave the same way: for every deployment and call, the same success or
 or revert data, logs and storage writes. Fe0 may reject programs that Fe accepts, never the
 other way round. Where this document and the official compiler disagree, the compiler wins and
 the document is fixed.
-- The official compiler's build is its build at `-O 1`, its default optimisation level. A
-  difference between two of its own levels is a bug in the official compiler.
-- The rule holds given enough gas. The two builds use different amounts of gas, so a call
+- The official compiler's reference build is the one at `-O 1`, its default optimisation
+  level. A difference between two of its levels is a bug in the official compiler. DESIGN.md
+  §10, "Fe's other levels", says how the tools look for one.
+- The rule holds given enough gas. Fe0's and Fe's builds use different amounts of gas, so a call
   with a tight gas limit may fail under one and succeed under the other. DESIGN.md §10 names
   the gas limits that the tests use.
 - The rule holds below Fe's recursion limit. Fe keeps return addresses on the EVM stack, and
@@ -195,7 +196,8 @@ field       = IDENT ":" type ;
 
 contract    = "contract" IDENT [ effects ] "{" { cfield } [ init ] { recv } "}" ;
 effects     = "uses" "(" [ effect { "," effect } [ "," ] ] ")" ;
-effect      = IDENT ":" [ "mut" ] ( "Ctx" | "Log" | "Call" ) ;  (* §6, "The caller", "Events", "Calls" *)
+(* §6, "The caller", "Events", "Calls" *)
+effect      = IDENT ":" [ "mut" ] ( "Ctx" | "Log" | "Call" ) ;
 cfield      = "mut" IDENT ":" ( type | map ) [ "," ] ;   (* v1: mut only, see §6 *)
 event       = "#" "[" "event" "]" NL [ "pub" ] "struct" IDENT "{" [ efields ] "}" ;
 efields     = efield { "," efield } [ "," ] ;
@@ -235,11 +237,12 @@ mul         = unary { ( "*" | "/" | "%" ) unary } ;
 unary       = ( "!" | "~" | "+" ) unary | primary ;
 args        = arg { "," arg } [ "," ] ;
 arg         = [ IDENT ":" ] expr ;
-primary     = INT | "true" | "false" | IDENT "(" [ args ] ")" | IDENT | "(" expr ")" | block | if
-            | assert | ctx_read | zero | index | emit | msg_call ;
+primary     = INT | "true" | "false" | IDENT "(" [ args ] ")" | IDENT | "(" expr ")" | block
+            | if | assert | ctx_read | zero | index | emit | msg_call ;
 if          = "if" expr block [ "else" ( if | block ) ] ;
 assert      = "assert" "!" "(" expr [ "," STRING ] ")" ;
-ctx_read    = IDENT "." IDENT "(" ")" ;   (* a method of Ctx other than emit and call, which have their own rules; §6, "The caller" *)
+(* A method of Ctx other than emit and call, which have their own rules; §6, "The caller" *)
+ctx_read    = IDENT "." IDENT "(" ")" ;
 zero        = "Address" "::" "zero" "(" ")" ;
 index       = IDENT "[" expr "]" ;
 emit        = IDENT "." "emit" "(" IDENT "{" [ args ] "}" ")" ;   (* §6, "Events" *)
