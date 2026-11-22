@@ -6,11 +6,11 @@ Compiler calls them in turn (DESIGN.md §8). `tools/deploy.py` deployed them, an
 
 | Contract | Address |
 |---|---|
-| Compiler | [`0xD7131e490e0194fb306dfE93dfb686081FBCB0b4`](https://arbiscan.io/address/0xD7131e490e0194fb306dfE93dfb686081FBCB0b4) |
-| Lexer | [`0xD98A2b13cE4820A4F82fAa17b92066507B353FA6`](https://arbiscan.io/address/0xD98A2b13cE4820A4F82fAa17b92066507B353FA6) |
-| Parser | [`0x3568d59585B96366ee9F519E3Fef57f71E7b22A6`](https://arbiscan.io/address/0x3568d59585B96366ee9F519E3Fef57f71E7b22A6) |
-| Checker | [`0x6459F8eCA5796E33e9b0ECC76423Ed2fd0e86dcb`](https://arbiscan.io/address/0x6459F8eCA5796E33e9b0ECC76423Ed2fd0e86dcb) |
-| Back | [`0xB7d731a2ACD18A2FeAB48963A9C3A41fD080Db57`](https://arbiscan.io/address/0xB7d731a2ACD18A2FeAB48963A9C3A41fD080Db57) |
+| Compiler | [`0x4956c350E3a9e1FEEcEe0FE904053bD2931703b4`](https://arbiscan.io/address/0x4956c350E3a9e1FEEcEe0FE904053bD2931703b4) |
+| Lexer | [`0x821F84a486c458311707e7EEd85b58E9FE2FC2e3`](https://arbiscan.io/address/0x821F84a486c458311707e7EEd85b58E9FE2FC2e3) |
+| Parser | [`0x02715221094D53c3ADF8E67559e1a275AcB101Ba`](https://arbiscan.io/address/0x02715221094D53c3ADF8E67559e1a275AcB101Ba) |
+| Checker | [`0xa405641a6674b0f2dE5af9fC2d203FB5B1C089fa`](https://arbiscan.io/address/0xa405641a6674b0f2dE5af9fC2d203FB5B1C089fa) |
+| Back | [`0xb41576E48ccF1905cD7f81d93918916B8d638a30`](https://arbiscan.io/address/0xb41576E48ccF1905cD7f81d93918916B8d638a30) |
 
 The [playground](https://nikicat.github.io/fe-contest/) does steps 1 to 3 below in the browser
 ([playground/README.md](../playground/README.md)).
@@ -19,9 +19,9 @@ The [playground](https://nikicat.github.io/fe-contest/) does steps 1 to 3 below 
 prints the version of the release that Compiler was built from:
 
 ```sh
-cast call --rpc-url https://arb1.arbitrum.io/rpc 0xD7131e490e0194fb306dfE93dfb686081FBCB0b4 \
+cast call --rpc-url https://arb1.arbitrum.io/rpc 0x4956c350E3a9e1FEEcEe0FE904053bD2931703b4 \
   "version()(string)"
-# "0.1.0"
+# "0.1.2"
 ```
 
 ## 1. Compile a program, for free
@@ -37,7 +37,7 @@ The output is the same as the native CLI's (`out/cli/fe0_cli < corpus/counter.fe
 byte. Without our tools, Foundry's `cast` does the same:
 
 ```sh
-cast call --rpc-url https://arb1.arbitrum.io/rpc 0xD7131e490e0194fb306dfE93dfb686081FBCB0b4 \
+cast call --rpc-url https://arb1.arbitrum.io/rpc 0x4956c350E3a9e1FEEcEe0FE904053bD2931703b4 \
   "compile(bytes)(bytes)" "$(cast from-utf8 "$(cat corpus/counter.fe)")"
 ```
 
@@ -59,15 +59,16 @@ line 5, column 5.
 `deploy(bytes src, bytes args)` compiles the source and deploys it with the constructor
 arguments `args`. `tools/deploy.py` deployed the counter this way, with start value 2:
 
-- the transaction: [`0x3326fcee…`](https://arbiscan.io/tx/0x3326fceef46210efd34f7641e05949a16c3808ca377f3129cbd12c348fd7e626),
-  2,103,265 gas;
-- the new contract: [`0x3c673F8AC1120f54443c4DfdEA569FDf37B2EBE0`](https://arbiscan.io/address/0x3c673F8AC1120f54443c4DfdEA569FDf37B2EBE0).
+- the transaction: [`0x82c90535…`](https://arbiscan.io/tx/0x82c905354dcefaea0ea60435283886a0bd580094ae08833c443047b31f686a52),
+  2,103,335 gas;
+- the new contract: [`0xD7CFBe5bd425D0aDB78caFb38F959D0583d030f2`](https://arbiscan.io/address/0xD7CFBe5bd425D0aDB78caFb38F959D0583d030f2).
 
 Its `get()` returns 2:
 
 ```sh
-cast call --rpc-url https://arb1.arbitrum.io/rpc 0x3c673F8AC1120f54443c4DfdEA569FDf37B2EBE0 \
+cast call --rpc-url https://arb1.arbitrum.io/rpc 0xD7CFBe5bd425D0aDB78caFb38F959D0583d030f2 \
   "get()(uint256)"
+# 2
 ```
 
 ## 4. Deploy the compiler

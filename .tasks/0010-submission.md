@@ -24,22 +24,15 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
   `deployments/42161.json`. A fix after the freeze needs a new release and a new deploy.
 
 ## State
-- Release `v0.1.1` is tagged and pushed, but not deployed. It makes Compiler's `deploy` revert
-  when CREATE creates no contract; v0.1.0 returned the zero address, so a transaction with a
-  tight gas estimate succeeded and created nothing. chain_check checks it with
-  corpus/init_args.fe.
-- Release v0.1.2 is committed but not tagged. It exists because tools/deploy.py
-  changed after the v0.1.1 tag, and deploy.py deploys only a tagged commit. Its contracts
-  differ from v0.1.1's only in `version()`. tools/deploy.py deploys the five contracts in one
-  transaction, through Multicall3 and CreateX's `deployCreate2`, at CREATE2 addresses known
-  before the transaction. The rehearsal on anvil (`--rehearse`) passes (13.7M gas), and an
-  `eth_call` of the batch on Arbitrum One returns the predicted addresses with a 13.9M gas
-  estimate, which includes Arbitrum's fee for posting the calldata to L1.
-- Arbitrum One still runs v0.1.0, deployed on Nov 22 from e149684. DEMO.md and
-  `deployments/42161.json` hold its addresses, and its demo passed.
+- Arbitrum One runs release v0.1.2 (ba1e2e2, tagged and pushed), deployed on Nov 22.
+  `deployments/42161.json` and docs/DEMO.md hold its addresses. The five contracts were
+  created in one transaction (13,797,200 gas), and the demo deployed the counter (2,103,335
+  gas), whose `get()` returns 2. Compiler's `deploy` reverts when CREATE creates no contract,
+  which tools/chain_check.py checks with corpus/init_args.fe.
 - The playground (playground/README.md) is written and checked in jsdom on an anvil fork,
-  against a v0.1.1 build, but not in a real browser. `.github/workflows/pages.yml` publishes it
-  once Pages is on, with GitHub Actions as the source.
+  against a v0.1.1 build, whose contracts differ from v0.1.2's only in `version()`. It is not
+  checked in a real browser yet. `.github/workflows/pages.yml` publishes it once GitHub Pages
+  is on, with GitHub Actions as the source.
 - README.md is written and reviewed. Its gas table and ADR 0021's were measured on Fe 26.7.0:
   over the whole corpus, Fe0's gas is 1.43 times that of Fe's build at `-O 1`.
 - The registration email lists what a submission must include: a public GitHub repository, the
@@ -47,10 +40,8 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
   disclosures. The README covers all of them but the commit, which goes in the form.
 
 ## Next
-- Tag v0.1.2, then deploy it: `rm deployments/42161.json`, run `tools/deploy.py`
-  from the tag (one approval for the contracts, one for the demo), then update
-  the addresses and the demo transaction in docs/DEMO.md and commit them with the new
-  `deployments/42161.json`. Try the playground in a browser against it.
+- Commit docs/DEMO.md and `deployments/42161.json`. Try the playground in a browser against
+  the v0.1.2 Compiler.
 - Nov 24: push, make the repo public (Apache-2.0 LICENSE is in place), turn on Pages, and
   submit through the link in `docs/registration-confirmation.txt`. The form takes the SHA of
   the final HEAD, the commit after the tag that gives DEMO.md the live addresses. It also takes
