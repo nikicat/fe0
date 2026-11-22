@@ -75,3 +75,7 @@ jobs:
             (cd fe0-chain && fe fmt --check)
             uv run --project tools --locked tools/chain_check.py
             echo "::endgroup::"
+            echo "::group::playground"
+            uv run --project tools --locked tools/playground.py
+            node --test playground/*.test.mjs
+            echo "::endgroup::"

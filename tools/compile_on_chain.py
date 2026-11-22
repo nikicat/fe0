@@ -8,19 +8,17 @@ when the program compiles and with 1 when Compiler rejects it.
 The on-chain compiler reports only the first error, and no warnings.
 """
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
 
-from eth_typing import ABI, ChecksumAddress, HexStr
-from hexbytes import HexBytes
+from eth_typing import ChecksumAddress
 from web3 import HTTPProvider, Web3
 from web3.exceptions import ContractLogicError
 
-from chain_check import INTERFACE, Contract, Reverted
+from chain_check import Contract, Reverted, committed_interface, revert_data
 from cli_check import ExitCode
-from deploy import ARBITRUM_ONE, ARBITRUM_RPC, Deployment
+from deploy import ARBITRUM, Deployment, Url
 from fegen import FE0, ROOT, DiagCode, FeSource, LineCol
 
 MESSAGES: Path = ROOT / "fe0-cli/src/messages.fe"
@@ -40,28 +38,27 @@ def messages() -> dict[DiagCode, str]:
 
 def compiler(chain_id: int) -> ChecksumAddress:
     """Returns the address of Compiler that deployments/<chain id>.json records. Errors as
-    `Deployment.read` does, or with KeyError when it records none."""
-    return Deployment.read(Deployment.file(chain_id)).addresses[Contract.COMPILER]
+    `Deployment.on` does, or with KeyError when it records none."""
+    return Deployment.on(chain_id).addresses[Contract.COMPILER]
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("program", type=Path, help="a Fe0 source file")
-    ap.add_argument("--rpc", default=ARBITRUM_RPC, help="the chain's JSON-RPC URL")
-    ap.add_argument("--chain", type=int, default=ARBITRUM_ONE, help="the chain id")
+    ap.add_argument("--rpc", type=Url, default=ARBITRUM["rpc"], help="the chain's JSON-RPC URL")
+    ap.add_argument("--chain", type=int, default=ARBITRUM["id"], help="the chain id")
     args = ap.parse_args()
     source = FeSource(args.program.read_text())
     w3 = Web3(HTTPProvider(args.rpc))
-    abi: ABI = json.loads(INTERFACE.read_text())
     try:
-        contract = w3.eth.contract(compiler(args.chain), abi=abi)
+        contract = w3.eth.contract(compiler(args.chain), abi=committed_interface())
     except RuntimeError as e:
         sys.exit(str(e))
     try:
         code: bytes = contract.functions.compile(source.encode()).call()
     except ContractLogicError as e:
-        got = Reverted.of(bytes(HexBytes(HexStr(str(e.data)))))
+        got = Reverted.of(revert_data(e))
         if got.diag is None:
             sys.exit(f"{args.program}: Compiler reverts with {got.describe(source)}")
         at = LineCol.of(got.diag.offset, source)

@@ -126,6 +126,9 @@ installs anvil with Foundry.
 shows an error, and deploys a program through the on-chain compiler. `tools/deploy.py
 --rehearse` runs the same demo on a local anvil node.
 
+The [playground](https://nikicat.github.io/fe-contest/) is a web page for the same compiler
+([playground/README.md](playground/README.md)).
+
 ## Results
 
 - Every program of `corpus/` and `corpus/gen/` behaves the same under Fe0 and Fe. Every
@@ -205,7 +208,9 @@ grammar of SPEC.md §3.1 gives it, and leave the parser to the tests.
   `spike-keccak/`, `spike-layout/`, `spike-lexer/`, `spike-limits/`, `spike-native/` and
   `spike-spec/`, and the ADRs dated before Nov 3. The last commit before the window is
   `0649397`. Everything after it was written in the window.
-- **Reused code.** None. Fe0 uses only Fe's `core` and `std` libraries.
+- **Reused code.** Fe0 uses only Fe's `core` and `std` libraries. The playground loads
+  [viem](https://viem.sh) from a CDN for ABI encoding and decoding, and for its RPC and wallet
+  clients.
 - **AI assistance.** Most of the code, tests and docs were written with an AI assistant (Claude
   Code). Each claim about Fe was checked by a probe or a differential test against Fe 26.7.0.
 

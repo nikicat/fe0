@@ -12,6 +12,9 @@ Compiler calls them in turn (DESIGN.md §8). `tools/deploy.py` deployed them, an
 | Checker | [`0x6459F8eCA5796E33e9b0ECC76423Ed2fd0e86dcb`](https://arbiscan.io/address/0x6459F8eCA5796E33e9b0ECC76423Ed2fd0e86dcb) |
 | Back | [`0xB7d731a2ACD18A2FeAB48963A9C3A41fD080Db57`](https://arbiscan.io/address/0xB7d731a2ACD18A2FeAB48963A9C3A41fD080Db57) |
 
+The [playground](https://nikicat.github.io/fe-contest/) does steps 1 to 3 below in the browser
+([playground/README.md](../playground/README.md)).
+
 `fe0-chain/README.md` describes Compiler's interface, its errors and its releases. This call
 prints the version of the release that Compiler was built from:
 

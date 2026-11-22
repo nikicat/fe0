@@ -11,7 +11,7 @@ use fe0::parser::parse_lexed
 use fe0::ast::Ast
 use fe0::wire::{Reader, from_words, words}
 use std::abi::{Bytes, DynArray, sol}
-use std::evm::{Address, Call, Create, revert_error}
+use std::evm::{Address, Call, Create, bubble_last_revert, revert_error}
 
 pub msg LexerMsg {
     #[selector = sol("lex(bytes)")]
@@ -38,7 +38,8 @@ pub msg CompilerMsg {
     #[selector = sol("compile(bytes)")]
     Compile { src: Bytes } -> Bytes,
     // Deploys the contract of `src` with the ABI-encoded constructor arguments `args`, and
-    // returns its address. Errors with CompileError when `src` has an error.
+    // returns its address. Errors with CompileError when `src` has an error, and with the init
+    // code's revert data when CREATE creates no contract.
     #[selector = sol("deploy(bytes,bytes)")]
     Deploy { src: Bytes, args: Bytes } -> Address,
     // Returns the version of the release that this Compiler was built from
@@ -133,10 +134,15 @@ pub contract Compiler {
             var initcode = MemBuffer::empty()
             initcode.extend_from(phases.compile(src).span())
             initcode.extend_from(args.span())
-            create.create_raw(value: Wei::zero(), init_code: initcode.span())
+            let created = create.create_raw(value: Wei::zero(), init_code: initcode.span())
+            // CREATE gives the zero address instead of reverting.
+            if created == Address::zero() {
+                bubble_last_revert()
+            }
+            created
         }
         Version -> String<5> {
-            "0.1.0"
+            "0.1.1"
         }
     }
 }

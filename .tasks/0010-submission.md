@@ -24,11 +24,15 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
   `deployments/42161.json`. A fix after the freeze needs a new release and a new deploy.
 
 ## State
-- Code is frozen. Release `v0.1.0` is the tag on e149684. tools/deploy.py deployed it to
-  Arbitrum One on Nov 22, and the demo that deploy.py runs passed: `version()` returns "0.1.0",
-  and the counter.fe it deployed through Compiler returns 2 from `get()`. DEMO.md and
-  `deployments/42161.json` have the release's addresses, and DEMO.md's commands were run against
-  them.
+- Release `v0.1.1` is tagged and pushed, but not deployed. It makes Compiler's `deploy` revert
+  when CREATE creates no contract; v0.1.0 returned the zero address, so a transaction with a
+  tight gas estimate succeeded and created nothing. chain_check checks it with
+  corpus/init_args.fe.
+- Arbitrum One still runs v0.1.0, deployed on Nov 22 from e149684. DEMO.md and
+  `deployments/42161.json` hold its addresses, and its demo passed.
+- The playground (playground/README.md) is written and checked in jsdom on an anvil fork,
+  against a v0.1.1 build, but not in a real browser. `.github/workflows/pages.yml` publishes it
+  once Pages is on, with GitHub Actions as the source.
 - README.md is written and reviewed. Its gas table and ADR 0021's were measured on Fe 26.7.0:
   over the whole corpus, Fe0's gas is 1.43 times that of Fe's build at `-O 1`.
 - The registration email lists what a submission must include: a public GitHub repository, the
@@ -36,8 +40,10 @@ the repo goes public. Resubmitting before the deadline is allowed; the latest va
   disclosures. The README covers all of them but the commit, which goes in the form.
 
 ## Next
-- A fix from now on needs a new release (v0.1.1) and a new deploy.
-- Nov 24: push the branch and the tag, make the repo public (Apache-2.0 LICENSE is in place),
-  and submit through the link in `docs/registration-confirmation.txt`. The form takes the SHA of
-  the final HEAD, the commit after the tag that gives DEMO.md the live addresses, not e149684.
-  It also takes the Fe version, `fe 26.7.0`.
+- Deploy v0.1.1: `rm deployments/42161.json`, run `tools/deploy.py` from the tag, then update
+  the addresses and the demo transaction in docs/DEMO.md and commit them with the new
+  `deployments/42161.json`. Try the playground in a browser against it.
+- Nov 24: push, make the repo public (Apache-2.0 LICENSE is in place), turn on Pages, and
+  submit through the link in `docs/registration-confirmation.txt`. The form takes the SHA of
+  the final HEAD, the commit after the tag that gives DEMO.md the live addresses. It also takes
+  the Fe version, `fe 26.7.0`.

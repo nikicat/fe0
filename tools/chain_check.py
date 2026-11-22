@@ -9,6 +9,8 @@ initcode fits EIP-3860. Then it deploys the phase contracts and Compiler on anvi
 - compiles every reject program of corpus/reject/. Compiler must revert with the CompileError
   of the program's `// expect:` header;
 - deploys corpus/counter.fe with `deploy(bytes,bytes)` in a transaction, and calls it;
+- calls `deploy(bytes,bytes)` by `eth_call` with corpus/init_args.fe and arguments that make
+  its init code overflow. `deploy` must revert with the init code's Panic;
 - calls `version()`, which must return the version in fe0-chain/fe.toml.
 
 It also checks that fe0-chain/Compiler.abi.json, the interface that callers use, is Compiler's
@@ -30,9 +32,10 @@ from typing import NamedTuple, NewType, Self
 
 import web3.contract
 from eth_abi.exceptions import DecodingError
-from eth_typing import ABI, ABIElement, ABIError, ChecksumAddress, HexStr
+from eth_typing import ABI, ABIElement, ABIError, ChecksumAddress, HexStr, TypeStr
 from hexbytes import HexBytes
 from web3 import Web3
+from web3.contract.contract import ContractFunction
 from web3.exceptions import ContractLogicError
 from web3.types import TxParams
 
@@ -57,6 +60,13 @@ MAX_INITCODE: int = 2 * MAX_RUNTIME
 # The program that check_counter deploys, and the start value it deploys it with.
 COUNTER: Path = embed.CORPUS / "counter.fe"
 START: int = 2
+# The program that check_failed_init passes to `deploy`.
+INIT_ARGS: Path = embed.CORPUS / "init_args.fe"
+# The ABI types of the parameters of INIT_ARGS's init.
+INIT_ARGS_TYPES: tuple[TypeStr, ...] = ("uint256", "address", "bool")
+# Arguments that make INIT_ARGS's init overflow (corpus/init_args.calls).
+OVERFLOWING_ARGS: tuple[int, ChecksumAddress, bool] = (
+    2**255, Web3.to_checksum_address((0xbeef).to_bytes(20)), True)
 
 
 # A version of fe0-chain, such as "0.1.0" (fe0-chain/README.md, "Releases").
@@ -158,6 +168,13 @@ def interface() -> ABI:
     return [*Contract.COMPILER.abi(), *(errors[n] for n in sorted(errors))]
 
 
+def committed_interface() -> ABI:
+    """Returns the interface that INTERFACE holds. Errors with OSError when there is no such
+    file."""
+    abi: ABI = json.loads(INTERFACE.read_text())
+    return abi
+
+
 def interface_text() -> str:
     """Returns the text that INTERFACE must hold: `interface` as JSON."""
     return json.dumps(interface(), indent=2) + "\n"
@@ -174,6 +191,11 @@ def check_interface() -> list[FailureMessage]:
         return [FailureMessage(f"{INTERFACE.relative_to(ROOT)} differs from the built ABI;"
                                f" run tools/chain_check.py {WRITE_ABI}")]
     return []
+
+
+def revert_data(e: ContractLogicError) -> bytes:
+    """Returns the revert data of the call that raised `e`."""
+    return bytes(HexBytes(HexStr(str(e.data))))
 
 
 class Compiled(NamedTuple):
@@ -304,13 +326,16 @@ class Chain:
         try:
             code: bytes = call.call(self._tx())
         except ContractLogicError as e:
-            return Reverted.of(bytes(HexBytes(HexStr(str(e.data)))))
+            return Reverted.of(revert_data(e))
         return Compiled(code, Gas(call.estimate_gas(self._tx())))
+
+    def _deploy_call(self, source: FeSource, args: bytes) -> ContractFunction:
+        return self.compiler.functions.deploy(source.encode(), args)
 
     def deploy_program(self, source: FeSource, args: bytes) -> Deployed:
         """Deploys `source` with `deploy(bytes,bytes)` in a transaction. Errors as
         `Node.transact` does."""
-        deploy = self.compiler.functions.deploy(source.encode(), args)
+        deploy = self._deploy_call(source, args)
         # The call runs on the same state as the transaction, so it returns the address that the
         # transaction creates.
         address: ChecksumAddress = deploy.call(self._tx())
@@ -355,6 +380,22 @@ class Chain:
         print(f"deploy({COUNTER.name}): {deployed.gas:,} gas, at {deployed.address}")
         return CounterGet.call(w3, deployed.address).failures()
 
+    def check_failed_init(self) -> list[FailureMessage]:
+        """Returns a message unless `deploy` of INIT_ARGS with OVERFLOWING_ARGS, called by
+        `eth_call`, reverts with the init code's Panic."""
+        args = self.node.w3.codec.encode(INIT_ARGS_TYPES, OVERFLOWING_ARGS)
+        deploy = self._deploy_call(FeSource(INIT_ARGS.read_text()), args)
+        what = f"deploy of {INIT_ARGS.name} with an init that overflows"
+        try:
+            address: ChecksumAddress = deploy.call(self._tx())
+        except ContractLogicError as e:
+            revert = revert_data(e)
+            if fegen.Failure.decode(revert) == fegen.Panicked(fegen.OVERFLOW):
+                return []
+            return [FailureMessage(f"{what}: reverts with 0x{revert.hex()},"
+                                   f" not Panic({fegen.OVERFLOW:#x})")]
+        return [FailureMessage(f"{what}: returns {address} instead of reverting")]
+
 
 def check_version(got: str) -> list[FailureMessage]:
     """Returns a message when `got` differs from `version`. `got` is what Compiler's `version()`
@@ -391,6 +432,7 @@ def main() -> None:
         print(f"{len(paths)} programs and {len(rejects)} reject programs compiled on chain;"
               f" the most gas: {largest.gas:,} for {largest.path.name}")
         failures += chain.check_counter()
+        failures += chain.check_failed_init()
         failures += check_version(chain.compiler.functions.version().call())
     sys.exit("\n".join(failures) or None)
 

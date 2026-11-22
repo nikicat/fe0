@@ -38,14 +38,30 @@ from chain_check import (COUNTER, Build, Builds, Contract, CounterGet, Version, 
 from fegen import ROOT
 from node import Node
 
-ARBITRUM_ONE: int = 42161
-ARBITRUM_RPC: str = "https://arb1.arbitrum.io/rpc"
 DEPLOYMENTS: Path = ROOT / "deployments"
 SIGNER: str = "browser-web3-signer"
 
+# A URL, such as a JSON-RPC endpoint.
+Url = NewType("Url", str)
+
+
+class Chain(TypedDict):
+    """A chain that Compiler runs on."""
+
+    id: int
+    name: str
+    rpc: Url
+    # The block explorer, for the playground's links.
+    explorer: Url
+
+
+ARBITRUM: Chain = Chain(id=42161, name="Arbitrum One", rpc=Url("https://arb1.arbitrum.io/rpc"),
+                        explorer=Url("https://arbiscan.io"))
 
 # A full git commit hash.
 Commit = NewType("Commit", str)
+# The git tag of a release (fe0-chain/README.md, "Releases").
+Tag = NewType("Tag", str)
 
 
 def git(*args: str) -> str:
@@ -71,18 +87,22 @@ class Release(NamedTuple):
     @classmethod
     def tagged(cls) -> Self:
         """Returns the release at HEAD. Errors with RuntimeError when the working tree has
-        changes outside DEPLOYMENTS, or when the tag `v<version>` is missing or names a commit
+        changes outside DEPLOYMENTS, or when the release's tag is missing or names a commit
         other than HEAD."""
         release = cls.head()
         # A run that stopped part way leaves its deployment file behind.
         if git("status", "--porcelain", "--", ".", f":!{DEPLOYMENTS.relative_to(ROOT)}"):
             raise RuntimeError("the working tree has changes; commit them and tag the release")
-        tag = f"v{release.version}"
+        tag = release.tag
         if git("tag", "--list", tag) != tag:
             raise RuntimeError(f"no tag {tag}; tag HEAD with it to release it")
         if git("rev-parse", f"{tag}^{{commit}}") != release.commit:
             raise RuntimeError(f"the tag {tag} names a commit other than HEAD")
         return release
+
+    @property
+    def tag(self) -> Tag:
+        return Tag(f"v{self.version}")
 
     def __str__(self) -> str:
         return f"{self.version} ({self.commit[:12]})"
@@ -102,7 +122,7 @@ class Sender(Protocol):
 class Wallet:
     """Sends each transaction from the user's browser wallet, through browser-web3-signer."""
 
-    def __init__(self, rpc: str, chain_id: int) -> None:
+    def __init__(self, rpc: Url, chain_id: int) -> None:
         self.w3 = Web3(HTTPProvider(rpc))
         self.chain_id = chain_id
 
@@ -155,6 +175,12 @@ class Deployment:
     def file(chain_id: int) -> Path:
         """Returns the file that records the deployment on the chain `chain_id`."""
         return DEPLOYMENTS / f"{chain_id}.json"
+
+    @classmethod
+    def on(cls, chain_id: int) -> Self:
+        """Returns the deployment that the file of the chain `chain_id` holds. Errors as `read`
+        does."""
+        return cls.read(cls.file(chain_id))
 
     @classmethod
     def read(cls, path: Path) -> Self:
@@ -249,8 +275,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rehearse", action="store_true", help="deploy on a local anvil node")
-    ap.add_argument("--rpc", default=ARBITRUM_RPC, help="the chain's JSON-RPC URL")
-    ap.add_argument("--chain", type=int, default=ARBITRUM_ONE, help="the chain id")
+    ap.add_argument("--rpc", type=Url, default=ARBITRUM["rpc"], help="the chain's JSON-RPC URL")
+    ap.add_argument("--chain", type=int, default=ARBITRUM["id"], help="the chain id")
     args = ap.parse_args()
     builds = Builds.build()
     if failures := builds.oversize():

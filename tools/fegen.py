@@ -44,8 +44,10 @@ Word = NewType("Word", int)
 AccountIndex = NewType("AccountIndex", int)
 # A number of EXTRA_BYTE bytes that a deployment or call appends after its ABI words.
 ExtraBytes = NewType("ExtraBytes", int)
-# The code of a Panic, with which Fe's own checks fail a test, such as 0x11 for an overflow.
+# The code of a Panic, with which Fe's own checks fail a test.
 PanicCode = NewType("PanicCode", int)
+# The Panic code of an arithmetic overflow (docs/SPEC.md §4).
+OVERFLOW = PanicCode(0x11)
 # A failed test's error names its case by this number (DESIGN.md §10). A call script numbers a
 # case by its line, and the codegen tests number theirs around MAIN_CASE.
 CaseNumber = NewType("CaseNumber", int)

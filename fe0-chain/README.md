@@ -17,7 +17,9 @@ interface ICompiler {
 
     // Compiles `src`, appends `args` to the deploy code and deploys it with CREATE.
     // `args` is the ABI encoding of the program's `init` arguments, or empty.
-    // Returns the new contract's address.
+    // Returns the new contract's address. Errors with the init code's revert data when
+    // CREATE creates no contract. The data is empty when the init code did not revert, such
+    // as when it ran out of gas or returned runtime code over 24,576 bytes (EIP-170).
     function deploy(bytes calldata src, bytes calldata args) external returns (address);
 
     // Returns the version of the release that this Compiler was built from, such as "0.1.0".
