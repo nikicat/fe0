@@ -26,13 +26,15 @@ The registry's list and labels (ADR 0031) come once the registry exists.
   weeks old.
 
 ## State
-Committed on `main`, not pushed. An /unsmell run reviewed the rewrite; its record is in
-`.git/unsmell/20261123-001647/`. Locally: `npm test` (30 tests), `tsc -b`, `vite build` and
-`npm run e2e` (5 tests against a fork of Arbitrum One) pass, on Node 22 and on Node 26.13.1.
-CI has not run it: the dev container image must be rebuilt, with Chromium and Node 26.
+Pushed as `004cf67`. CI passes on it (run 45100503853): in the "playground" group, the unit
+tests, and the 5 Playwright tests against the anvil fork. The Playground workflow (run
+45100503807) builds the page, but its `publish` job fails in `configure-pages` with "Not
+Found", because Pages is not turned on for the repository. Pages waits until the repository
+is public (T0010).
 
 ## Next
-Push, and check the "playground" group of CI and the Pages build. Then close this
+When T0010 makes the repository public and turns on Pages with GitHub Actions as its source,
+re-run the Playground workflow and open <https://nikicat.github.io/fe0/>. Then close this
 task.
 
 ## Plan from /unsmell (run 20261123-001647)
