@@ -75,7 +75,8 @@ jobs:
             (cd fe0-chain && fe fmt --check)
             uv run --project tools --locked tools/chain_check.py
             echo "::endgroup::"
+            # playground/README.md, "Tests".
             echo "::group::playground"
             uv run --project tools --locked tools/playground.py
-            node --test playground/*.test.mjs
+            (cd playground && npm ci && npm test && CI=1 npm run e2e)
             echo "::endgroup::"

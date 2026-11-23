@@ -7,3 +7,10 @@ spike-harness/
 docs/registration-confirmation.txt
 __pycache__/
 corpus/gen/
+# The playground's packages, build and test output, and the configuration that
+# tools/playground.py writes
+playground/node_modules/
+playground/dist/
+playground/src/config.ts
+playground/test-results/
+playground/playwright-report/

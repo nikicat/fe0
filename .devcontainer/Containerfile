@@ -4,8 +4,11 @@
 FROM docker.io/library/debian:trixie-20261104-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
+# chromium for the playground's browser tests (playground/playwright.config.ts), from Debian, so
+# that it gets Debian's security fixes on both architectures
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl git make gcc libc6-dev xz-utils \
+      chromium \
  && rm -rf /var/lib/apt/lists/*
 
 # uv from its release, and the latest CPython through it as the default python3; each uv
@@ -31,11 +34,12 @@ RUN set -e; arch=$(dpkg --print-architecture); \
     eval echo \"\$FE_SHA256_$arch  /usr/local/bin/fe\" | sha256sum -c -; \
     chmod 755 /usr/local/bin/fe
 
-# Node from its release, for building Fe from source: the build script of Fe's tree-sitter
-# grammar runs `tree-sitter generate`, whose CLI `npm ci` in crates/tree-sitter-fe installs
-ARG NODE=22.12.0
-ARG NODE_SHA256_amd64=22982235e1b71fa8850f82edd09cdae7e3f32df1764a9ec298c72d25ef2c164f
-ARG NODE_SHA256_arm64=8cfd5a8b9afae5a2e0bd86b0148ca31d2589c0ea669c2d0b11c132e35d90ed68
+# Node from its release, for the playground's build and tests (ADR 0032), and for building Fe
+# from source. Fe's tree-sitter grammar runs `tree-sitter generate` in its build script, and
+# `npm ci` in crates/tree-sitter-fe installs that CLI.
+ARG NODE=26.13.1
+ARG NODE_SHA256_amd64=5c063e46bab0fbc1c17cc445d7ff129cbdcd0471be6ed83b6ab864f8143bc864
+ARG NODE_SHA256_arm64=89e1853138db51e8b82d3e98ba9c0d3f2956a28e5e55ea1b7e12d25aae92d5dd
 RUN set -e; arch=$(dpkg --print-architecture); \
     case $arch in amd64) narch=x64 ;; arm64) narch=arm64 ;; esac; \
     curl -fsSLo /tmp/node.txz "https://nodejs.org/dist/v$NODE/node-v$NODE-linux-$narch.tar.xz"; \

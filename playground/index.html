@@ -5,82 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fe0 playground</title>
 <meta name="description"
-  content="Compile and deploy Fe0 programs with the Fe0 compiler that runs on Arbitrum One.">
-<link rel="stylesheet" href="style.css">
-<script type="module" src="app.js"></script>
+  content="Compile and deploy Fe0 programs with the Fe0 compiler that runs on chain.">
+<script type="module" src="./src/main.tsx"></script>
 </head>
 <body>
-<header>
-  <h1>Fe0 playground</h1>
-  <p>
-    Fe0 is a subset of <a href="https://github.com/argotorg/fe">Fe</a>, the smart contract
-    language, with a compiler written in Fe. The compiler also runs on chain, as five contracts
-    on Arbitrum One. This page sends your program to it: a compile is a free
-    <code>eth_call</code>, and a deploy is a transaction from your wallet.
-  </p>
-  <p class="meta" id="release">Loading the deployment…</p>
-</header>
-
-<main>
-  <section class="editor-pane" aria-label="Program">
-    <div class="toolbar">
-      <label>Example
-        <select id="example"></select>
-      </label>
-      <button type="button" id="share">Copy link</button>
-    </div>
-    <div class="editor">
-      <pre class="gutter" id="gutter" aria-hidden="true"></pre>
-      <textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off"
-        aria-label="Fe0 source"></textarea>
-    </div>
-  </section>
-
-  <section class="side" aria-label="Results">
-    <div class="panel">
-      <h2>Compile</h2>
-      <p id="status" class="status">Type a program to compile it.</p>
-      <details id="code-box" hidden>
-        <summary>Deploy code</summary>
-        <button type="button" id="copy-code">Copy</button>
-        <pre id="code"></pre>
-      </details>
-    </div>
-
-    <div class="panel">
-      <h2>Deploy</h2>
-      <p class="hint">Deploying sends <code>deploy(src, args)</code> to the compiler on chain,
-        which compiles the program and creates the contract. <code>args</code> holds the values
-        of the parameters of <code>init</code>, the contract's constructor, from the fields
-        below. It costs gas on Arbitrum One, and the page asks your wallet to switch to that
-        chain.</p>
-      <div id="init-args" class="fields"></div>
-      <div class="row">
-        <button type="button" id="connect">Connect wallet</button>
-        <button type="button" id="deploy" disabled>Deploy</button>
-      </div>
-      <p id="deploy-status" class="status"></p>
-    </div>
-
-    <div class="panel">
-      <h2>Call and send</h2>
-      <label class="address">Contract: the one you deployed, or any address
-        <input id="target" placeholder="0x… address of a deployed contract"
-          spellcheck="false">
-      </label>
-      <p class="hint">A call is a free <code>eth_call</code>. A send is a transaction from your
-        wallet. There is one form for each message the program's contract receives (its
-        <code>msg</code> variants), guessed from the source. A wrong guess sends
-        calldata that the contract does not expect, and it reverts.</p>
-      <div id="variants"></div>
-    </div>
-  </section>
-</main>
-
-<footer>
-  <a data-repo="">Repository</a> ·
-  <a data-repo="/blob/main/docs/SPEC.md">Fe0's spec</a> ·
-  <a data-repo="/blob/main/docs/DEMO.md">The demo from the command line</a>
-</footer>
+<div id="root"></div>
 </body>
 </html>

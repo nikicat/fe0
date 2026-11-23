@@ -52,6 +52,14 @@ SIGNER: str = "browser-web3-signer"
 Url = NewType("Url", str)
 
 
+class Currency(TypedDict):
+    """The native currency of a chain, which pays its gas."""
+
+    name: str
+    symbol: str
+    decimals: int
+
+
 class Chain(TypedDict):
     """A chain that Compiler runs on."""
 
@@ -60,10 +68,12 @@ class Chain(TypedDict):
     rpc: Url
     # The block explorer, for the playground's links.
     explorer: Url
+    currency: Currency
 
 
 ARBITRUM: Chain = Chain(id=42161, name="Arbitrum One", rpc=Url("https://arb1.arbitrum.io/rpc"),
-                        explorer=Url("https://arbiscan.io"))
+                        explorer=Url("https://arbiscan.io"),
+                        currency=Currency(name="Ether", symbol="ETH", decimals=18))
 
 # Multicall3 and CreateX, each at the same address on every chain that has it.
 MULTICALL3: ChecksumAddress = Web3.to_checksum_address(
@@ -266,6 +276,17 @@ class DeploymentRecord(NamedTuple):
     def file(chain_id: int) -> Path:
         """Returns the file that records the deployment on the chain `chain_id`."""
         return DEPLOYMENTS / f"{chain_id}.json"
+
+    @staticmethod
+    def chain_ids() -> list[int]:
+        """Returns the id of each chain that has a file, in ascending order. Errors with
+        RuntimeError when a file's name is not a chain id."""
+        ids = []
+        for path in DEPLOYMENTS.glob("*.json"):
+            if not path.stem.isdecimal():
+                raise RuntimeError(f"{path} is named for no chain id")
+            ids.append(int(path.stem))
+        return sorted(ids)
 
     @classmethod
     def on(cls, chain_id: int) -> Self:
