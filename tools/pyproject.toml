@@ -6,6 +6,8 @@ name = "fe0-tools"
 version = "0"
 requires-python = ">=3.15"
 dependencies = [
+    "pydantic==2.14.3",
+    "requests==2.34.2",
     "web3==8.0.0",
 ]
 
@@ -13,6 +15,7 @@ dependencies = [
 dev = [
     "mypy==2.4.1",
     "pyright[nodejs]==1.1.414",
+    "types-requests==2.33.0.20261030",
 ]
 
 [tool.uv]

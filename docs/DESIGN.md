@@ -13,12 +13,13 @@ scope and schedule, and [docs/adr/](adr/README.md) the reasons for each choice. 
 | `fe0/` | the compiler as a library: no I/O, shared by every target |
 | `fe0-cli/` | the native CLI: stdin to hex on stdout, errors on stderr (§9) |
 | `fe0-chain/` | the compiler on chain: one contract per phase, plus Compiler (§8) |
-| `fe.toml` | a workspace of the compiler's ingots, so that Fe's language server analyses only them, not every other `.fe` file as a standalone file |
+| `registry/` | the registry of deployed programs and the list of Compilers it accepts (ADR 0031, ADR 0034) |
+| `fe.toml` | a workspace of the compiler's and the registry's ingots, so that Fe's language server analyses only them, not every other `.fe` file as a standalone file |
 | `corpus/` | test programs and call scripts; `reject/` must fail, `gen/` is generated (§10, §11) |
 | `tools/` | the harnesses, generators and deploy scripts; each module's docstring says what it does |
 | `spike-*/` | probes of the official compiler, which SPEC.md and the ADRs cite |
 | `playground/` | a web page that compiles and deploys through the deployed compiler |
-| `deployments/` | the addresses of the deployed compiler, by chain id |
+| `deployments/` | the addresses of the deployed compiler and registries, by chain id |
 | `docs/` | this document, SPEC.md, PLAN.md, the ADRs, WORKAROUNDS.md and DEMO.md |
 | `out/` | what the tools write; not committed |
 

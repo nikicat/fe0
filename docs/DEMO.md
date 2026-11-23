@@ -74,8 +74,8 @@ cast call --rpc-url https://arb1.arbitrum.io/rpc 0xD7CFBe5bd425D0aDB78caFb38F959
 ## 4. Deploy the compiler
 
 `tools/deploy.py --rehearse` deploys the five contracts on a local anvil node and runs this demo
-there. Without `--rehearse`, it deploys to Arbitrum One, and only from a release: a commit with
-the tag `v<version>` (`fe0-chain/README.md`). It sends two transactions. The first deploys the
+there. Without `--rehearse`, it deploys to Arbitrum One and records the version and the
+addresses (`fe0-chain/README.md`, "Releases"). It sends two transactions. The first deploys the
 five contracts through [Multicall3](https://www.multicall3.com) and
 [CreateX](https://github.com/pcaversaccio/createx), so either all five are created or none is
 ([ADR 0028](adr/0028-one-transaction-deploy.md)). A contract that already has code at its

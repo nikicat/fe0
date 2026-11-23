@@ -75,6 +75,11 @@ jobs:
             (cd fe0-chain && fe fmt --check)
             uv run --project tools --locked tools/chain_check.py
             echo "::endgroup::"
+            # registry/README.md, "Build and check".
+            echo "::group::registry"
+            (cd registry && fe fmt --check)
+            uv run --project tools --locked tools/registry_check.py
+            echo "::endgroup::"
             # playground/README.md, "Tests".
             echo "::group::playground"
             uv run --project tools --locked tools/playground.py

@@ -3,4 +3,4 @@
 [workspace]
 name = "fe-contest"
 version = "0.1.0"
-members = ["fe0", "fe0-cli", "fe0-chain"]
+members = ["fe0", "fe0-cli", "fe0-chain", "registry"]

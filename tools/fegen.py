@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+import tomllib
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, fields
@@ -127,6 +129,10 @@ class Selector(int):
 ByteOffset = NewType("ByteOffset", int)
 # The letter of a phase of Fe0, such as "E" for effects.
 PhaseLetter = NewType("PhaseLetter", str)
+# A release of Fe, such as `26.7.0`.
+FeVersion = NewType("FeVersion", str)
+# The version of an ingot, as its fe.toml holds it, such as "0.1.0".
+Version = NewType("Version", str)
 
 
 def find_fe() -> str:
@@ -173,6 +179,37 @@ def fe_build(ingot: Path, out_dir: Path, *options: str) -> None:
                        capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"Errors when building {ingot.relative_to(ROOT)}:\n{r.stdout}{r.stderr}")
+
+
+# The first line of `fe --version`, such as `fe 26.7.0 (e6e6342b2)`.
+_FE_VERSION: re.Pattern[str] = re.compile(r"fe (?P<version>\S+) ")
+
+
+def fe_version() -> FeVersion:
+    """Returns the release of the fe binary. Errors with RuntimeError when `fe --version`
+    prints no release."""
+    out = subprocess.run([FE, "--version"], check=True, capture_output=True, text=True).stdout
+    m = _FE_VERSION.match(out)
+    if m is None:
+        raise RuntimeError(f"{FE} --version prints no release: {out.strip()}")
+    return FeVersion(m["version"])
+
+
+def ingot_version(manifest: Path) -> Version:
+    """Returns the version that the ingot file `manifest` holds."""
+    return Version(tomllib.loads(manifest.read_text())["ingot"]["version"])
+
+
+def poll[T](check: Callable[[], T | None], timeout: float, interval: float) -> T:
+    """Calls `check` every `interval` seconds until it returns a value other than None, and
+    returns that value. Errors with TimeoutError when `timeout` seconds pass first, or as
+    `check` does."""
+    deadline = time.monotonic() + timeout
+    while (got := check()) is None:
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"no result within {timeout} s")
+        time.sleep(interval)
+    return got
 
 
 # The deepest nesting of blocks and binary expressions that Fe0's parser accepts.

@@ -1,6 +1,5 @@
 {
   "version": "0.1.2",
-  "commit": "ba1e2e26a6591e3913e5ba808013c7eff8a47242",
   "contracts": {
     "Lexer": "0x821F84a486c458311707e7EEd85b58E9FE2FC2e3",
     "Parser": "0x02715221094D53c3ADF8E67559e1a275AcB101Ba",

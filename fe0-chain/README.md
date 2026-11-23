@@ -31,13 +31,13 @@ The constructor takes the addresses of Lexer, Parser, Checker and Back, in that 
 
 ## Releases
 
-A release is a commit that has the git tag `v<version>`, where the version is the one in this
-ingot's `fe.toml`. A deployed Compiler's `version()` returns that version, so its tag gives the
-commit that Compiler was built from. `tools/deploy.py` refuses to deploy any other commit to a
-real chain, and records the version and the commit in `deployments/<chain id>.json`.
+A deployed Compiler's `version()` returns the version in this ingot's `fe.toml`.
+`tools/deploy.py` records the version and the addresses in `deployments/<chain id>.json`.
+Sourcify cannot verify the deployed contracts yet, since they are not built the way Sourcify
+rebuilds Fe source ([ADR 0033](../docs/adr/0033-verify-on-sourcify.md), "Consequences").
 
-To make a release, raise the version in `fe.toml` and in `version()` in `src/lib.fe`, commit,
-and tag the commit. `tools/chain_check.py` fails when the two versions differ. The return type
+To make a release, raise the version in `fe.toml` and in `version()` in `src/lib.fe`, and
+commit. `tools/chain_check.py` fails when the two versions differ. The return type
 of `version()` is `String<N>`, where `N` is the length of the version, so a longer or shorter
 version needs a new `N` there.
 

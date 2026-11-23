@@ -1,0 +1,251 @@
+// The registry of programs deployed through a listed Compiler
+// (docs/adr/0031-deployment-registry.md).
+
+use std::abi::{Bytes, Bytes32, sol}
+use std::evm::{
+    Address,
+    Call,
+    Ctx,
+    Log,
+    SolArray,
+    SolEnumerableSet,
+    StorageKey,
+    StorageMap,
+    create2_address,
+    encode_abi_payload,
+    keccak256,
+}
+use ingot::{Compiler, VERSION, VersionMsg}
+use ingot::compilers::CompilerRegistryMsg
+use ingot::page::{AddressPage, page}
+
+// CreateX, at the same address on every chain that has it. Its source and its list of chains:
+// https://github.com/pcaversaccio/createx#createx-deployments
+const CREATEX: Address = Address::new(0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed)
+
+msg CreateXMsg {
+    #[selector = sol("deployCreate2(bytes32,bytes)")]
+    DeployCreate2 { salt: Bytes32, init_code: Bytes } -> Address,
+}
+
+pub msg RegistryMsg {
+    // Creates the program that `compiler` compiles from `src` with `args`, unless its address
+    // has code, and records it (docs/adr/0031-deployment-registry.md, "Deploying"). Errors
+    // with UnlistedCompiler, the compiler's revert data or CreateX's FailedContractCreation.
+    #[selector = sol("deploy(address,bytes32,bytes,bytes)")]
+    Deploy { compiler: Address, salt: Bytes32, src: Bytes, args: Bytes } -> Deployment,
+    // Returns the compiler registry that `deploy` checks.
+    #[selector = sol("compilerRegistry()")]
+    CompilerRegistry -> Address,
+    // Returns the record of the contract at `addr`, or zeros when it has none.
+    #[selector = sol("info(address)")]
+    Info { addr: Address } -> Record,
+    // Returns a page of the recorded contracts.
+    #[selector = sol("contracts(uint256,uint256)")]
+    Contracts { start: u256, limit: u256 } -> AddressPage,
+    // Returns a page of the contracts that `account` called `deploy` for, created or not,
+    // each once.
+    #[selector = sol("contractsOf(address,uint256,uint256)")]
+    ContractsOf { account: Address, start: u256, limit: u256 } -> AddressPage,
+}
+
+// The contract that a `deploy` reached, and whether that call created it.
+#[abi]
+pub struct Deployment { pub addr: Address, pub created: bool }
+
+// The record of a contract (docs/adr/0031-deployment-registry.md, "Where each fact is kept").
+#[abi]
+pub struct Record { pub registered_block: u64, pub compiler: Address, pub src_hash: Bytes32 }
+
+impl Copy for Record {}
+
+// The registry recorded the contract at `addr`, whether it created it or not.
+#[event]
+struct Registered {
+    #[indexed]
+    addr: Address,
+    #[indexed]
+    compiler: Address,
+    src_hash: Bytes32,
+    salt: Bytes32,
+    src: Bytes,
+    args: Bytes,
+}
+
+// The compiler registry does not list the compiler.
+#[error]
+pub struct UnlistedCompiler { pub compiler: Address }
+
+// A contract that the registry records.
+struct Contract { addr: Address }
+
+// An account that calls `deploy`.
+struct Account { addr: Address }
+
+impl Copy for Contract {}
+impl Copy for Account {}
+
+impl StorageKey for Contract {
+    fn encoded_len(self) -> u256 {
+        self.addr.encoded_len()
+    }
+    unsafe fn write_key(ptr: *u8, self) {
+        unsafe {
+            Address::write_key(ptr, self.addr)
+        }
+    }
+}
+
+impl StorageKey for Account {
+    fn encoded_len(self) -> u256 {
+        self.addr.encoded_len()
+    }
+    unsafe fn write_key(ptr: *u8, self) {
+        unsafe {
+            Address::write_key(ptr, self.addr)
+        }
+    }
+}
+
+// A program that `deploy` creates.
+struct Program { compiler: Compiler, src: Bytes, args: Bytes }
+
+impl Program {
+    fn init_code(self) -> Bytes uses (call: Call) {
+        var code = MemBuffer::empty()
+        code.extend_from(self.compiler.compile(self.src.clone()).span())
+        code.extend_from(self.args.span())
+        Bytes::from_payload(source: code.span())
+    }
+
+    fn src_hash(self) -> Bytes32 {
+        Bytes32 { val: keccak256(self.src.span()) }
+    }
+}
+
+// The salt that the registry passes to CreateX: keccak256 of the deployer's salt
+// (docs/adr/0031-deployment-registry.md, "Deploying").
+struct CreatexSalt { word: Bytes32 }
+
+impl CreatexSalt {
+    fn of(_ salt: Bytes32) -> Self {
+        CreatexSalt { word: Bytes32 { val: keccak256(encode_abi_payload(salt).span()) } }
+    }
+
+    // Returns the address at which CreateX's `deployCreate2` creates `init_code` with this
+    // salt.
+    fn address(self, _ init_code: Bytes) -> Contract {
+        let guarded = keccak256(encode_abi_payload(self.word).span())
+        let addr = create2_address(
+            deployer: CREATEX,
+            salt: guarded,
+            init_code_hash: keccak256(init_code.span()),
+        )
+        Contract { addr }
+    }
+
+    // Creates `init_code` through CreateX's `deployCreate2` with this salt.
+    fn create(self, _ init_code: own Bytes) uses (call: mut Call) {
+        CREATEX.call(CreateXMsg::DeployCreate2 { salt: self.word, init_code })
+    }
+}
+
+struct State {
+    compiler_registry: Address,
+    info: StorageMap<Contract, Record>,
+    all: SolArray<Address>,
+    by_account: StorageMap<Account, SolEnumerableSet<Address>>,
+}
+
+impl State {
+    // Returns `compiler` as a Compiler when the compiler registry lists it. Errors with
+    // UnlistedCompiler.
+    fn listed(self, _ compiler: Address) -> Compiler uses (call: Call) {
+        if !self.compiler_registry.static(CompilerRegistryMsg::IsListed { compiler }) {
+            revert_error(UnlistedCompiler { compiler })
+        }
+        Compiler { addr: compiler }
+    }
+
+    fn is_recorded(self, _ target: Contract) -> bool {
+        self.info[target].compiler != Address::zero()
+    }
+
+    // Writes the record of `target`, adds it to the list of all contracts, and emits
+    // Registered.
+    fn record(mut self, _ target: Contract, _ program: own Program, salt: Bytes32)
+    uses (ctx: Ctx, log: mut Log)
+    {
+        let src_hash = program.src_hash()
+        let compiler = program.compiler.addr
+        let registered_block = ctx.block_number().downcast_truncate()
+        self.info[target] = Record { registered_block, compiler, src_hash }
+        self.all.push(target.addr)
+        log.emit(
+            Registered {
+                addr: target.addr,
+                compiler,
+                src_hash,
+                salt,
+                src: program.src,
+                args: program.args,
+            },
+        )
+    }
+}
+
+pub contract Registry {
+    mut state: State,
+
+    init(compiler_registry: Address)
+    uses (mut state)
+    {
+        state.compiler_registry = compiler_registry
+    }
+
+    recv RegistryMsg {
+        Deploy { compiler, salt, src, args } -> Deployment
+        uses (mut state, ctx: Ctx, call: mut Call, log: mut Log)
+        {
+            let program = Program { compiler: state.listed(compiler), src, args }
+            let code = program.init_code()
+            let createx_salt = CreatexSalt::of(salt)
+            let target = createx_salt.address(code)
+            let created = ctx.extcodesize(target.addr) == 0
+            if created {
+                createx_salt.create(code)
+            }
+            if !state.is_recorded(target) {
+                state.record(target, program, salt)
+            }
+            state.by_account[Account { addr: ctx.caller() }].add(target.addr)
+            Deployment { addr: target.addr, created }
+        }
+        CompilerRegistry -> Address uses (state) {
+            state.compiler_registry
+        }
+        Info { addr } -> Record uses (state) {
+            state.info[Contract { addr }]
+        }
+        Contracts { start, limit } -> AddressPage
+        uses (state)
+        {
+            with (SolArray<Address> = state.all) {
+                page<SolArray<Address>>(start, limit)
+            }
+        }
+        ContractsOf { account, start, limit } -> AddressPage
+        uses (state)
+        {
+            with (SolEnumerableSet<Address> = state.by_account[Account { addr: account }]) {
+                page<SolEnumerableSet<Address>>(start, limit)
+            }
+        }
+    }
+
+    recv VersionMsg {
+        Version -> String<5> {
+            VERSION
+        }
+    }
+}

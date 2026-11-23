@@ -75,12 +75,17 @@ source ─▶ Lexer ─▶ Parser ─▶ Checker ─▶ Back (code generation, a
 - `fe0-chain/` holds one contract per phase, plus Compiler, which calls each phase in turn.
   The compiler does not fit in one contract under the 24,576-byte limit
   ([ADR 0014](docs/adr/0014-contract-per-phase.md)).
+- `registry/` holds two contracts. Registry deploys programs through a listed Compiler and
+  records each with its source and the accounts that asked for it. CompilerRegistry holds the
+  list of Compilers, which an admin keeps ([ADR 0031](docs/adr/0031-deployment-registry.md),
+  [ADR 0034](docs/adr/0034-compiler-registry.md)).
 - `corpus/` holds the test programs and their call scripts. `corpus/reject/` holds the programs
   that Fe0 must reject, each with the error it expects. `corpus/gen/` holds the random
   programs that `tools/gen.py` writes. That directory is not in git.
-- `tools/` holds the test harnesses and the deployment script.
+- `tools/` holds the test harnesses and the deployment scripts.
 
-DESIGN.md §1 lists every top-level directory, and §8 gives the size and gas of each contract.
+DESIGN.md §1 lists every top-level directory, and §8 gives the size and gas of each
+contract of fe0-chain.
 
 ## Build and test
 
@@ -116,6 +121,7 @@ The test harnesses:
 | `uv run --project tools tools/mutate.py` | the corpus and random programs, each changed by one mutation, against Fe (DESIGN.md §11a) |
 | `uv run --project tools tools/node_check.py` | calls from several accounts, logs and storage writes against Fe, on anvil |
 | `uv run --project tools tools/chain_check.py` | the on-chain compiler against the native CLI, on anvil |
+| `uv run --project tools tools/registry_check.py` | the registry and the compiler list, on anvil; needs Arbitrum One's RPC |
 
 No node needs to be running first: the harnesses that use anvil start one. The dev container
 installs anvil with Foundry.

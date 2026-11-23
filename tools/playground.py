@@ -2,22 +2,24 @@
 """Writes playground/src/config.ts, the page's configuration from the repository
 (docs/adr/0032, "Configuration")."""
 import json
-import re
 from typing import TypedDict
 
 from eth_typing import ABI, ChecksumAddress
 
-from chain_check import Contract, committed_interface
+from chain_check import committed_interface
 from compile_on_chain import messages
-from deploy import ARBITRUM, Chain, DeploymentRecord, Tag, Url, git
+from deploy import ARBITRUM, Chain, ChainId, DeploymentRecord, Url
 from embed import CORPUS
 from fegen import ROOT, FeSource
+from sourcify import contract_page
 
 CONFIG = ROOT / "playground/src/config.ts"
 # The chains that the page knows, by id.
-CHAINS: dict[int, Chain] = {ARBITRUM["id"]: ARBITRUM}
+CHAINS: dict[ChainId, Chain] = {ARBITRUM["id"]: ARBITRUM}
 # The example that the page opens with.
 START: str = "counter"
+# The repository, which the page links for its docs.
+REPO: Url = Url("https://github.com/nikicat/fe0")
 
 
 class Message(TypedDict):
@@ -28,7 +30,7 @@ class Message(TypedDict):
 class Deployed(TypedDict):
     chain: Chain
     compiler: ChecksumAddress
-    tag: Tag
+    sourcify: Url
 
 
 class Config(TypedDict):
@@ -42,24 +44,18 @@ class Config(TypedDict):
     start: str
 
 
-def repo() -> Url:
-    """Returns the GitHub URL of the repository that `origin` names."""
-    url = git("remote", "get-url", "origin").removesuffix(".git")
-    return Url(re.sub(r"^git@github\.com:", "https://github.com/", url))
-
-
 def deployments() -> list[Deployed]:
-    """Returns the chain and Compiler of each deployment that deployments/ records. Errors with
-    RuntimeError when a deployment is on a chain that CHAINS lacks, or as
-    `DeploymentRecord.chain_ids` and `DeploymentRecord.on` do."""
+    """Returns the chain and Compiler of each deployment that deployments/ records, with the
+    Compiler's page on Sourcify. Errors with RuntimeError when a deployment is on a chain that
+    CHAINS lacks, or as `DeploymentRecord.chain_ids` and `DeploymentRecord.on` do."""
     found = []
     for chain_id in DeploymentRecord.chain_ids():
         chain = CHAINS.get(chain_id)
         if chain is None:
             raise RuntimeError(f"deployments/ records chain {chain_id}, which CHAINS lacks")
-        record = DeploymentRecord.on(chain_id)
-        found.append(Deployed(chain=chain, compiler=record.addresses[Contract.COMPILER],
-                              tag=record.release.tag))
+        compiler = DeploymentRecord.on(chain_id).compiler
+        found.append(Deployed(chain=chain, compiler=compiler,
+                              sourcify=contract_page(chain_id, compiler)))
     return found
 
 
@@ -69,7 +65,7 @@ def config() -> Config:
     examples = {p.stem: FeSource(p.read_text()) for p in sorted(CORPUS.glob("*.fe"))}
     if START not in examples:
         raise RuntimeError(f"corpus/ has no {START}.fe, the example that the page opens with")
-    return Config(repo=repo(), deployments=deployments(),
+    return Config(repo=REPO, deployments=deployments(),
                   messages={str(code.value()): Message(code=str(code), text=text)
                             for code, text in messages().items()},
                   examples=examples, start=START)

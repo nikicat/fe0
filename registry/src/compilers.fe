@@ -1,0 +1,102 @@
+// The list of Compilers that the registry accepts, which an admin keeps
+// (docs/adr/0034-compiler-registry.md).
+
+use std::abi::{DynString, sol}
+use std::evm::{Address, Call, Ctx, Log, SolEnumerableSet}
+use ingot::{Compiler, VERSION, VersionMsg}
+use ingot::admin::{AdminMsg, AdminRole}
+use ingot::page::{AddressPage, page}
+
+pub msg CompilerRegistryMsg {
+    // Adds `compiler` to the list, and emits its version. Errors with NotAdmin, with Listed,
+    // and as `compiler.version()` does.
+    #[selector = sol("add(address)")]
+    Add { compiler: Address },
+    // Removes `compiler` from the list. Errors with NotAdmin and with NotListed.
+    #[selector = sol("remove(address)")]
+    Remove { compiler: Address },
+    // Checks whether the list has `compiler`.
+    #[selector = sol("isListed(address)")]
+    IsListed { compiler: Address } -> bool,
+    // Returns a page of the listed compilers. Removing one moves the last into its place, so
+    // this list's order is not the order of adding.
+    #[selector = sol("compilers(uint256,uint256)")]
+    Compilers { start: u256, limit: u256 } -> AddressPage,
+}
+
+#[event]
+struct CompilerAdded {
+    #[indexed]
+    compiler: Address,
+    version: DynString,
+}
+
+#[event]
+struct CompilerRemoved {
+    #[indexed]
+    compiler: Address,
+}
+
+// The list already has the compiler.
+#[error]
+pub struct Listed { pub compiler: Address }
+
+// The list lacks the compiler.
+#[error]
+pub struct NotListed { pub compiler: Address }
+
+pub contract CompilerRegistry {
+    mut role: AdminRole,
+    mut list: SolEnumerableSet<Address>,
+
+    init(admin: Address) uses (mut role) { role = AdminRole::of(admin) }
+
+    recv CompilerRegistryMsg {
+        Add { compiler } uses (role, mut list, ctx: Ctx, call: Call, log: mut Log) {
+            role.require()
+            let version = Compiler { addr: compiler }.version()
+            if !list.add(compiler) {
+                revert_error(Listed { compiler })
+            }
+            log.emit(CompilerAdded { compiler, version })
+        }
+        Remove { compiler } uses (role, mut list, ctx: Ctx, log: mut Log) {
+            role.require()
+            if !list.remove(compiler) {
+                revert_error(NotListed { compiler })
+            }
+            log.emit(CompilerRemoved { compiler })
+        }
+        IsListed { compiler } -> bool uses (list) {
+            list.contains(compiler)
+        }
+        Compilers { start, limit } -> AddressPage
+        uses (list)
+        {
+            with (SolEnumerableSet<Address> = list) {
+                page<SolEnumerableSet<Address>>(start, limit)
+            }
+        }
+    }
+
+    recv VersionMsg {
+        Version -> String<5> {
+            VERSION
+        }
+    }
+
+    recv AdminMsg {
+        Admin -> Address uses (role) {
+            role.admin()
+        }
+        PendingAdmin -> Address uses (role) {
+            role.pending()
+        }
+        TransferAdmin { to } uses (mut role, ctx: Ctx) {
+            role.transfer(to)
+        }
+        AcceptAdmin uses (mut role, ctx: Ctx, log: mut Log) {
+            role.accept()
+        }
+    }
+}

@@ -1,0 +1,50 @@
+// Paged views (docs/adr/0031-deployment-registry.md, "Reading").
+
+use std::abi::DynArray
+use std::evm::{Address, SolArray, SolEnumerableSet}
+
+// A page of a list: `total` is the list's length, and `items` are at most `limit` of its
+// items from `start` on, in the order of adding unless the view says otherwise. A page that
+// starts past the end has no items.
+#[abi]
+pub struct AddressPage { pub total: u256, pub items: DynArray<Address> }
+
+pub trait AddressList {
+    fn len(self) -> u256
+    fn at(self, _ index: u256) -> Address
+}
+
+impl AddressList for SolArray<Address> {
+    fn len(self) -> u256 {
+        self.len()
+    }
+    fn at(self, _ index: u256) -> Address {
+        self[index]
+    }
+}
+
+impl AddressList for SolEnumerableSet<Address> {
+    fn len(self) -> u256 {
+        self.len()
+    }
+    fn at(self, _ index: u256) -> Address {
+        self.get(index)
+    }
+}
+
+pub fn page<L: AddressList>(start: u256, limit: u256) -> AddressPage
+uses (list: L)
+{
+    let total = list.len()
+    let n = if start >= total {
+        0
+    } else if total - start < limit {
+        total - start
+    } else {
+        limit
+    }
+    let items = DynArray::from_slice(
+        MemArray::from_fn(n.downcast_truncate(), |i| list.at(start + i as u256)).as_slice(),
+    )
+    AddressPage { total, items }
+}

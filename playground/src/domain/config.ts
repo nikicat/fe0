@@ -6,6 +6,9 @@ import type { Source } from "./source";
 // The id of a chain, as EIP-155 numbers it.
 export type ChainId = number & { readonly __brand: "ChainId" };
 
+// An absolute URL. See tools/deploy.py, `Url`.
+export type Url = string & { readonly __brand: "Url" };
+
 // See tools/deploy.py, `Currency`.
 export interface Currency {
   name: string;
@@ -17,8 +20,8 @@ export interface Currency {
 export interface Chain {
   id: ChainId;
   name: string;
-  rpc: string;
-  explorer: string;
+  rpc: Url;
+  explorer: Url;
   currency: Currency;
 }
 
@@ -27,7 +30,9 @@ export interface Chain {
 export interface Deployed {
   chain: Chain;
   compiler: Address;
-  tag: string;
+  // Sourcify's page of the Compiler, which shows whether Sourcify verified its source
+  // (docs/adr/0033-verify-on-sourcify.md).
+  sourcify: Url;
 }
 
 // An error code as the native CLI prints it, such as `N014`, with its message.
@@ -37,7 +42,7 @@ export interface Message {
 }
 
 export interface Config {
-  repo: string;
+  repo: Url;
   deployments: Deployed[];
   // Read with `cliMessage`.
   messages: Record<string, Message>;

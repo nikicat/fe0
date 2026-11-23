@@ -1,0 +1,41 @@
+// docs/adr/0031-deployment-registry.md, docs/adr/0034-compiler-registry.md
+
+use std::abi::{Bytes, DynString, sol}
+use std::evm::{Address, Call}
+
+// The version of the registry/ ingot (registry/README.md, "Versions and verification"). Its
+// type is String<N>, where N is its length, so a version of another length needs a new N in
+// every String<5> of src/.
+pub const VERSION: String<5> = "0.1.0"
+
+pub msg VersionMsg {
+    // Returns the version of the registry/ ingot that this contract was built from
+    // (registry/README.md, "Versions and verification").
+    #[selector = sol("version()")]
+    Version -> String<5>,
+}
+
+// The part of fe0-chain's Compiler that the contracts call (fe0-chain/README.md).
+msg CompilerMsg {
+    #[selector = sol("compile(bytes)")]
+    Compile { src: Bytes } -> Bytes,
+    #[selector = sol("version()")]
+    Version -> DynString,
+}
+
+// A Compiler of fe0-chain.
+pub struct Compiler { pub addr: Address }
+
+impl Copy for Compiler {}
+
+impl Compiler {
+    pub fn version(self) -> DynString uses (call: Call) {
+        self.addr.static(CompilerMsg::Version {})
+    }
+
+    // Returns the deploy code that this Compiler compiles from `src`. Errors with the
+    // Compiler's revert data when the compile fails.
+    pub fn compile(self, _ src: own Bytes) -> Bytes uses (call: Call) {
+        self.addr.static(CompilerMsg::Compile { src })
+    }
+}

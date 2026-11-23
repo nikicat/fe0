@@ -23,7 +23,6 @@ It prints the deploy gas of each contract and the gas of the largest compile.
 import argparse
 import json
 import sys
-import tomllib
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -33,7 +32,7 @@ from typing import NamedTuple, NewType, Self
 
 import web3.contract
 from eth_abi.exceptions import DecodingError
-from eth_typing import ABI, ABIElement, ABIError, ChecksumAddress, HexStr, TypeStr
+from eth_typing import ABI, ABIError, ChecksumAddress, HexStr, TypeStr
 from hexbytes import HexBytes
 from web3 import Web3
 from web3.contract.contract import ContractFunction
@@ -44,7 +43,7 @@ import cli_check
 import embed
 import fegen
 from embed import FailureMessage
-from fegen import ROOT, Diag, FeName, FeSource
+from fegen import ROOT, Diag, FeName, FeSource, Version, ingot_version
 from node import BLOCK_GAS, Gas, Node, corpus
 
 CHAIN: Path = ROOT / "fe0-chain"
@@ -70,13 +69,10 @@ OVERFLOWING_ARGS: tuple[int, ChecksumAddress, bool] = (
     2**255, Web3.to_checksum_address((0xbeef).to_bytes(20)), True)
 
 
-# A version of fe0-chain, such as "0.1.0" (fe0-chain/README.md, "Releases").
-Version = NewType("Version", str)
-
-
 def version() -> Version:
-    """Returns the version of fe0-chain that MANIFEST holds."""
-    return Version(tomllib.loads(MANIFEST.read_text())["ingot"]["version"])
+    """Returns the version of fe0-chain that MANIFEST holds (fe0-chain/README.md,
+    "Releases")."""
+    return ingot_version(MANIFEST)
 
 
 class Contract(StrEnum):
@@ -98,16 +94,6 @@ class Contract(StrEnum):
         address, such as "lexer_at"."""
         return f"{self.lower()}_at"
 
-    def artifact(self, suffix: str) -> Path:
-        """Returns the file with `suffix`, such as ".bin", that `fe build` wrote for the
-        contract."""
-        return OUT / f"{self}{suffix}"
-
-    def abi(self) -> ABI:
-        """Returns the ABI that `fe build` wrote for the contract."""
-        entries: list[ABIElement] = json.loads(self.artifact(".abi.json").read_text())
-        return entries
-
 
 # The code that `fe build` writes to the .bin of a contract.
 DeployCode = NewType("DeployCode", bytes)
@@ -115,19 +101,27 @@ DeployCode = NewType("DeployCode", bytes)
 Initcode = NewType("Initcode", bytes)
 
 
-class Build(NamedTuple):
-    """The code of one contract of fe0-chain."""
+class Code[C: str](NamedTuple):
+    """The code of one contract, as `fe build` writes it."""
 
-    contract: Contract
+    contract: C
     deploy_code: DeployCode
     runtime: bytes
+    abi: ABI
 
     @classmethod
-    def read(cls, contract: Contract) -> Self:
-        """Returns what `fe build` wrote for `contract`."""
+    def read(cls, out: Path, contract: C) -> Code[C]:
+        """Returns what `fe build` wrote to `out` for `contract`."""
+        def text(suffix: str) -> str:
+            return (out / f"{contract}{suffix}").read_text()
         def code(suffix: str) -> bytes:
-            return bytes.fromhex(contract.artifact(suffix).read_text().strip())
-        return cls(contract, DeployCode(code(".bin")), code(".runtime.bin"))
+            return bytes.fromhex(text(suffix).strip())
+        abi: ABI = json.loads(text(".abi.json"))
+        return Code(contract, DeployCode(code(".bin")), code(".runtime.bin"), abi)
+
+    def at(self, w3: Web3, address: ChecksumAddress) -> web3.contract.Contract:
+        """Returns the contract at `address` on the chain of `w3`."""
+        return w3.eth.contract(address, abi=self.abi)
 
     def size_line(self) -> str:
         """Returns the line that reports the sizes of the code."""
@@ -145,17 +139,18 @@ class Build(NamedTuple):
 class Builds(NamedTuple):
     """The code of every contract of fe0-chain."""
 
-    phases: list[Build]
-    compiler: Build
+    phases: list[Code[Contract]]
+    compiler: Code[Contract]
 
     @classmethod
     def build(cls) -> Self:
         """Builds fe0-chain at `-O s` and returns its contracts. Exits as `fegen.fe_build`
         does."""
         fegen.fe_build(CHAIN, OUT, "-O", "s")
-        return cls([Build.read(c) for c in Contract.phases()], Build.read(Contract.COMPILER))
+        return cls([Code.read(OUT, c) for c in Contract.phases()],
+                   Code.read(OUT, Contract.COMPILER))
 
-    def all(self) -> list[Build]:
+    def all(self) -> list[Code[Contract]]:
         """Returns every contract, the phases first."""
         return [*self.phases, self.compiler]
 
@@ -166,7 +161,7 @@ class Builds(NamedTuple):
 
     def compiler_initcode(self, phases: Mapping[Contract, ChecksumAddress]) -> Initcode:
         """Returns the initcode of Compiler whose constructor gets the phases at `phases`."""
-        factory = Web3().eth.contract(abi=interface(), bytecode=self.compiler.deploy_code)
+        factory = Web3().eth.contract(abi=self.interface(), bytecode=self.compiler.deploy_code)
         args = {c.constructor_arg(): a for c, a in phases.items()}
         return Initcode(HexBytes(factory.constructor(**args).data_in_transaction))
 
@@ -178,12 +173,11 @@ class Builds(NamedTuple):
         """Returns a message for each limit that the code of a contract exceeds."""
         return [m for b in self.all() for m in b.oversize()]
 
-
-def interface() -> ABI:
-    """Returns Compiler's ABI with the errors of the phase contracts added, each once."""
-    errors: dict[str, ABIError] = {e["name"]: e for c in Contract.phases() for e in c.abi()
-                                   if e["type"] == "error"}
-    return [*Contract.COMPILER.abi(), *(errors[n] for n in sorted(errors))]
+    def interface(self) -> ABI:
+        """Returns Compiler's ABI with the errors of the phase contracts added, each once."""
+        errors: dict[str, ABIError] = {e["name"]: e for b in self.phases for e in b.abi
+                                       if e["type"] == "error"}
+        return [*self.compiler.abi, *(errors[n] for n in sorted(errors))]
 
 
 def committed_interface() -> ABI:
@@ -193,22 +187,29 @@ def committed_interface() -> ABI:
     return abi
 
 
-def interface_text() -> str:
-    """Returns the text that INTERFACE must hold: `interface` as JSON."""
-    return json.dumps(interface(), indent=2) + "\n"
+def abi_text(abi: ABI) -> str:
+    """Returns the text of a committed file that holds `abi`."""
+    return json.dumps(abi, indent=2) + "\n"
 
 
-def write_interface() -> None:
-    """Writes INTERFACE."""
-    INTERFACE.write_text(interface_text())
-
-
-def check_interface() -> list[FailureMessage]:
-    """Returns a message when INTERFACE differs from `interface_text`."""
-    if not INTERFACE.exists() or INTERFACE.read_text() != interface_text():
-        return [FailureMessage(f"{INTERFACE.relative_to(ROOT)} differs from the built ABI;"
-                               f" run tools/chain_check.py {WRITE_ABI}")]
+def committed_file_check(path: Path, text: str, command: str) -> list[FailureMessage]:
+    """Returns a message when the committed file `path` does not hold `text`. `command` is the
+    command that writes the file."""
+    if not path.exists() or path.read_text() != text:
+        return [FailureMessage(f"{path.relative_to(ROOT)} differs from the build;"
+                               f" run {command}")]
     return []
+
+
+def write_interface(builds: Builds) -> None:
+    """Writes INTERFACE."""
+    INTERFACE.write_text(abi_text(builds.interface()))
+
+
+def check_interface(builds: Builds) -> list[FailureMessage]:
+    """Returns a message when INTERFACE differs from `builds.interface`."""
+    return committed_file_check(INTERFACE, abi_text(builds.interface()),
+                                f"tools/chain_check.py {WRITE_ABI}")
 
 
 def revert_data(e: ContractLogicError) -> bytes:
@@ -324,7 +325,7 @@ class Chain:
         compiler = Deployed.create(node, builds.compiler_initcode(
             {c: d.address for c, d in phases.items()}))
         gas = {c: d.gas for c, d in (phases | {Contract.COMPILER: compiler}).items()}
-        return cls(node, node.w3.eth.contract(compiler.address, abi=interface()), gas)
+        return cls(node, node.w3.eth.contract(compiler.address, abi=builds.interface()), gas)
 
     def gas_report(self) -> str:
         """Returns the lines that report each deployment's gas and their total."""
@@ -430,9 +431,9 @@ def main() -> None:
     print(builds.size_report())
     failures = builds.oversize()
     if write_abi:
-        write_interface()
+        write_interface(builds)
     else:
-        failures += check_interface()
+        failures += check_interface(builds)
     cli_check.build()
     paths = sorted(p.relative_to(ROOT) for p in corpus())
     rejects = embed.load_rejects()

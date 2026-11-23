@@ -55,9 +55,8 @@ export function App() {
           <code>eth_call</code>, and a deploy is a transaction from your wallet.</p>
         <p className="meta">Compiler{" "}
           <Explorer target={{ address: deployment.compiler }}
-            text={deployment.compiler} /> on {deployment.chain.name}, built from the
-          release{" "}
-          <a href={`${config.repo}/tree/${deployment.tag}`}>{deployment.tag}</a>.</p>
+            text={deployment.compiler} /> on {deployment.chain.name}.{" "}
+          <a href={deployment.sourcify}>Sourcify</a> shows whether its source is verified.</p>
       </header>
       <main>
         <section className="editor-pane" aria-label="Program">

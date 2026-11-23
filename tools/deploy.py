@@ -1,55 +1,60 @@
 #!/usr/bin/env python3
 """Deploy the compiler on chain (fe0-chain, DESIGN.md §8) to Arbitrum One, and run its demo.
 
-It deploys only a release (fe0-chain/README.md, "Releases"), so it errors unless HEAD has the
-release's tag and the working tree has no changes outside deployments/.
 It builds fe0-chain at `-O s`, then deploys the four phase contracts and Compiler in one
 transaction, so either all five are created or none is
 (docs/adr/0028-one-transaction-deploy.md). The user approves each transaction in their browser
 wallet through browser-web3-signer, so no private key is in the repo or the shell. Then the
 demo:
 
-- calls `version()`, which must return the release's version;
+- calls `version()`, which must return the version in fe0-chain/fe.toml;
 - compiles corpus/counter.fe with `compile(bytes)` by `eth_call`, which costs nothing;
 - deploys it with `deploy(bytes,bytes)` in a transaction, with start value 2;
 - calls `Get` on the new contract.
 
 The deployment transaction leaves out each contract that already has code at its address, so
 a run after a full deployment only runs the demo. deployments/<chain id>.json records the
-release and the addresses. Errors when the file holds another release or other addresses than
-this build's, or lacks a field or a contract. Remove the file to deploy this build.
+version and the addresses. Errors when the file holds another version or other addresses than
+this build's, or is not such a record. Remove the file to deploy this build.
 
 With --rehearse, it does all of this on a local anvil node, which signs for the wallet. It
 copies the code of Multicall3 and CreateX, which the deployment transaction calls, to the node
-from the chain at --rpc. A rehearsal also runs on a commit with no tag or with changes, and
-records HEAD.
+from the chain at --rpc.
 """
 import argparse
-import json
 import subprocess
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple, NewType, Protocol, Self, TypedDict
+from typing import Annotated, NamedTuple, NewType, Protocol, Self, TypedDict
 
 from eth_typing import ABI, ChecksumAddress, Hash32, HexStr
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
+from pydantic import (AfterValidator, BaseModel, ConfigDict, Field, ValidationError,
+                      model_validator)
 from web3 import HTTPProvider, Web3
+from web3.contract.contract import ContractFunction
 from web3.types import TxParams, TxReceipt
 
-from chain_check import (COUNTER, Builds, Contract, CounterGet, Initcode, Version,
-                         check_version, counter_args, counter_source, interface, version)
-from fegen import ROOT
+from chain_check import (COUNTER, Builds, Contract, CounterGet, Initcode, check_version,
+                         counter_args, counter_source, version)
+from fegen import ROOT, Version
 from node import Node
 
 DEPLOYMENTS: Path = ROOT / "deployments"
+# The record of fe0-chain's deployment in a rehearsal.
+REHEARSAL: Path = ROOT / "out/rehearsal.json"
 SIGNER: str = "browser-web3-signer"
 
 # A URL, such as a JSON-RPC endpoint.
 Url = NewType("Url", str)
+# The id of a chain, as EIP-155 numbers it.
+ChainId = NewType("ChainId", int)
+# A ChecksumAddress in a JSON record, which holds it in any case.
+Address = Annotated[ChecksumAddress, AfterValidator(Web3.to_checksum_address)]
 
 
 class Currency(TypedDict):
@@ -63,7 +68,7 @@ class Currency(TypedDict):
 class Chain(TypedDict):
     """A chain that Compiler runs on."""
 
-    id: int
+    id: ChainId
     name: str
     rpc: Url
     # The block explorer, for the playground's links.
@@ -71,11 +76,14 @@ class Chain(TypedDict):
     currency: Currency
 
 
-ARBITRUM: Chain = Chain(id=42161, name="Arbitrum One", rpc=Url("https://arb1.arbitrum.io/rpc"),
+ARBITRUM: Chain = Chain(id=ChainId(42161), name="Arbitrum One",
+                        rpc=Url("https://arb1.arbitrum.io/rpc"),
                         explorer=Url("https://arbiscan.io"),
                         currency=Currency(name="Ether", symbol="ETH", decimals=18))
 
-# Multicall3 and CreateX, each at the same address on every chain that has it.
+# Multicall3 and CreateX, each at the same address on every chain that has it. Their sources and
+# their lists of chains: https://github.com/mds1/multicall3#deployments-and-abi and
+# https://github.com/pcaversaccio/createx#createx-deployments
 MULTICALL3: ChecksumAddress = Web3.to_checksum_address(
     "0xcA11bde05977b3631167028862bE2a173976CA11")
 CREATEX: ChecksumAddress = Web3.to_checksum_address(
@@ -107,9 +115,12 @@ def require_deployers(w3: Web3) -> dict[ChecksumAddress, HexBytes]:
     return code
 
 
-def create2_address(initcode: Initcode) -> ChecksumAddress:
-    """Returns the address at which CreateX's `deployCreate2` creates `initcode` with SALT."""
-    guarded_salt = keccak(SALT)
+def create2_address(initcode: Initcode, salt: Hash32 = SALT) -> ChecksumAddress:
+    """Returns the address at which CreateX's `deployCreate2` creates `initcode` with `salt`.
+    It holds only for a salt that CreateX hashes once and mixes nothing into, such as SALT
+    (docs/adr/0028-one-transaction-deploy.md) or a hashed registry salt
+    (docs/adr/0031-deployment-registry.md, "Deploying")."""
+    guarded_salt = keccak(salt)
     digest = keccak(b"\xff" + HexBytes(CREATEX) + guarded_salt + keccak(initcode))
     return Web3.to_checksum_address(digest[12:])
 
@@ -134,79 +145,14 @@ def deployment_data(initcodes: Iterable[Initcode]) -> HexBytes:
     return HexBytes(multicall3.encode_abi("aggregate3", [calls]))
 
 
-class Plan(NamedTuple):
-    """The contracts of a build as the deployment transaction creates them, with addresses known
-    before it is sent (docs/adr/0028-one-transaction-deploy.md)."""
-
-    initcode: dict[Contract, Initcode]
-    addresses: dict[Contract, ChecksumAddress]
-
-    @classmethod
-    def of(cls, builds: Builds) -> Self:
-        """Returns the plan of `builds`. Compiler's constructor gets the phases' planned
-        addresses."""
-        initcode = builds.phase_initcode()
-        addresses = {c: create2_address(code) for c, code in initcode.items()}
-        initcode[Contract.COMPILER] = builds.compiler_initcode(addresses)
-        addresses[Contract.COMPILER] = create2_address(initcode[Contract.COMPILER])
-        return cls(initcode, addresses)
-
-
-# A full git commit hash.
-Commit = NewType("Commit", str)
-# The git tag of a release (fe0-chain/README.md, "Releases").
-Tag = NewType("Tag", str)
-
-
-def git(*args: str) -> str:
-    """Returns what git prints for `args`, stripped. Errors with RuntimeError when git fails."""
-    r = subprocess.run(["git", "-C", str(ROOT), *args], stdout=subprocess.PIPE, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)} exited with status {r.returncode}")
-    return r.stdout.strip()
-
-
-class Release(NamedTuple):
-    """A release of fe0-chain (fe0-chain/README.md, "Releases")."""
-
-    version: Version
-    commit: Commit
-
-    @classmethod
-    def head(cls) -> Self:
-        """Returns the version in fe0-chain/fe.toml with HEAD as its commit. Unlike `tagged`, it
-        does not check that HEAD is a release."""
-        return cls(version(), Commit(git("rev-parse", "HEAD")))
-
-    @classmethod
-    def tagged(cls) -> Self:
-        """Returns the release at HEAD. Errors with RuntimeError when the working tree has
-        changes outside DEPLOYMENTS, or when the release's tag is missing or names a commit
-        other than HEAD."""
-        release = cls.head()
-        # The deployment file is committed after the release, so a rerun from the release's tag
-        # finds it uncommitted.
-        if git("status", "--porcelain", "--", ".", f":!{DEPLOYMENTS.relative_to(ROOT)}"):
-            raise RuntimeError("the working tree has changes; commit them and tag the release")
-        tag = release.tag
-        if git("tag", "--list", tag) != tag:
-            raise RuntimeError(f"no tag {tag}; tag HEAD with it to release it")
-        if git("rev-parse", f"{tag}^{{commit}}") != release.commit:
-            raise RuntimeError(f"the tag {tag} names a commit other than HEAD")
-        return release
-
-    @property
-    def tag(self) -> Tag:
-        return Tag(f"v{self.version}")
-
-    def __str__(self) -> str:
-        return f"{self.version} ({self.commit[:12]})"
-
-
 class Sender(Protocol):
     """Sends transactions on one chain and waits for them."""
 
     w3: Web3
+
+    def account(self) -> ChecksumAddress:
+        """Returns the account that sends the transactions."""
+        ...
 
     def send(self, tx: TxParams) -> TxReceipt:
         """Sends `tx` and returns its receipt. Errors with RuntimeError when the transaction
@@ -214,31 +160,116 @@ class Sender(Protocol):
         ...
 
 
+def send(sender: Sender, fn: ContractFunction, what: str) -> TxReceipt:
+    """Sends the call `fn` through `sender`, once the user approves it, and returns the
+    receipt. Errors as `Sender.send` does."""
+    print(f"{what}: approve the transaction", flush=True)
+    receipt = sender.send({"to": fn.address, "data": HexBytes(fn._encode_transaction_data())})
+    print(f"{what}: {receipt['gasUsed']:,} gas", flush=True)
+    return receipt
+
+
+class Plan[K: str](NamedTuple):
+    """The contracts that one deployment transaction creates, by key, with addresses known
+    before it is sent (docs/adr/0028-one-transaction-deploy.md)."""
+
+    initcode: dict[K, Initcode]
+
+    @classmethod
+    def of(cls, builds: Builds) -> Plan[Contract]:
+        """Returns the plan of fe0-chain's `builds`. Compiler's constructor gets the phases'
+        planned addresses."""
+        initcode = builds.phase_initcode()
+        phases = {c: create2_address(code) for c, code in initcode.items()}
+        initcode[Contract.COMPILER] = builds.compiler_initcode(phases)
+        return Plan(initcode)
+
+    @property
+    def addresses(self) -> dict[K, ChecksumAddress]:
+        return {k: create2_address(code) for k, code in self.initcode.items()}
+
+    def check_record(self, path: Path, recorded: Mapping[K, ChecksumAddress]) -> None:
+        """Errors with RuntimeError when `recorded`, which the file at `path` holds, are other
+        addresses than the plan's."""
+        if recorded != self.addresses:
+            raise RuntimeError(f"{path.relative_to(ROOT)} holds other addresses than this"
+                               " build's; remove it to deploy this build")
+
+    def deploy(self, sender: Sender) -> None:
+        """Creates each contract that has no code at its address yet, in one transaction that
+        creates all of them or none. Errors as `Sender.send` and `require_deployers` do, or
+        with RuntimeError when the transaction leaves a contract without code."""
+        w3 = sender.w3
+        require_deployers(w3)
+        addresses = self.addresses
+
+        def without_code(keys: Iterable[K]) -> list[K]:
+            return [k for k in keys if not w3.eth.get_code(addresses[k])]
+        missing = without_code(addresses)
+        for k, address in addresses.items():
+            print(f"{k}: {'to deploy' if k in missing else 'deployed'} at {address}")
+        if not missing:
+            return
+        data = deployment_data(self.initcode[k] for k in missing)
+        print(f"approve the deployment of {len(missing)} contracts in one transaction"
+              f" ({len(data):,} bytes of calldata)", flush=True)
+        receipt = sender.send({"to": MULTICALL3, "data": data})
+        print(f"deployed, {receipt['gasUsed']:,} gas", flush=True)
+        if empty := without_code(missing):
+            raise RuntimeError(f"the transaction left no code for {', '.join(empty)}")
+
+
+class _Connected(BaseModel):
+    address: Address
+
+
+class _Sent(BaseModel):
+    tx_hash: HexStr = Field(alias="txHash")
+    explorer: str | None = None
+
+
 class Wallet:
     """Sends each transaction from the user's browser wallet, through browser-web3-signer.
     Errors with RuntimeError when `rpc` serves a chain other than `chain_id`."""
 
-    def __init__(self, rpc: Url, chain_id: int) -> None:
+    def __init__(self, rpc: Url, chain_id: ChainId) -> None:
         self.w3 = Web3(HTTPProvider(rpc))
         self.chain_id = chain_id
         if (served := self.w3.eth.chain_id) != chain_id:
             raise RuntimeError(f"{rpc} serves chain {served}, not {chain_id}")
+        self._account: ChecksumAddress | None = None
+
+    def _signer[R: BaseModel](self, reply: type[R], command: str, *args: str) -> R:
+        """Runs the signer's `command` with `args` on the wallet's chain, and returns its
+        reply. Errors with RuntimeError when the signer fails or its reply is not a
+        `reply`."""
+        r = subprocess.run([SIGNER, "--json", "evm", command, "--chain", str(self.chain_id),
+                            *args], stdout=subprocess.PIPE, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"{SIGNER} exited with status {r.returncode}")
+        try:
+            return reply.model_validate_json(r.stdout)
+        except ValidationError as e:
+            raise RuntimeError(f"{SIGNER} {command} replied {r.stdout!r}: {e}") from e
+
+    def account(self) -> ChecksumAddress:
+        """Returns the wallet's account, which the user connects in the browser on the first
+        call. Errors with RuntimeError when the user does not connect it."""
+        if self._account is None:
+            self._account = self._signer(_Connected, "connect").address
+        return self._account
 
     def send(self, tx: TxParams) -> TxReceipt:
         """Sends `tx` from the wallet once the user approves it. Errors with RuntimeError when
         the user rejects it or the transaction fails."""
-        args = [SIGNER, "--json", "evm", "send-transaction", "--chain", str(self.chain_id),
-                "--data", HexBytes(tx.get("data", b"")).to_0x_hex()]
+        args = ["--data", HexBytes(tx.get("data", b"")).to_0x_hex()]
         if "to" in tx:
             args += ["--to", str(tx["to"])]
-        r = subprocess.run(args, stdout=subprocess.PIPE, text=True)
-        if r.returncode != 0:
-            raise RuntimeError(f"{SIGNER} exited with status {r.returncode}")
-        sent = json.loads(r.stdout)
-        print(f"  sent {sent['txHash']} {sent.get('explorer') or ''}", flush=True)
-        receipt = self.w3.eth.wait_for_transaction_receipt(HexStr(sent["txHash"]), timeout=600)
+        sent = self._signer(_Sent, "send-transaction", *args)
+        print(f"  sent {sent.tx_hash} {sent.explorer or ''}", flush=True)
+        receipt = self.w3.eth.wait_for_transaction_receipt(sent.tx_hash, timeout=600)
         if not receipt["status"]:
-            raise RuntimeError(f"the transaction {sent['txHash']} failed")
+            raise RuntimeError(f"the transaction {sent.tx_hash} failed")
         return receipt
 
 
@@ -253,127 +284,121 @@ class Rehearsal:
         for address, code in require_deployers(origin).items():
             node.set_code(address, code)
 
+    @classmethod
+    def start(cls, stack: ExitStack, rpc: Url) -> Self:
+        """Starts a node that `stack` stops, copies the deployers from the chain at `rpc` to
+        it, and removes REHEARSAL, so that the rehearsal deploys fe0-chain anew. Errors as
+        `Node` and `__init__` do."""
+        REHEARSAL.unlink(missing_ok=True)
+        return cls(stack.enter_context(Node()), Web3(HTTPProvider(rpc)))
+
+    def account(self) -> ChecksumAddress:
+        return self.node.accounts[0]
+
     def send(self, tx: TxParams) -> TxReceipt:
         """Sends `tx` from the node's first account. Errors as `Node.transact` does."""
         return self.node.transact(tx)
 
 
-class DeploymentFile(TypedDict):
-    version: str
-    commit: str
-    contracts: dict[str, str]
+class JsonRecord(BaseModel):
+    """A record that a deploy tool keeps in a JSON file."""
+
+    model_config = ConfigDict(frozen=True)
+
+    @classmethod
+    def read(cls, path: Path) -> Self:
+        """Returns the record that the file at `path` holds. Errors with OSError when there is
+        no such file, or with RuntimeError when it holds no such record."""
+        try:
+            return cls.model_validate_json(path.read_text())
+        except ValidationError as e:
+            raise RuntimeError(f"{path} holds no {cls.__name__}: {e}") from e
+
+    def write(self, path: Path) -> None:
+        """Writes the record to the file at `path`."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.model_dump_json(indent=2) + "\n")
 
 
-class DeploymentRecord(NamedTuple):
-    """A release of fe0-chain deployed on one chain, as its file records it. The file never
+class DeploymentRecord(JsonRecord):
+    """A version of fe0-chain deployed on one chain, as its file records it. The file never
     records a partial deployment, because the five contracts are created in one transaction
     (docs/adr/0028-one-transaction-deploy.md)."""
 
-    release: Release
-    addresses: dict[Contract, ChecksumAddress]
+    version: Version
+    contracts: dict[Contract, Address]
+
+    @model_validator(mode="after")
+    def _every_contract(self) -> Self:
+        if lacking := [c for c in Contract if c not in self.contracts]:
+            raise ValueError(f"lacks the contracts {', '.join(lacking)}")
+        return self
+
+    @property
+    def compiler(self) -> ChecksumAddress:
+        return self.contracts[Contract.COMPILER]
 
     @staticmethod
-    def file(chain_id: int) -> Path:
+    def file(chain_id: ChainId) -> Path:
         """Returns the file that records the deployment on the chain `chain_id`."""
         return DEPLOYMENTS / f"{chain_id}.json"
 
     @staticmethod
-    def chain_ids() -> list[int]:
+    def chain_ids() -> list[ChainId]:
         """Returns the id of each chain that has a file, in ascending order. Errors with
         RuntimeError when a file's name is not a chain id."""
         ids = []
         for path in DEPLOYMENTS.glob("*.json"):
             if not path.stem.isdecimal():
                 raise RuntimeError(f"{path} is named for no chain id")
-            ids.append(int(path.stem))
+            ids.append(ChainId(int(path.stem)))
         return sorted(ids)
 
     @classmethod
-    def on(cls, chain_id: int) -> Self:
+    def on(cls, chain_id: ChainId) -> Self:
         """Returns the record that the file of the chain `chain_id` holds. Errors as `read`
         does."""
         return cls.read(cls.file(chain_id))
-
-    @classmethod
-    def read(cls, path: Path) -> Self:
-        """Returns the record that the file at `path` holds. Errors with OSError when there is
-        no such file, or with RuntimeError when it lacks a field or a contract."""
-        saved: DeploymentFile = json.loads(path.read_text())
-        try:
-            record = cls(Release(Version(saved["version"]), Commit(saved["commit"])),
-                         {Contract(name): Web3.to_checksum_address(a)
-                          for name, a in saved["contracts"].items()})
-        except KeyError as e:
-            raise RuntimeError(f"{path} lacks the field {e}") from e
-        if lacking := [c for c in Contract if c not in record.addresses]:
-            raise RuntimeError(f"{path} lacks the contracts {', '.join(lacking)}")
-        return record
-
-    def write(self, path: Path) -> None:
-        """Writes the record to the file at `path`."""
-        saved: DeploymentFile = {"version": self.release.version, "commit": self.release.commit,
-                                 "contracts": {str(c): a for c, a in self.addresses.items()}}
-        path.parent.mkdir(exist_ok=True)
-        path.write_text(json.dumps(saved, indent=2) + "\n")
 
 
 @dataclass
 class Deployment:
     path: Path
-    release: Release
-    plan: Plan
+    version: Version
+    plan: Plan[Contract]
 
     @classmethod
-    def open(cls, path: Path, release: Release, plan: Plan) -> Self:
-        """Returns the deployment of `release` by `plan`, with its file at `path`. There may be
-        no file yet. Errors with RuntimeError when the file holds another release or other
-        addresses than the plan's, or lacks a field or a contract."""
+    def open(cls, path: Path, plan: Plan[Contract]) -> Self:
+        """Returns the deployment by `plan` of the version in fe0-chain/fe.toml, with its file
+        at `path`. There may be no file yet. Errors with RuntimeError when the file holds
+        another version, other addresses than the plan's, or no record."""
+        want = version()
         if path.exists():
             try:
                 saved = DeploymentRecord.read(path)
             except RuntimeError as e:
-                raise RuntimeError(f"{e}; remove it to deploy {release}") from e
-            if saved.release != release:
-                raise RuntimeError(f"{path.relative_to(ROOT)} holds release {saved.release};"
-                                   f" remove it to deploy {release}")
-            if saved.addresses != plan.addresses:
-                raise RuntimeError(f"{path.relative_to(ROOT)} holds other addresses than this"
-                                   " build's; remove it to deploy this build")
-        return cls(path, release, plan)
-
-    def without_code(self, w3: Web3, contracts: Iterable[Contract]) -> list[Contract]:
-        """Returns those of `contracts` that have no code at their planned address on the chain
-        of `w3`."""
-        return [c for c in contracts if not w3.eth.get_code(self.plan.addresses[c])]
+                raise RuntimeError(f"{e}; remove it to deploy {want}") from e
+            if saved.version != want:
+                raise RuntimeError(f"{path.relative_to(ROOT)} holds version {saved.version};"
+                                   f" remove it to deploy {want}")
+            plan.check_record(path, saved.contracts)
+        return cls(path, want, plan)
 
     def deploy_all(self, sender: Sender) -> ChecksumAddress:
-        """Deploys each contract that has no code at its address yet, in one transaction that
-        creates all of them or none (docs/adr/0028-one-transaction-deploy.md). Records every
-        address in the deployment's file, and returns Compiler's address. Errors as
-        `Sender.send` does, or with RuntimeError when the transaction leaves a contract without
-        code, or as `require_deployers` does."""
-        require_deployers(sender.w3)
-        missing = self.without_code(sender.w3, self.plan.addresses)
-        for c, address in self.plan.addresses.items():
-            print(f"{c}: {'to deploy' if c in missing else 'deployed'} at {address}")
-        if missing:
-            data = deployment_data(self.plan.initcode[c] for c in missing)
-            print(f"approve the deployment of {len(missing)} contracts in one transaction"
-                  f" ({len(data):,} bytes of calldata)", flush=True)
-            receipt = sender.send({"to": MULTICALL3, "data": data})
-            print(f"deployed, {receipt['gasUsed']:,} gas", flush=True)
-            if empty := self.without_code(sender.w3, missing):
-                raise RuntimeError(f"the transaction left no code at {', '.join(empty)}")
-        DeploymentRecord(self.release, self.plan.addresses).write(self.path)
-        return self.plan.addresses[Contract.COMPILER]
+        """Deploys the plan and records every address in the deployment's file. Returns
+        Compiler's address. Errors as `Plan.deploy` does."""
+        self.plan.deploy(sender)
+        record = DeploymentRecord(version=self.version, contracts=self.plan.addresses)
+        record.write(self.path)
+        return record.compiler
 
 
-def demo(sender: Sender, compiler: ChecksumAddress) -> None:
+def demo(sender: Sender, compiler: ChecksumAddress, interface: ABI) -> None:
     """Deploys COUNTER with START through Compiler, and calls `Get`. Errors with RuntimeError
     when `version()` does not return the version in fe0-chain/fe.toml or `Get` does not return
     START, or as `Sender.send` does."""
     w3 = sender.w3
-    contract = w3.eth.contract(compiler, abi=interface())
+    contract = w3.eth.contract(compiler, abi=interface)
     got_version: str = contract.functions.version().call()
     print(f"version() by eth_call: {got_version!r}")
     if failures := check_version(got_version):
@@ -385,22 +410,31 @@ def demo(sender: Sender, compiler: ChecksumAddress) -> None:
     # The call runs on the same state as the transaction, as long as nobody else deploys through
     # Compiler in between, so it returns the address that the transaction creates.
     address: ChecksumAddress = deploy.call()
-    print(f"deploy({COUNTER.name}): approve the transaction", flush=True)
-    receipt = sender.send({"to": compiler, "data": HexBytes(deploy._encode_transaction_data())})
+    send(sender, deploy, f"deploy({COUNTER.name})")
     got = CounterGet.call(w3, address)
-    print(f"{COUNTER.name}: deployed at {address}, {receipt['gasUsed']:,} gas;"
-          f" Get returns {got.value}")
+    print(f"{COUNTER.name}: deployed at {address}; Get returns {got.value}")
     if failures := got.failures():
         raise RuntimeError("\n".join(failures))
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__,
+def chain_id_arg(text: str) -> ChainId:
+    """Returns the chain id that the command-line argument `text` gives. Errors with
+    ValueError when `text` is not a number."""
+    return ChainId(int(text))
+
+
+def deploy_parser(doc: str | None) -> argparse.ArgumentParser:
+    """Returns the parser of a deploy tool's arguments, with `doc` as its help."""
+    ap = argparse.ArgumentParser(description=doc,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rehearse", action="store_true", help="deploy on a local anvil node")
     ap.add_argument("--rpc", type=Url, default=ARBITRUM["rpc"], help="the chain's JSON-RPC URL")
-    ap.add_argument("--chain", type=int, default=ARBITRUM["id"], help="the chain id")
-    args = ap.parse_args()
+    ap.add_argument("--chain", type=chain_id_arg, default=ARBITRUM["id"], help="the chain id")
+    return ap
+
+
+def main() -> None:
+    args = deploy_parser(__doc__).parse_args()
     builds = Builds.build()
     if failures := builds.oversize():
         sys.exit("\n".join(failures))
@@ -409,15 +443,10 @@ def main() -> None:
         with ExitStack() as stack:
             sender: Sender
             if args.rehearse:
-                sender = Rehearsal(stack.enter_context(Node()), Web3(HTTPProvider(args.rpc)))
-                rehearsal = ROOT / "out/rehearsal.json"
-                rehearsal.unlink(missing_ok=True)
-                deployment = Deployment.open(rehearsal, Release.head(), plan)
+                sender, path = Rehearsal.start(stack, args.rpc), REHEARSAL
             else:
-                sender = Wallet(args.rpc, args.chain)
-                deployment = Deployment.open(DeploymentRecord.file(args.chain),
-                                             Release.tagged(), plan)
-            demo(sender, deployment.deploy_all(sender))
+                sender, path = Wallet(args.rpc, args.chain), DeploymentRecord.file(args.chain)
+            demo(sender, Deployment.open(path, plan).deploy_all(sender), builds.interface())
     except RuntimeError as e:
         sys.exit(str(e))
 

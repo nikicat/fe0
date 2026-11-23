@@ -12,13 +12,12 @@ import re
 import sys
 from pathlib import Path
 
-from eth_typing import ChecksumAddress
 from web3 import HTTPProvider, Web3
 from web3.exceptions import ContractLogicError
 
-from chain_check import Contract, Reverted, committed_interface, revert_data
+from chain_check import Reverted, committed_interface, revert_data
 from cli_check import ExitCode
-from deploy import ARBITRUM, DeploymentRecord, Url
+from deploy import ARBITRUM, DeploymentRecord, Url, chain_id_arg
 from fegen import FE0, ROOT, DiagCode, FeSource, LineCol
 
 MESSAGES: Path = ROOT / "fe0-cli/src/messages.fe"
@@ -36,25 +35,20 @@ def messages() -> dict[DiagCode, str]:
     return {codes[name]: text for name, text in MESSAGE.findall(MESSAGES.read_text())}
 
 
-def compiler(chain_id: int) -> ChecksumAddress:
-    """Returns the address of Compiler that deployments/<chain id>.json records. Errors as
-    `DeploymentRecord.on` does."""
-    return DeploymentRecord.on(chain_id).addresses[Contract.COMPILER]
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("program", type=Path, help="a Fe0 source file")
     ap.add_argument("--rpc", type=Url, default=ARBITRUM["rpc"], help="the chain's JSON-RPC URL")
-    ap.add_argument("--chain", type=int, default=ARBITRUM["id"], help="the chain id")
+    ap.add_argument("--chain", type=chain_id_arg, default=ARBITRUM["id"], help="the chain id")
     args = ap.parse_args()
     source = FeSource(args.program.read_text())
     w3 = Web3(HTTPProvider(args.rpc))
     try:
-        contract = w3.eth.contract(compiler(args.chain), abi=committed_interface())
+        compiler = DeploymentRecord.on(args.chain).compiler
     except RuntimeError as e:
         sys.exit(str(e))
+    contract = w3.eth.contract(compiler, abi=committed_interface())
     try:
         code: bytes = contract.functions.compile(source.encode()).call()
     except ContractLogicError as e:

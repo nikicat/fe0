@@ -4,13 +4,12 @@ The differential harness on a node, step 0 of ADR 0016. It exists because inside
 call comes from one sender and logs are not visible.
 """
 import subprocess
-import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import NamedTuple, NewType, Self, cast
+from typing import Literal, NamedTuple, NewType, Self, cast
 
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
@@ -22,7 +21,7 @@ import cli_check
 import embed
 import gen
 from fegen import (DISPATCH, FE, NO_LINE, ROOT, THIS, Account, AccountIndex, AddressArg,
-                   CallCase, Case, DeploymentName, Payload, Probe, ProbeIndex, Word,
+                   CallCase, Case, DeploymentName, Payload, Probe, ProbeIndex, Word, poll,
                    script_place)
 
 # The node's hardfork. Cancun has no calldata floor price (EIP-7623), so the gas of a call less
@@ -265,13 +264,19 @@ class Node:
         raise RuntimeError(f"the node does not take code at {address}: {reply.get('error')}")
 
     def _await_start(self) -> None:
-        deadline = time.monotonic() + START_TIMEOUT
-        while not self.w3.is_connected():
-            if (code := self.proc.poll()) is not None:
-                raise RuntimeError(f"anvil exited with status {code}")
-            if time.monotonic() > deadline:
-                raise RuntimeError(f"anvil did not answer within {START_TIMEOUT} s")
-            time.sleep(0.1)
+        try:
+            poll(self._answers, START_TIMEOUT, 0.1)
+        except TimeoutError as e:
+            raise RuntimeError(f"anvil did not answer within {START_TIMEOUT} s") from e
+
+    def _answers(self) -> Literal[True] | None:
+        """Returns True when anvil answers, or None when it does not yet. Errors with
+        RuntimeError when anvil exited."""
+        if self.w3.is_connected():
+            return True
+        if (code := self.proc.poll()) is not None:
+            raise RuntimeError(f"anvil exited with status {code}")
+        return None
 
     def _stop(self) -> None:
         self.proc.terminate()

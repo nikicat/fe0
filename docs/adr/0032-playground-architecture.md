@@ -14,8 +14,8 @@ modules with no build step:
 
 The next features need many more views and much more shared state: a contract page for each
 deployed contract, the list of programs that the registry has deployed and recorded
-([0031](0031-deployment-registry.md)), a choice of chain and of compiler, and the labels that
-accounts add to contracts in the registry. Each would add more elements that several modules
+([0031](0031-deployment-registry.md)), a choice of chain and of compiler, and the contracts that
+each account deployed through the registry. Each would add more elements that several modules
 read and write.
 
 GitHub Pages serves the page, and `.github/workflows/pages.yml` runs a build step
@@ -50,17 +50,17 @@ through the deployed Compiler.
 **Routes**, in the URL's fragment, so that they work on Pages:
 - `#/`: the editor;
 - `#/src/<program>`: a shared program, as its UTF-8 bytes in base64url;
-- `#/<chain id>/<address>`: one contract, with its source from the registry, labels,
-  constructor arguments, compiler and call forms;
+- `#/<chain id>/<address>`: one contract, with its source from the registry, constructor
+  arguments, compiler and call forms;
 - `#/<chain id>/<address>/src/<program>`: the same, with a shared program;
 - `#/registry`: the registry's list, which can be filtered by deployer or compiler.
 
 **Configuration.** `tools/playground.py` writes a typed `config.ts` with what the page needs
-from the repository. It holds each chain in `deployments/*.json`, with its Compiler and
-registry addresses and the release tag of that Compiler.
-A Compiler in `config.ts` is a known one: a release of this repository deployed it, and its
-tag names that release. Where the registry names a compiler, the page shows the release tag of
-a known one, and warns about any other.
+from the repository. It holds each chain that `deployments/` records, with its Compiler and
+registry addresses and a link to the Compiler's page on Sourcify
+([ADR 0033](0033-verify-on-sourcify.md)). A Compiler in `config.ts` is a known one, since this
+repository deployed it. Where the registry names a compiler, the page links a known one to its
+page on Sourcify, and warns about any other.
 
 **Call forms.** The call forms come from an outline of the program, which finds `init` and
 the `msg` variants with regular expressions. The page has no Fe0 parser, and the Compiler
@@ -77,7 +77,7 @@ The page reads it from any contract, so the page owns that signature, not Compil
 
 **The first build** has one chain, Arbitrum One, and no registry. Until the registry exists, a
 contract's page takes its source from the editor, and there is no `#/registry`. That source may
-not be the program the contract was built from. The registry's client, its list, the labels and
+not be the program the contract was built from. The registry's client, the registry's lists and
 the chain picker come with the registry.
 
 ## Alternatives

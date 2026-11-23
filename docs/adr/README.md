@@ -43,5 +43,7 @@ To add one, copy the shape of an existing record and take the next number. When 
 | [0028](0028-one-transaction-deploy.md) | Deploy the five contracts in one transaction through Multicall3 and CreateX | Nov 22 | accepted |
 | [0029](0029-levels-not-in-ci.md) | CI does not run `node_check.py --levels` | Nov 22 | accepted |
 | [0030](0030-mutations-on-text.md) | Mutations rewrite the finished program text | Nov 21 | accepted |
-| [0031](0031-deployment-registry.md) | A registry of programs deployed through any Compiler | Nov 22 | proposed |
+| [0031](0031-deployment-registry.md) | A registry of programs deployed through a listed Compiler | Nov 22 | accepted |
 | [0032](0032-playground-architecture.md) | The playground is a TypeScript app in layers, built with Vite | Nov 22 | accepted |
+| [0033](0033-verify-on-sourcify.md) | Verify deployed contracts on Sourcify | Nov 23 | accepted |
+| [0034](0034-compiler-registry.md) | An admin keeps the list of compilers that the registry accepts | Nov 23 | accepted |

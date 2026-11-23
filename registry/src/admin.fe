@@ -1,0 +1,75 @@
+// A two-step admin role (docs/adr/0034-compiler-registry.md), written here since Fe's std has
+// none.
+
+use std::abi::sol
+use std::evm::{Address, Ctx, Log}
+
+pub msg AdminMsg {
+    #[selector = sol("admin()")]
+    Admin -> Address,
+    // Returns the account that `transferAdmin` named, or zero when there is none.
+    #[selector = sol("pendingAdmin()")]
+    PendingAdmin -> Address,
+    // Names `to` as the next admin, who becomes admin by calling `acceptAdmin`. A zero `to`
+    // cancels the transfer. Errors with NotAdmin.
+    #[selector = sol("transferAdmin(address)")]
+    TransferAdmin { to: Address },
+    // Makes the caller the admin and emits AdminChanged. Errors with NotPendingAdmin.
+    #[selector = sol("acceptAdmin()")]
+    AcceptAdmin,
+}
+
+#[event]
+struct AdminChanged {
+    #[indexed]
+    previous: Address,
+    #[indexed]
+    admin: Address,
+}
+
+// The caller is not the admin.
+#[error]
+pub struct NotAdmin { pub caller: Address }
+
+// `transferAdmin` did not name the caller.
+#[error]
+pub struct NotPendingAdmin { pub caller: Address }
+
+pub struct AdminRole { admin: Address, pending: Address }
+
+impl AdminRole {
+    pub fn of(_ admin: Address) -> Self {
+        AdminRole { admin, pending: Address::zero() }
+    }
+
+    // Errors with NotAdmin.
+    pub fn require(self) uses (ctx: Ctx) {
+        let caller = ctx.caller()
+        if caller != self.admin {
+            revert_error(NotAdmin { caller })
+        }
+    }
+
+    pub fn admin(self) -> Address {
+        self.admin
+    }
+
+    pub fn pending(self) -> Address {
+        self.pending
+    }
+
+    pub fn transfer(mut self, _ to: Address) uses (ctx: Ctx) {
+        self.require()
+        self.pending = to
+    }
+
+    pub fn accept(mut self) uses (ctx: Ctx, log: mut Log) {
+        let caller = ctx.caller()
+        if caller != self.pending {
+            revert_error(NotPendingAdmin { caller })
+        }
+        log.emit(AdminChanged { previous: self.admin, admin: caller })
+        self.admin = caller
+        self.pending = Address::zero()
+    }
+}

@@ -17,18 +17,17 @@ usage: newline_check.py [--seeds N]
 """
 import argparse
 import random
-import re
 import subprocess
 import sys
 import tomllib
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NamedTuple, NewType
+from typing import NamedTuple
 
 import cli_check
 import embed
-from fegen import FE, ROOT, ByteOffset, FeSource, LineCol
+from fegen import FE, ROOT, ByteOffset, FeSource, FeVersion, LineCol, fe_version
 from fetokens import Kind, Op, Token, tokens
 from gen import Gen, Seed, program_file, seeds_from
 from mutate import Text, reflow
@@ -38,10 +37,6 @@ FE_STMTS_TARGET: Path = ROOT / "out/fe-stmts"
 FE_STMTS_EXE: Path = FE_STMTS_TARGET / "release/fe-stmts"
 FE_STMTS_MANIFEST: Path = FE_STMTS / "Cargo.toml"
 FE_STMTS_LOCK: Path = FE_STMTS / "Cargo.lock"
-# A release of Fe, such as `26.7.0`.
-FeVersion = NewType("FeVersion", str)
-# The first line of `fe --version`, such as `fe 26.7.0 (e6e6342b2)`.
-FE_VERSION = re.compile(r"fe (?P<version>\S+) ")
 
 
 class Span(NamedTuple):
@@ -111,16 +106,6 @@ def fe0_blocks(source: FeSource) -> Blocks:
             case _ if not t.kind.trivia:
                 take(t.start, t.end)
     return blocks
-
-
-def fe_version() -> FeVersion:
-    """Returns the release of the fe binary. Errors with ValueError when `fe --version` prints
-    no release."""
-    out = subprocess.run([FE, "--version"], check=True, capture_output=True, text=True).stdout
-    m = FE_VERSION.match(out)
-    if m is None:
-        raise ValueError(f"{FE} --version prints no release: {out.strip()}")
-    return FeVersion(m["version"])
 
 
 def locked_parser_version() -> FeVersion:
