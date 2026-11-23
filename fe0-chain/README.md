@@ -32,14 +32,14 @@ The constructor takes the addresses of Lexer, Parser, Checker and Back, in that 
 ## Releases
 
 A deployed Compiler's `version()` returns the version in this ingot's `fe.toml`.
-`tools/deploy.py` records the version and the addresses in `deployments/<chain id>.json`.
-Sourcify cannot verify the deployed contracts yet, since they are not built the way Sourcify
-rebuilds Fe source ([ADR 0033](../docs/adr/0033-verify-on-sourcify.md), "Consequences").
+`deployments/<chain id>.json` records each chain's release, with Sourcify's match for each
+contract ([ADR 0033](../docs/adr/0033-verify-on-sourcify.md)).
 
 To make a release, raise the version in `fe.toml` and in `version()` in `src/lib.fe`, and
-commit. `tools/chain_check.py` fails when the two versions differ. The return type
-of `version()` is `String<N>`, where `N` is the length of the version, so a longer or shorter
-version needs a new `N` there.
+commit. `tools/chain_check.py` fails when the two versions differ. The return type of
+`version()` is `String<N>`, where `N` is the length of the version, so a longer or shorter
+version needs a new `N` there. Then `tools/deploy.py` deploys the release
+([docs/DEMO.md](../docs/DEMO.md), step 4).
 
 ## Errors
 
@@ -70,6 +70,8 @@ Only the first error is reported. Warnings, such as an unused `uses` entry, are 
 uv run --project tools tools/chain_check.py
 ```
 
-This builds the contracts at `-O s` into `out/chain/`. Then it checks them on a local anvil
-node against the native CLI. If `Compiler.abi.json` no longer matches the build, it fails.
+This builds the contracts as Sourcify rebuilds them, into `out/chain/`
+([ADR 0033](../docs/adr/0033-verify-on-sourcify.md)). Then it checks them on a local anvil node
+against the native CLI. If `Compiler.abi.json` does not match the build, it fails.
+`tools/deploy.py` deploys the same build.
 Run it with `--write-abi` to write the file again.

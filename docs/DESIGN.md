@@ -187,20 +187,20 @@ The compiler does not fit the 24,576-byte limit, so each phase is its own contra
 - **Trust:** a phase contract decodes its input without checks
   ([ADR 0027](adr/0027-phase-contracts-trust-input.md)).
 - **Deployment:** one transaction ([ADR 0028](adr/0028-one-transaction-deploy.md)).
-- **Measured on Fe 26.7.0 at `-O s`** by `tools/chain_check.py`:
+- **Build:** as Sourcify rebuilds it, at `-O 1`
+  ([ADR 0033](adr/0033-verify-on-sourcify.md)).
+- **Measured on Fe 26.7.0** by `tools/chain_check.py`:
 
   | Contract | Runtime bytes | Deploy gas |
   |---|---|---|
-  | Lexer | 5,751 | 1.28M |
-  | Parser | 17,358 | 3.81M |
-  | Checker | 20,101 | 4.40M |
-  | Back | 17,296 | 3.79M |
-  | Compiler | 1,706 | 0.45M |
+  | Lexer | 5,857 | 1.31M |
+  | Parser | 18,175 | 3.98M |
+  | Checker | 20,405 | 4.47M |
+  | Back | 17,728 | 3.89M |
+  | Compiler | 1,693 | 0.51M |
 
-  Deploying all five costs 13.7M gas, and `deploy` of `counter.fe` 2.1M. Compiling costs up to
-  28.5M gas, for `corpus/amm.fe` (8,141 bytes). Lexing takes about 1,240 gas per byte, a figure
-  that `chain_check.py` does not measure. No tool measures the boundaries; we expect them to
-  cost little next to the phases.
+  Deploying all five costs 14.2M gas, and `deploy` of `counter.fe` 2.05M. Compiling costs up to
+  27.7M gas, for `corpus/amm.fe` (8,141 bytes).
 
 ## 8a. Measured limits of the host (official Fe on the EVM)
 

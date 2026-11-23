@@ -1,10 +1,17 @@
 {
-  "version": "0.1.2",
+  "version": "0.1.4",
   "contracts": {
-    "Lexer": "0x821F84a486c458311707e7EEd85b58E9FE2FC2e3",
-    "Parser": "0x02715221094D53c3ADF8E67559e1a275AcB101Ba",
-    "Checker": "0xa405641a6674b0f2dE5af9fC2d203FB5B1C089fa",
-    "Back": "0xb41576E48ccF1905cD7f81d93918916B8d638a30",
-    "Compiler": "0x4956c350E3a9e1FEEcEe0FE904053bD2931703b4"
+    "Lexer": "0x84EdB2bF8C1d50B5834CD1aE7d16D335365Da768",
+    "Parser": "0x5e31420FA4aBa5edac66309aE4ac7EaCa1EC1029",
+    "Checker": "0x9FDbefB2411ecefD43896D24ba4CbAEb0bDB1b41",
+    "Back": "0xB9E7aaFB76AB0C952feeBeEa40F9533b7A2A6960",
+    "Compiler": "0xFeB946b917FaD7fC6beDAF47C452BA876baFDfB8"
+  },
+  "sourcify": {
+    "Lexer": "match",
+    "Parser": "match",
+    "Checker": "match",
+    "Back": "match",
+    "Compiler": "match"
   }
 }

@@ -31,7 +31,8 @@ the same behaviour.
   outside what the harness compares. The other choice, rejecting recursive cycles in the
   checker, is ruled out below.
 - **Reduce the cost in steps, each measured** with `tools/gas_compare.py` for gas and
-  Back's runtime size (`fe0-chain`, `-O s`) for the code generator's size:
+  Back's runtime size (`fe0-chain`, as `tools/chain_check.py` builds it) for the code
+  generator's size:
   1. Keep the frame pointer on the stack, under the function's words
      ([0023](0023-frame-pointer-on-the-stack.md) has the design and the measured gain).
   2. Keep the parameters and locals of a function on the stack, when it calls nothing and has

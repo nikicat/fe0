@@ -14,8 +14,8 @@ chain that `deployments/` records. It is published at <https://nikicat.github.io
 - **Deploy.** With a browser wallet, the page sends `deploy(src, args)` to Compiler. The
   form takes the parameters of the program's `init`, and the page ABI-encodes them as `args`.
   The page asks the wallet to switch to the chain, and to add it if the wallet lacks it.
-  Deploying `corpus/counter.fe` on Arbitrum One takes about 2.1M gas, paid in ETH
-  ([docs/DESIGN.md](../docs/DESIGN.md) §8). The page then opens the new contract's page.
+  The wallet pays the deployment's gas in ETH ([docs/DESIGN.md](../docs/DESIGN.md) §8 gives
+  the gas). The page then opens the new contract's page.
 - **Call.** A contract's page has a form for each variant of the program's `msg` types. The
   form calls the contract by `eth_call`, which needs no wallet, or sends a transaction from the
   wallet. The page decodes the return value or the panic. The "Call a deployed contract" field,

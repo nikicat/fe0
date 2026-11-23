@@ -5,7 +5,7 @@ import shutil
 from enum import StrEnum
 from http import HTTPStatus
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, NewType, Self
+from typing import Any, Literal, NamedTuple, NewType, Protocol, Self
 
 import requests
 from eth_typing import ChecksumAddress
@@ -13,8 +13,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic.alias_generators import to_camel
 
 import fegen
-from deploy import ChainId, Url
-from fegen import FeSource
+from fegen import ChainId, FeSource, Url
 
 API: str = "https://sourcify.dev/server"
 # Sourcify's repository, whose pages show a contract and whether Sourcify verified it.
@@ -61,6 +60,12 @@ class _JobError(_Reply):
     custom_code: str
     message: str
 
+    @property
+    def verified_before(self) -> bool:
+        """True if Sourcify verified the contract before and the job found no better match.
+        False otherwise."""
+        return self.custom_code == "already_verified"
+
 
 class _Contract(_Reply):
     """A contract as Sourcify reports it, with no match when it verified none."""
@@ -78,6 +83,12 @@ class _Job(_Reply):
     is_job_completed: bool
     error: _JobError | None = None
     contract: _Contract
+
+
+class Identified(Protocol):
+    """A key of a contract in a deployment, which knows how Sourcify names that contract."""
+
+    def id(self) -> ContractId: ...
 
 
 def contract_page(chain_id: ChainId, address: ChecksumAddress) -> Url:
@@ -105,9 +116,9 @@ def _known_match(chain_id: ChainId, address: ChecksumAddress) -> Match:
     return _request("GET", f"/v2/contract/{chain_id}/{address}", _Contract).found()
 
 
-def _await_job(job: str) -> Match:
-    """Waits for the verification job `job` and returns its match. Errors with RuntimeError
-    when the job fails, finds no match or does not finish within TIMEOUT."""
+def _await_job(job: str) -> _Job:
+    """Returns the verification job `job` once it completes. Errors with RuntimeError when it
+    does not complete within TIMEOUT."""
     def done() -> _Job | None:
         status = _request("GET", f"/v2/verify/{job}", _Job)
         return status if status.is_job_completed else None
@@ -116,9 +127,7 @@ def _await_job(job: str) -> Match:
     except TimeoutError as e:
         raise RuntimeError(f"Sourcify did not finish the verification {job} in {TIMEOUT} s"
                            ) from e
-    if status.error is not None:
-        raise RuntimeError(f"Sourcify: {status.error.custom_code}: {status.error.message}")
-    return status.contract.found()
+    return status
 
 
 class Sources(NamedTuple):
@@ -132,9 +141,10 @@ class Sources(NamedTuple):
         return cls({SourcePath(p.relative_to(ingot).as_posix()): FeSource(p.read_text())
                     for p in sorted((ingot / "src").rglob("*.fe"))})
 
-    def build(self, ingot: Path, out: Path) -> None:
-        """Makes the directory `ingot` hold only the files and MANIFEST, and builds it into
-        `out` with no options, as Sourcify does. Exits as `fegen.fe_build` does."""
+    def build(self, out: Path) -> None:
+        """Builds the files into `out` as Sourcify does, from an ingot in `out/ingot` that holds
+        only them and MANIFEST. Exits as `fegen.fe_build` does."""
+        ingot = out / "ingot"
         shutil.rmtree(ingot, ignore_errors=True)
         for path, text in self.files.items():
             (ingot / path).parent.mkdir(parents=True, exist_ok=True)
@@ -145,9 +155,9 @@ class Sources(NamedTuple):
     def verify(self, chain_id: ChainId, address: ChecksumAddress,
                contract: ContractId) -> Match:
         """Submits the files for `contract` at `address`, waits for Sourcify's verdict, and
-        returns the match. Returns the recorded match of a contract that Sourcify verified
-        before. Errors with RuntimeError when Sourcify refuses the submission, finds no match,
-        or does not finish within TIMEOUT."""
+        returns the match. A contract that Sourcify verified before gets the match that
+        Sourcify recorded (docs/adr/0033-verify-on-sourcify.md). Errors with RuntimeError when
+        Sourcify refuses the submission, finds no match, or does not finish within TIMEOUT."""
         try:
             accepted = _request("POST", f"/v2/verify/{chain_id}/{address}", _Accepted,
                                 self._submission(contract))
@@ -155,9 +165,13 @@ class Sources(NamedTuple):
             if e.response.status_code != HTTPStatus.CONFLICT:
                 raise RuntimeError(f"Sourcify refused the verification: {e.response.text}"
                                    ) from e
-            # Sourcify verified the contract before.
             return _known_match(chain_id, address)
-        return _await_job(accepted.verification_id)
+        job = _await_job(accepted.verification_id)
+        if job.error is None:
+            return job.contract.found()
+        if job.error.verified_before:
+            return _known_match(chain_id, address)
+        raise RuntimeError(f"Sourcify: {job.error.custom_code}: {job.error.message}")
 
     def _submission(self, contract: ContractId) -> dict[str, Any]:
         """Returns the body of the request that verifies `contract` from the files."""

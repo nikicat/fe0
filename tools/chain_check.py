@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Check the compiler on chain (fe0-chain, DESIGN.md §8) on a local anvil node.
 
-It builds fe0-chain at `-O s` and checks that each contract's runtime code fits EIP-170 and its
-deploy code fits EIP-3860. Then it deploys the phase contracts and Compiler on anvil, and:
+It builds fe0-chain as Sourcify rebuilds it (`chain_sources`) and checks that each contract's
+runtime code fits EIP-170 and its deploy code fits EIP-3860. Then it deploys the phase contracts
+and Compiler on anvil, and:
 
 - compiles every program of corpus/ with `compile(bytes)` by `eth_call`. The deploy code must
   be the CLI's, byte for byte;
@@ -22,10 +23,12 @@ It prints the deploy gas of each contract and the gas of the largest compile.
 """
 import argparse
 import json
+import re
 import sys
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import cache
 from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple, NewType, Self
@@ -42,12 +45,19 @@ from web3.types import TxParams
 import cli_check
 import embed
 import fegen
+import sourcify
 from embed import FailureMessage
-from fegen import ROOT, Diag, FeName, FeSource, Version, ingot_version
+from fegen import FE0, ROOT, Diag, FeName, FeSource, Version, ingot_version
 from node import BLOCK_GAS, Gas, Node, corpus
 
 CHAIN: Path = ROOT / "fe0-chain"
 OUT: Path = ROOT / "out/chain"
+# The module of fe0-chain that declares its contracts, and refers to fe0's modules as `fe0::m`.
+LIB: sourcify.SourcePath = sourcify.SourcePath("src/lib.fe")
+# A path in fe0-chain's source to a module of fe0, such as `fe0::lexer`.
+FE0_MODULE: re.Pattern[str] = re.compile(r"\bfe0::(\w+)")
+# A path in fe0's source to another of its own modules, such as `ingot::lexer`.
+INGOT_MODULE: re.Pattern[str] = re.compile(r"\bingot::(\w+)")
 # The interface of Compiler for callers, committed.
 INTERFACE: Path = CHAIN / "Compiler.abi.json"
 # The option that writes INTERFACE instead of checking it.
@@ -88,6 +98,10 @@ class Contract(StrEnum):
     def phases(cls) -> list[Contract]:
         """Returns the phase contracts."""
         return [c for c in cls if c is not cls.COMPILER]
+
+    def id(self) -> sourcify.ContractId:
+        """Returns the contract's identifier in `chain_sources`."""
+        return sourcify.ContractId(LIB, self)
 
     def constructor_arg(self) -> str:
         """Returns the name of the argument of Compiler's constructor that takes the phase's
@@ -136,19 +150,39 @@ class Code[C: str](NamedTuple):
                 if len(code) > limit]
 
 
+def chain_sources() -> sourcify.Sources:
+    """Returns one ingot that holds fe0-chain's source and the modules of fe0 that fe0-chain
+    uses, with fe0-chain's `fe0::` paths rewritten as `ingot::` paths. This ingot is what is
+    deployed and verified (docs/adr/0033-verify-on-sourcify.md)."""
+    @cache
+    def module(name: str) -> FeSource:
+        return FeSource((FE0 / module_path(name)).read_text())
+
+    def module_path(name: str) -> sourcify.SourcePath:
+        return sourcify.SourcePath(f"src/{name}.fe")
+
+    lib = (CHAIN / LIB).read_text()
+    used = fegen.reachable(FE0_MODULE.findall(lib), lambda m: INGOT_MODULE.findall(module(m)))
+    files = {LIB: FeSource(FE0_MODULE.sub(r"ingot::\1", lib))}
+    files |= {module_path(m): module(m) for m in used}
+    return sourcify.Sources(dict(sorted(files.items())))
+
+
 class Builds(NamedTuple):
-    """The code of every contract of fe0-chain."""
+    """The code of every contract of fe0-chain, built from `sources`."""
 
     phases: list[Code[Contract]]
     compiler: Code[Contract]
+    sources: sourcify.Sources
 
     @classmethod
     def build(cls) -> Self:
-        """Builds fe0-chain at `-O s` and returns its contracts. Exits as `fegen.fe_build`
-        does."""
-        fegen.fe_build(CHAIN, OUT, "-O", "s")
+        """Builds `chain_sources` as Sourcify does and returns the contracts. Exits as
+        `fegen.fe_build` does."""
+        sources = chain_sources()
+        sources.build(OUT)
         return cls([Code.read(OUT, c) for c in Contract.phases()],
-                   Code.read(OUT, Contract.COMPILER))
+                   Code.read(OUT, Contract.COMPILER), sources)
 
     def all(self) -> list[Code[Contract]]:
         """Returns every contract, the phases first."""

@@ -119,7 +119,7 @@ class RegistryBuilds(NamedTuple):
     def build(cls) -> Self:
         """Builds registry/. Exits as `fegen.fe_build` does."""
         sources = sourcify.Sources.read(REGISTRY)
-        sources.build(OUT / "ingot", OUT)
+        sources.build(OUT)
         return cls(sources, Code.read(OUT, Name.COMPILERS), Code.read(OUT, Name.REGISTRY))
 
     def all(self) -> list[Code[Name]]:

@@ -5,16 +5,18 @@
 
 ## Context
 A contract's runtime code may be at most 24,576 bytes. The phase contracts take about 60 KB in
-all (Fe 26.7.0, `-O s`; DESIGN.md §8 gives each size), so the compiler spans several contracts.
+all (DESIGN.md §8 gives each size), so the compiler spans several contracts.
 
 Lexer and parser fit in one contract: a lexer + parser probe takes 21,454 bytes (Fe 26.7.0,
 `-O s`). That leaves about 3.1 KB for the syntax that SPEC.md's "Fe0 and Fe at a glance"
-marks ❌. A Parser contract of its own has about 7.5 KB of room.
+marks ❌. A Parser contract of its own had about 7.5 KB of room at `-O s`, and has about
+6.4 KB at `-O 1` (DESIGN.md §8).
 
 ## Decision
 Each phase is its own contract, and a `Compiler` contract calls them in turn
-(DESIGN.md §8). Builds use `-O s`. This leaves the Parser room to grow, and every
-boundary works alike.
+(DESIGN.md §8). This leaves the Parser room to grow, and every boundary works alike. The
+contracts are built as Sourcify rebuilds them, at `-O 1`
+([ADR 0033](0033-verify-on-sourcify.md)).
 
 ## Alternatives
 - **Lexer and parser in one contract:** fits, and saves one boundary, but leaves the Parser

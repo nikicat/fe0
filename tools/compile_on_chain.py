@@ -7,7 +7,6 @@ when the program compiles and with 1 when Compiler rejects it.
 
 The on-chain compiler reports only the first error, and no warnings.
 """
-import argparse
 import re
 import sys
 from pathlib import Path
@@ -17,7 +16,7 @@ from web3.exceptions import ContractLogicError
 
 from chain_check import Reverted, committed_interface, revert_data
 from cli_check import ExitCode
-from deploy import ARBITRUM, DeploymentRecord, Url, chain_id_arg
+from deploy import DeploymentRecord, chain_parser
 from fegen import FE0, ROOT, DiagCode, FeSource, LineCol
 
 MESSAGES: Path = ROOT / "fe0-cli/src/messages.fe"
@@ -36,11 +35,8 @@ def messages() -> dict[DiagCode, str]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = chain_parser(__doc__)
     ap.add_argument("program", type=Path, help="a Fe0 source file")
-    ap.add_argument("--rpc", type=Url, default=ARBITRUM["rpc"], help="the chain's JSON-RPC URL")
-    ap.add_argument("--chain", type=chain_id_arg, default=ARBITRUM["id"], help="the chain id")
     args = ap.parse_args()
     source = FeSource(args.program.read_text())
     w3 = Web3(HTTPProvider(args.rpc))

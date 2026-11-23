@@ -1,34 +1,36 @@
 #!/usr/bin/env python3
 """Deploy the compiler on chain (fe0-chain, DESIGN.md §8) to Arbitrum One, and run its demo.
 
-It builds fe0-chain at `-O s`, then deploys the four phase contracts and Compiler in one
-transaction, so either all five are created or none is
-(docs/adr/0028-one-transaction-deploy.md). The user approves each transaction in their browser
-wallet through browser-web3-signer, so no private key is in the repo or the shell. Then the
-demo:
+It builds fe0-chain as Sourcify rebuilds it (docs/adr/0033-verify-on-sourcify.md), then
+deploys the four phase contracts and Compiler in one transaction, so either all five are
+created or none is (docs/adr/0028-one-transaction-deploy.md). Then it submits their source to
+Sourcify and waits for the matches. The user approves each transaction in their browser wallet
+through browser-web3-signer, so no private key is in the repo or the shell. Then the demo:
 
 - calls `version()`, which must return the version in fe0-chain/fe.toml;
 - compiles corpus/counter.fe with `compile(bytes)` by `eth_call`, which costs nothing;
 - deploys it with `deploy(bytes,bytes)` in a transaction, with start value 2;
 - calls `Get` on the new contract.
 
-The deployment transaction leaves out each contract that already has code at its address, so
-a run after a full deployment only runs the demo. deployments/<chain id>.json records the
-version and the addresses. Errors when the file holds another version or other addresses than
-this build's, or is not such a record. Remove the file to deploy this build.
+The deployment transaction leaves out each contract that already has code at its address, so a
+run after a full deployment only runs the demo. deployments/<chain id>.json records the version,
+the addresses and Sourcify's matches. Errors when the file holds another version or other
+addresses than this build's, or is not such a record. Remove the file to deploy this build.
 
-With --rehearse, it does all of this on a local anvil node, which signs for the wallet. It
-copies the code of Multicall3 and CreateX, which the deployment transaction calls, to the node
-from the chain at --rpc.
+With --rehearse, it does all of this on a local anvil node, which signs for the wallet. A
+rehearsal skips Sourcify. It copies the code of Multicall3 and CreateX, which the deployment
+transaction calls, to the node from the chain at --rpc.
 """
 import argparse
 import subprocess
 import sys
-from collections.abc import Iterable, Mapping
+import tempfile
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, NamedTuple, NewType, Protocol, Self, TypedDict
+from typing import Annotated, Any, ClassVar, NamedTuple, Protocol, Self, TypedDict
 
 from eth_typing import ABI, ChecksumAddress, Hash32, HexStr
 from eth_utils.crypto import keccak
@@ -41,18 +43,13 @@ from web3.types import TxParams, TxReceipt
 
 from chain_check import (COUNTER, Builds, Contract, CounterGet, Initcode, check_version,
                          counter_args, counter_source, version)
-from fegen import ROOT, Version
+from fegen import ROOT, ChainId, Url, Version
 from node import Node
+from sourcify import Identified, Match, Sources
 
 DEPLOYMENTS: Path = ROOT / "deployments"
-# The record of fe0-chain's deployment in a rehearsal.
-REHEARSAL: Path = ROOT / "out/rehearsal.json"
 SIGNER: str = "browser-web3-signer"
 
-# A URL, such as a JSON-RPC endpoint.
-Url = NewType("Url", str)
-# The id of a chain, as EIP-155 numbers it.
-ChainId = NewType("ChainId", int)
 # A ChecksumAddress in a JSON record, which holds it in any case.
 Address = Annotated[ChecksumAddress, AfterValidator(Web3.to_checksum_address)]
 
@@ -146,7 +143,7 @@ def deployment_data(initcodes: Iterable[Initcode]) -> HexBytes:
 
 
 class Sender(Protocol):
-    """Sends transactions on one chain and waits for them."""
+    """Sends transactions on one chain, and verifies and records what they deploy."""
 
     w3: Web3
 
@@ -159,6 +156,19 @@ class Sender(Protocol):
         fails."""
         ...
 
+    def verify[K: Identified](self, sources: Sources,
+                              addresses: dict[K, ChecksumAddress]) -> dict[K, Match] | None:
+        """Submits each contract at `addresses`, built from `sources`, to Sourcify and returns
+        the matches, or returns None when Sourcify cannot see the chain. Errors as
+        `Sources.verify` does."""
+        ...
+
+    def record_file(self, record: type[DeployedRecord[Any]]) -> Path:
+        """Picks the file that holds a `record` of a deployment by the sender and returns it:
+        the file of its chain, or the rehearsal's file, which a rehearsal removes first so that
+        each rehearsal deploys anew."""
+        ...
+
 
 def send(sender: Sender, fn: ContractFunction, what: str) -> TxReceipt:
     """Sends the call `fn` through `sender`, once the user approves it, and returns the
@@ -169,7 +179,7 @@ def send(sender: Sender, fn: ContractFunction, what: str) -> TxReceipt:
     return receipt
 
 
-class Plan[K: str](NamedTuple):
+class Plan[K: Identified](NamedTuple):
     """The contracts that one deployment transaction creates, by key, with addresses known
     before it is sent (docs/adr/0028-one-transaction-deploy.md)."""
 
@@ -216,7 +226,7 @@ class Plan[K: str](NamedTuple):
         receipt = sender.send({"to": MULTICALL3, "data": data})
         print(f"deployed, {receipt['gasUsed']:,} gas", flush=True)
         if empty := without_code(missing):
-            raise RuntimeError(f"the transaction left no code for {', '.join(empty)}")
+            raise RuntimeError(f"the transaction left no code for {', '.join(map(str, empty))}")
 
 
 class _Connected(BaseModel):
@@ -262,15 +272,33 @@ class Wallet:
     def send(self, tx: TxParams) -> TxReceipt:
         """Sends `tx` from the wallet once the user approves it. Errors with RuntimeError when
         the user rejects it or the transaction fails."""
-        args = ["--data", HexBytes(tx.get("data", b"")).to_0x_hex()]
-        if "to" in tx:
-            args += ["--to", str(tx["to"])]
-        sent = self._signer(_Sent, "send-transaction", *args)
+        # A deployment's calldata is longer than Linux allows in one argument, so it goes
+        # through a file.
+        with tempfile.NamedTemporaryFile("w", suffix=".hex") as data:
+            data.write(HexBytes(tx.get("data", b"")).to_0x_hex())
+            data.flush()
+            args = ["--data-file", data.name]
+            if "to" in tx:
+                args += ["--to", str(tx["to"])]
+            sent = self._signer(_Sent, "send-transaction", *args)
         print(f"  sent {sent.tx_hash} {sent.explorer or ''}", flush=True)
         receipt = self.w3.eth.wait_for_transaction_receipt(sent.tx_hash, timeout=600)
         if not receipt["status"]:
             raise RuntimeError(f"the transaction {sent.tx_hash} failed")
         return receipt
+
+    def verify[K: Identified](self, sources: Sources,
+                              addresses: dict[K, ChecksumAddress]) -> dict[K, Match]:
+        """Submits `sources` to Sourcify for each contract at `addresses`, and returns the
+        matches. Errors as `Sources.verify` does."""
+        matches = {}
+        for k, address in addresses.items():
+            matches[k] = sources.verify(self.chain_id, address, k.id())
+            print(f"Sourcify, {k}: {matches[k]}", flush=True)
+        return matches
+
+    def record_file(self, record: type[DeployedRecord[Any]]) -> Path:
+        return record.file(self.chain_id)
 
 
 class Rehearsal:
@@ -286,10 +314,8 @@ class Rehearsal:
 
     @classmethod
     def start(cls, stack: ExitStack, rpc: Url) -> Self:
-        """Starts a node that `stack` stops, copies the deployers from the chain at `rpc` to
-        it, and removes REHEARSAL, so that the rehearsal deploys fe0-chain anew. Errors as
-        `Node` and `__init__` do."""
-        REHEARSAL.unlink(missing_ok=True)
+        """Starts a node that `stack` stops, and copies the deployers from the chain at `rpc` to
+        it. Errors as `Node` and `__init__` do."""
         return cls(stack.enter_context(Node()), Web3(HTTPProvider(rpc)))
 
     def account(self) -> ChecksumAddress:
@@ -298,6 +324,17 @@ class Rehearsal:
     def send(self, tx: TxParams) -> TxReceipt:
         """Sends `tx` from the node's first account. Errors as `Node.transact` does."""
         return self.node.transact(tx)
+
+    def verify[K: Identified](self, sources: Sources,
+                              addresses: dict[K, ChecksumAddress]) -> None:
+        """Returns None, since Sourcify cannot see the node."""
+        return None
+
+    def record_file(self, record: type[DeployedRecord[Any]]) -> Path:
+        """Removes the rehearsal's file of `record` and returns it, so that each rehearsal
+        deploys anew."""
+        record.REHEARSAL.unlink(missing_ok=True)
+        return record.REHEARSAL
 
 
 class JsonRecord(BaseModel):
@@ -320,13 +357,36 @@ class JsonRecord(BaseModel):
         path.write_text(self.model_dump_json(indent=2) + "\n")
 
 
-class DeploymentRecord(JsonRecord):
-    """A version of fe0-chain deployed on one chain, as its file records it. The file never
-    records a partial deployment, because the five contracts are created in one transaction
-    (docs/adr/0028-one-transaction-deploy.md)."""
+class DeployedRecord[K: StrEnum](JsonRecord):
+    """A version of a set of contracts deployed on one chain, with Sourcify's match for each
+    (docs/adr/0033-verify-on-sourcify.md). A rehearsal's record has no matches."""
+
+    # The directory of the records, one file for each chain, and the record of a rehearsal.
+    DIR: ClassVar[Path]
+    REHEARSAL: ClassVar[Path]
 
     version: Version
-    contracts: dict[Contract, Address]
+    contracts: dict[K, Address]
+    sourcify: dict[K, Match] | None
+
+    @classmethod
+    def file(cls, chain_id: ChainId) -> Path:
+        """Returns the file that records the deployment on the chain `chain_id`."""
+        return cls.DIR / f"{chain_id}.json"
+
+    @model_validator(mode="after")
+    def _match_for_each_contract(self) -> Self:
+        if self.sourcify is not None and self.sourcify.keys() != self.contracts.keys():
+            raise ValueError("does not hold one Sourcify match for each contract")
+        return self
+
+
+class DeploymentRecord(DeployedRecord[Contract]):
+    """fe0-chain's record. The file never records a partial deployment, because the five
+    contracts are created in one transaction (docs/adr/0028-one-transaction-deploy.md)."""
+
+    DIR: ClassVar[Path] = DEPLOYMENTS
+    REHEARSAL: ClassVar[Path] = ROOT / "out/rehearsal.json"
 
     @model_validator(mode="after")
     def _every_contract(self) -> Self:
@@ -338,17 +398,12 @@ class DeploymentRecord(JsonRecord):
     def compiler(self) -> ChecksumAddress:
         return self.contracts[Contract.COMPILER]
 
-    @staticmethod
-    def file(chain_id: ChainId) -> Path:
-        """Returns the file that records the deployment on the chain `chain_id`."""
-        return DEPLOYMENTS / f"{chain_id}.json"
-
-    @staticmethod
-    def chain_ids() -> list[ChainId]:
+    @classmethod
+    def chain_ids(cls) -> list[ChainId]:
         """Returns the id of each chain that has a file, in ascending order. Errors with
         RuntimeError when a file's name is not a chain id."""
         ids = []
-        for path in DEPLOYMENTS.glob("*.json"):
+        for path in cls.DIR.glob("*.json"):
             if not path.stem.isdecimal():
                 raise RuntimeError(f"{path} is named for no chain id")
             ids.append(ChainId(int(path.stem)))
@@ -362,35 +417,63 @@ class DeploymentRecord(JsonRecord):
 
 
 @dataclass
-class Deployment:
+class Deployment[K: Identified, R: DeployedRecord[Any]]:
+    """A version of a set of contracts to deploy by `plan`, and the file at `path` that records
+    it as an `R`."""
+
     path: Path
     version: Version
-    plan: Plan[Contract]
+    plan: Plan[K]
+    record: type[R]
 
     @classmethod
-    def open(cls, path: Path, plan: Plan[Contract]) -> Self:
-        """Returns the deployment by `plan` of the version in fe0-chain/fe.toml, with its file
-        at `path`. There may be no file yet. Errors with RuntimeError when the file holds
-        another version, other addresses than the plan's, or no record."""
-        want = version()
+    def open(cls, path: Path, version: Version, plan: Plan[K], record: type[R]) -> Self:
+        """Returns the deployment, whose file may not exist yet. Errors with RuntimeError when
+        the file holds another version, other addresses than the plan's, or no `record`."""
         if path.exists():
             try:
-                saved = DeploymentRecord.read(path)
+                saved = record.read(path)
             except RuntimeError as e:
-                raise RuntimeError(f"{e}; remove it to deploy {want}") from e
-            if saved.version != want:
+                raise RuntimeError(f"{e}; remove it to deploy {version}") from e
+            if saved.version != version:
                 raise RuntimeError(f"{path.relative_to(ROOT)} holds version {saved.version};"
-                                   f" remove it to deploy {want}")
+                                   f" remove it to deploy {version}")
             plan.check_record(path, saved.contracts)
-        return cls(path, want, plan)
+        return cls(path, version, plan, record)
 
-    def deploy_all(self, sender: Sender) -> ChecksumAddress:
-        """Deploys the plan and records every address in the deployment's file. Returns
-        Compiler's address. Errors as `Plan.deploy` does."""
+    def deploy_all(self, sender: Sender, sources: Sources,
+                   make: Callable[[dict[K, ChecksumAddress], dict[K, Match] | None], R]) -> R:
+        """Deploys the plan, and writes the record that `make` makes of every address and its
+        Sourcify match to the deployment's file. Returns the record. Errors as `Plan.deploy`
+        and `Sender.verify` do."""
         self.plan.deploy(sender)
-        record = DeploymentRecord(version=self.version, contracts=self.plan.addresses)
-        record.write(self.path)
-        return record.compiler
+        addresses = self.plan.addresses
+        saved = make(addresses, sender.verify(sources, addresses))
+        saved.write(self.path)
+        return saved
+
+
+def open_sender(stack: ExitStack, rehearse: bool, rpc: Url, chain_id: ChainId) -> Sender:
+    """Starts a local anvil node that `stack` stops when `rehearse` is true, and otherwise
+    connects the user's wallet on the chain `chain_id`. Returns it as the sender. Errors as
+    `Rehearsal.start` and `Wallet` do."""
+    if rehearse:
+        return Rehearsal.start(stack, rpc)
+    return Wallet(rpc, chain_id)
+
+
+def deploy_chain(sender: Sender, builds: Builds) -> DeploymentRecord:
+    """Deploys fe0-chain's `builds` by `sender`, leaving out each contract already on the
+    chain, and returns its record. Errors with RuntimeError when a contract's code exceeds
+    EIP-170 or EIP-3860, or as `Deployment.open` and `Deployment.deploy_all` do."""
+    if failures := builds.oversize():
+        raise RuntimeError("\n".join(failures))
+    path = sender.record_file(DeploymentRecord)
+    deployment = Deployment.open(path, version(), Plan.of(builds), DeploymentRecord)
+    return deployment.deploy_all(
+        sender, builds.sources,
+        lambda contracts, matches: DeploymentRecord(version=deployment.version,
+                                                    contracts=contracts, sourcify=matches))
 
 
 def demo(sender: Sender, compiler: ChecksumAddress, interface: ABI) -> None:
@@ -423,30 +506,29 @@ def chain_id_arg(text: str) -> ChainId:
     return ChainId(int(text))
 
 
-def deploy_parser(doc: str | None) -> argparse.ArgumentParser:
-    """Returns the parser of a deploy tool's arguments, with `doc` as its help."""
+def chain_parser(doc: str | None) -> argparse.ArgumentParser:
+    """Returns the parser of a tool's arguments that name a chain, with `doc` as its help."""
     ap = argparse.ArgumentParser(description=doc,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--rehearse", action="store_true", help="deploy on a local anvil node")
     ap.add_argument("--rpc", type=Url, default=ARBITRUM["rpc"], help="the chain's JSON-RPC URL")
     ap.add_argument("--chain", type=chain_id_arg, default=ARBITRUM["id"], help="the chain id")
+    return ap
+
+
+def deploy_parser(doc: str | None) -> argparse.ArgumentParser:
+    """Returns the parser of a deploy tool's arguments, with `doc` as its help."""
+    ap = chain_parser(doc)
+    ap.add_argument("--rehearse", action="store_true", help="deploy on a local anvil node")
     return ap
 
 
 def main() -> None:
     args = deploy_parser(__doc__).parse_args()
     builds = Builds.build()
-    if failures := builds.oversize():
-        sys.exit("\n".join(failures))
-    plan = Plan.of(builds)
     try:
         with ExitStack() as stack:
-            sender: Sender
-            if args.rehearse:
-                sender, path = Rehearsal.start(stack, args.rpc), REHEARSAL
-            else:
-                sender, path = Wallet(args.rpc, args.chain), DeploymentRecord.file(args.chain)
-            demo(sender, Deployment.open(path, plan).deploy_all(sender), builds.interface())
+            sender = open_sender(stack, args.rehearse, args.rpc, args.chain)
+            demo(sender, deploy_chain(sender, builds).compiler, builds.interface())
     except RuntimeError as e:
         sys.exit(str(e))
 

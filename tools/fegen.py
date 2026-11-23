@@ -1,7 +1,7 @@
-"""Shared parts of the scripts that write Fe tests.
+"""Parts that the tools share.
 
-The differential tests that these scripts write call fe0/src/difftest.fe, and every generator
-writes them through this module, so that all of them call it the same way.
+The differential tests that the test generators write call fe0/src/difftest.fe, and every
+generator writes them through this module, so that all of them call it the same way.
 """
 import bisect
 import os
@@ -44,6 +44,10 @@ Wei = NewType("Wei", int)
 Word = NewType("Word", int)
 # The index of a node account among the node's funded accounts.
 AccountIndex = NewType("AccountIndex", int)
+# A URL, such as a JSON-RPC endpoint.
+Url = NewType("Url", str)
+# The id of a chain, as EIP-155 numbers it.
+ChainId = NewType("ChainId", int)
 # A number of EXTRA_BYTE bytes that a deployment or call appends after its ABI words.
 ExtraBytes = NewType("ExtraBytes", int)
 # The code of a Panic, with which Fe's own checks fail a test.
@@ -198,6 +202,18 @@ def fe_version() -> FeVersion:
 def ingot_version(manifest: Path) -> Version:
     """Returns the version that the ingot file `manifest` holds."""
     return Version(tomllib.loads(manifest.read_text())["ingot"]["version"])
+
+
+def reachable[T](roots: Iterable[T], neighbours: Callable[[T], Iterable[T]]) -> set[T]:
+    """Returns `roots` and every item that `neighbours` reaches from them."""
+    seen: set[T] = set()
+    todo = list(roots)
+    while todo:
+        item = todo.pop()
+        if item not in seen:
+            seen.add(item)
+            todo.extend(neighbours(item))
+    return seen
 
 
 def poll[T](check: Callable[[], T | None], timeout: float, interval: float) -> T:

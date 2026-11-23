@@ -8,9 +8,9 @@ from eth_typing import ABI, ChecksumAddress
 
 from chain_check import committed_interface
 from compile_on_chain import messages
-from deploy import ARBITRUM, Chain, ChainId, DeploymentRecord, Url
+from deploy import ARBITRUM, Chain, DeploymentRecord
 from embed import CORPUS
-from fegen import ROOT, FeSource
+from fegen import ROOT, ChainId, FeSource, Url
 from sourcify import contract_page
 
 CONFIG = ROOT / "playground/src/config.ts"

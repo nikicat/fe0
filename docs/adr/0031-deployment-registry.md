@@ -124,7 +124,7 @@ range of `eth_getLogs`, so a client cannot scan the chain's whole history for th
   it.
 - **Store the source in state:** a new storage slot costs about 20,000 gas for 32 bytes. Log
   data costs 8 gas a byte, so a source of 1 to 8 KB adds 8,000 to 64,000 gas to a deployment
-  of about 2.1M, which is what deploying `corpus/counter.fe` through Compiler costs.
+  of about 2.05M, which is what deploying `corpus/counter.fe` through Compiler costs.
 
 ## Consequences
 - The registry is deployed through CreateX, as fe0-chain is

@@ -118,7 +118,9 @@ impl Phases {
 }
 
 pub contract Compiler {
-    phases: Phases,
+    // In storage, not in the runtime code, so that Sourcify matches the runtime code too: Fe
+    // reports no positions of the values it appends there (docs/adr/0033-verify-on-sourcify.md).
+    mut phases: Phases,
 
     init(lexer_at: Address, parser_at: Address, checker_at: Address, back_at: Address)
     uses (mut phases)
@@ -142,7 +144,7 @@ pub contract Compiler {
             created
         }
         Version -> String<5> {
-            "0.1.2"
+            "0.1.4"
         }
     }
 }
