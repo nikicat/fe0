@@ -28,7 +28,7 @@ CompilerRegistry, the list of Compilers that an admin keeps. Done means:
 Both registries are deployed on Arbitrum One and Sourcify matches both
 (`deployments/registry/42161.json`). CompilerRegistry lists the Compiler of fe0-chain 0.1.2,
 and `corpus/counter.fe` is deployed through Registry. `tools/registry_check.py` runs in CI's
-"registry" group.
+"on chain" job.
 
 ## Next
 Build the playground's registry views (ADR 0032): make `tools/playground.py` read

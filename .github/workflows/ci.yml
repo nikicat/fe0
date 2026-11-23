@@ -10,78 +10,62 @@ permissions:
   packages: write
 
 jobs:
+  # The groups run in parallel, each in its own dev container, so no group may read what
+  # another writes.
   test:
+    name: ${{ matrix.group }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: fe0 and corpus
+            # One job updates the cached image, so that the jobs do not race to push it.
+            push: filter
+            run: |
+              fe --version
+              # The tools run in their own uv environment (tools/pyproject.toml, tools/uv.lock).
+              (cd tools && uv sync --locked && uv run --locked mypy && uv run --locked pyright)
+              # The generated test files must match their generators, so a hand edit fails here.
+              uv run --project tools --locked tools/gen_check_tests.py
+              uv run --project tools --locked tools/gen_codegen_tests.py
+              git diff --exit-code -- fe0/src/check_tests.fe fe0/src/codegen_tests.fe
+              # CI skips the spike-*/ probes, because several of their tests fail on purpose
+              # to report values. tools/spikes.sh runs them.
+              (cd fe0 && fe fmt --check && fe test)
+              (cd fe0-cli && fe fmt --check)
+              uv run --project tools --locked tools/embed.py
+          - group: generated programs
+            run: |
+              # The seeds are fixed (DESIGN.md §11).
+              uv run --project tools --locked tools/gen.py -n 25
+              # The native CLI check (DESIGN.md §10) and the node check run after gen.py, so
+              # they check the generated programs too.
+              uv run --project tools --locked tools/cli_check.py
+              # The node check compares senders, logs and storage writes on anvil (ADR 0016).
+              uv run --project tools --locked tools/node_check.py
+          - group: mutants
+            run: |
+              # The mutants check gives Fe one-mutation changes of the corpus and of generated
+              # programs (DESIGN.md §11a).
+              uv run --project tools --locked tools/mutate.py --seed 100 -n 30 --per-program 4
+          - group: on chain
+            run: |
+              # The chain check runs the phase contracts and Compiler on anvil and compares
+              # their output with the native CLI's (DESIGN.md §8).
+              (cd fe0-chain && fe fmt --check)
+              uv run --project tools --locked tools/chain_check.py
+              # registry/README.md, "Build and check", says what the registry check checks.
+              (cd registry && fe fmt --check)
+              uv run --project tools --locked tools/registry_check.py
+          - group: playground
+            run: |
+              # playground/README.md, "Tests", says what these tests check.
+              uv run --project tools --locked tools/playground.py
+              (cd playground && npm ci && npm test && CI=1 npm run e2e)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+      - uses: ./.github/actions/devcontainer
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      # The checks run in the dev container, so its Containerfile pins the fe binary and the
-      # other tools. The image is cached in GHCR. Only pushes to main update it.
-      - uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3.1900000450
-        with:
-          imageName: ghcr.io/${{ github.repository }}/devcontainer
-          cacheFrom: ghcr.io/${{ github.repository }}/devcontainer
-          refFilterForPush: refs/heads/main
-          eventFilterForPush: push
-          runCmd: |
-            set -e
-            echo "::group::fe --version"
-            fe --version
-            echo "::endgroup::"
-            echo "::group::tools types"
-            # The tools run in their own uv environment (tools/pyproject.toml, tools/uv.lock).
-            (cd tools && uv sync --locked && uv run --locked mypy && uv run --locked pyright)
-            echo "::endgroup::"
-            # The generated test files must match their generators, so a hand edit fails here.
-            echo "::group::generated tests"
-            uv run --project tools --locked tools/gen_check_tests.py
-            uv run --project tools --locked tools/gen_codegen_tests.py
-            git diff --exit-code -- fe0/src/check_tests.fe fe0/src/codegen_tests.fe
-            echo "::endgroup::"
-            # CI skips the spike-*/ probes, because several of their tests fail on purpose to
-            # report values. tools/spikes.sh runs them.
-            echo "::group::fe0"
-            (cd fe0 && fe fmt --check && fe test)
-            echo "::endgroup::"
-            echo "::group::fe0-cli format"
-            (cd fe0-cli && fe fmt --check)
-            echo "::endgroup::"
-            echo "::group::corpus"
-            uv run --project tools --locked tools/embed.py
-            echo "::endgroup::"
-            # Fixed seeds, see DESIGN.md §11.
-            echo "::group::generated programs"
-            uv run --project tools --locked tools/gen.py -n 25
-            echo "::endgroup::"
-            # DESIGN.md §10. It runs after the generated programs, so it checks those too.
-            echo "::group::native CLI"
-            uv run --project tools --locked tools/cli_check.py
-            echo "::endgroup::"
-            # DESIGN.md §11a: mutants of the corpus and of generated programs, against Fe.
-            echo "::group::mutants"
-            uv run --project tools --locked tools/mutate.py --seed 100 -n 30 --per-program 4
-            echo "::endgroup::"
-            # ADR 0016, step 0: senders, logs and storage writes, on anvil. Like the native CLI
-            # check, it covers the generated programs too.
-            echo "::group::programs on a node"
-            uv run --project tools --locked tools/node_check.py
-            echo "::endgroup::"
-            # DESIGN.md §8: the phase contracts and Compiler on anvil, against the native CLI.
-            echo "::group::compiler on chain"
-            (cd fe0-chain && fe fmt --check)
-            uv run --project tools --locked tools/chain_check.py
-            echo "::endgroup::"
-            # registry/README.md, "Build and check".
-            echo "::group::registry"
-            (cd registry && fe fmt --check)
-            uv run --project tools --locked tools/registry_check.py
-            echo "::endgroup::"
-            # playground/README.md, "Tests".
-            echo "::group::playground"
-            uv run --project tools --locked tools/playground.py
-            (cd playground && npm ci && npm test && CI=1 npm run e2e)
-            echo "::endgroup::"
+          push: ${{ matrix.push }}
+          run: ${{ matrix.run }}
