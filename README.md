@@ -7,7 +7,9 @@ runs in three places:
 - as EVM bytecode, inside the tests that `fe test` runs;
 - on chain, where five contracts on Arbitrum One compile Fe0 source sent in calldata and deploy
   the result: one contract for each compiler phase (Lexer, Parser, Checker, and Back for code
-  generation), and one that calls them in turn ([docs/DEMO.md](docs/DEMO.md)).
+  generation), and Compiler, which calls them in turn ([docs/DEMO.md](docs/DEMO.md)). Two more
+  contracts there deploy programs through Compiler and record them with their source
+  ([registry/README.md](registry/README.md)).
 
 [docs/SPEC.md](docs/SPEC.md) defines the language, and [docs/DESIGN.md](docs/DESIGN.md)
 describes the compiler. Built with **Fe 26.7.0**.
@@ -28,14 +30,15 @@ formalizing the language in Lean, which the Fe team wants to do for a subset of 
   the rules for names, types and effects. Each rule marked **[✓]** was confirmed against Fe by
   a probe: a small program that Fe compiles or rejects. The probes are in `spike-*/`,
   `corpus/` and `corpus/reject/`.
-- **Tests against Fe itself.** Each corpus program is compiled by Fe and by Fe0. Both builds
-  are deployed and sent the same calls. The test checks that the success flags, return data, revert
-  data and storage writes are the same. A second harness repeats the calls on a local node,
-  from several accounts, and also compares the logs (DESIGN.md §10). A random program
-  generator adds more programs (DESIGN.md §11).
+- **Tests against Fe itself.** Each corpus program is compiled by Fe and by Fe0. Both builds are
+  deployed and sent the same calls. The test checks that the success flags, return data and
+  revert data are the same. Storage is compared through later calls that read it. A second
+  harness repeats the calls on a local node, from several accounts, and also compares the logs
+  and storage writes (DESIGN.md §10). A random program generator adds more programs (DESIGN.md
+  §11).
 - **Steps toward real contracts.** The corpus goes from a counter to a token and an AMM pool.
-  Fe0 programs can read the caller, and use storage maps, events and typed calls to other contracts
-  ([ADR 0016](docs/adr/0016-steps-toward-real-contracts.md)).
+  Fe0 programs can read the caller, and use storage maps, events and typed calls to other
+  contracts ([ADR 0016](docs/adr/0016-steps-toward-real-contracts.md)).
 
 ## Fe's effects
 
@@ -58,9 +61,9 @@ line 13 of the file:
 <stdin>:13:13: E018 field not `mut` in `uses`
 ```
 
-Fe0 checks Fe's effect rules for storage fields, the caller, logs and external calls (SPEC.md §6).
-The compiler also uses effects itself. The `fe0` library reads its source through a `Source`
-effect ([ADR 0010](docs/adr/0010-source-effect.md)), so it does no I/O. The native CLI
+Fe0 checks Fe's effect rules for storage fields, the caller, logs and external calls (SPEC.md
+§6). The compiler also uses effects itself. The `fe0` library reads its source through a
+`Source` effect ([ADR 0010](docs/adr/0010-source-effect.md)), so it does no I/O. The native CLI
 supplies the source from stdin, the tests from a string, and each phase contract from its
 calldata.
 
@@ -90,9 +93,8 @@ contract of fe0-chain.
 ## Build and test
 
 Fe 26.7.0 is the reference toolchain ([ADR 0022](docs/adr/0022-move-to-26-7-0.md)). The dev
-container (`.devcontainer/`) pins it, together
-with `uv` for the Python tools. CI runs every step below in that container
-(`.github/workflows/ci.yml`).
+container (`.devcontainer/`) pins it, together with `uv` for the Python tools. CI runs every
+step below in that container (`.github/workflows/ci.yml`).
 
 The unit tests run on the EVM, so they work on every platform:
 
@@ -121,7 +123,7 @@ The test harnesses:
 | `uv run --project tools tools/mutate.py` | the corpus and random programs, each changed by one mutation, against Fe (DESIGN.md §11a) |
 | `uv run --project tools tools/node_check.py` | calls from several accounts, logs and storage writes against Fe, on anvil |
 | `uv run --project tools tools/chain_check.py` | the on-chain compiler against the native CLI, on anvil |
-| `uv run --project tools tools/registry_check.py` | the registry and the compiler list, on anvil; needs Arbitrum One's RPC |
+| `uv run --project tools tools/registry_check.py` | the registry and the compiler list, on anvil; it copies the code of CreateX, a contract factory, from Arbitrum One's public RPC |
 
 No node needs to be running first: the harnesses that use anvil start one. The dev container
 installs anvil with Foundry.
@@ -132,13 +134,13 @@ installs anvil with Foundry.
 shows an error, and deploys a program through the on-chain compiler. `tools/deploy.py
 --rehearse` runs the same demo on a local anvil node.
 
-The [playground](https://nikicat.github.io/fe0/) is a web page for the same compiler
-([playground/README.md](playground/README.md)).
+The [playground](https://nikicat.github.io/fe0/) is a web page that does steps 1 to 3 of the
+demo ([playground/README.md](playground/README.md)).
 
 ## Results
 
-- Every program of `corpus/` and `corpus/gen/` behaves the same under Fe0 and Fe. Every
-  program of `corpus/reject/` gives the error it expects.
+- Every program of `corpus/`, and every random program that the harnesses generate, behaves the
+  same under Fe0 and Fe. Every program of `corpus/reject/` gives the error it expects.
 - The native CLI, Fe0 on the EVM and the on-chain compiler give the same bytes for every
   program.
 - Fe0's output costs more gas than Fe's. Fe0 keeps every local in memory, and Fe keeps them on
@@ -158,9 +160,10 @@ The [playground](https://nikicat.github.io/fe0/) is a web page for the same comp
 
 ## Limitations
 
-- Fe0 is a subset. [SPEC.md §10](docs/SPEC.md) shows, feature by feature, what Fe0 has, what it
-  has with a narrower rule, and what it leaves out. Among what it leaves out: generics, traits,
-  references and memory types.
+- Fe0 is a subset. The table
+  ["Fe0 and Fe at a glance"](docs/SPEC.md#fe0-and-fe-at-a-glance) of SPEC.md shows, feature
+  by feature, what Fe0 has, what it has with a narrower rule, and what it leaves out. Among
+  what it leaves out: generics, traits, references and memory types.
 - Fe0 has only `u256`, `bool` and `Address` as value types. Sized and signed integers are the
   next step of ADR 0016.
 - Every contract field must be declared `mut`. Fe also allows a field without `mut`, and keeps
@@ -179,17 +182,17 @@ By the [subset rule](docs/SPEC.md), Fe accepts every Fe0 program and runs it the
 theorem about Fe0's programs is a theorem about those Fe programs.
 
 **What keeps a model small.**
-- One grammar (SPEC.md §3.1), three value types (SPEC.md §2), and no generics, traits, references or
-  memory.
+- One grammar (SPEC.md §3.1), three value types (SPEC.md §2), and no generics, traits,
+  references or memory.
 - A name in a body means the innermost declaration of that name (SPEC.md §5.2). No constant
   depends on itself (SPEC.md §5.3).
 - SPEC.md §4 fixes the order of every operand, argument, field value and assignment. So the
   semantics is a function: a state and a call give one outcome.
 - An outcome is success with return data, or failure with revert data, plus the storage writes
   and logs of a success. SPEC.md §4 and §6 give the revert data of each failure.
-- The model takes as inputs the values of the `Ctx` methods, such as the caller (SPEC.md §6), and
-  what each external call returns. It may treat `keccak256`, which places map entries and names
-  events, as an injective function.
+- The model takes as inputs the values of the `Ctx` methods, such as the caller (SPEC.md §6),
+  and what each external call returns. It may treat `keccak256`, which places map entries and
+  names events, as an injective function.
 - The subset rule leaves out gas and the builds' recursion limits. So the model needs neither.
 
 **What a model could prove.**
@@ -203,17 +206,17 @@ theorem about Fe0's programs is a theorem about those Fe programs.
 - Fe0's output, or Fe's, runs as the model says. The differential tests of DESIGN.md §10 check
   this on each program of the corpus.
 
-**What is hard to model.** The concrete syntax. The newline rule of SPEC.md §3.4 and the rule for
-`<` in SPEC.md §3.2 exist to match Fe's parser. A model can start from the syntax tree, as the
-grammar of SPEC.md §3.1 gives it, and leave the parser to the tests.
+**What is hard to model.** The concrete syntax. The newline rule of SPEC.md §3.4 and the rule
+for `<` in SPEC.md §3.2 exist to match Fe's parser. A model can start from the syntax tree, as
+the grammar of SPEC.md §3.1 gives it, and leave the parser to the tests.
 
 ## Declaration
 
-- **Pre-existing work.** Before the build window (Nov 3 to 24, 2026), on Oct 27 and 28, we wrote the
-  plan ([docs/PLAN.md](docs/PLAN.md)), the probe directories `spike-conform/`, `spike-deps/`,
-  `spike-keccak/`, `spike-layout/`, `spike-lexer/`, `spike-limits/`, `spike-native/` and
-  `spike-spec/`, and the ADRs dated before Nov 3. The last commit before the window is
-  `0649397`. Everything after it was written in the window.
+- **Pre-existing work.** Before the build window (Nov 3 to 24, 2026), on Oct 27 and 28, we wrote
+  the plan ([docs/PLAN.md](docs/PLAN.md)), the probe directories `spike-conform/`,
+  `spike-deps/`, `spike-keccak/`, `spike-layout/`, `spike-lexer/`, `spike-limits/`,
+  `spike-native/` and `spike-spec/`, and the ADRs dated before Nov 3. The last commit before the
+  window is `0649397`. Everything after it was written in the window.
 - **Reused code.** Fe0 uses only Fe's `core` and `std` libraries. The playground is built
   from npm packages: React, wagmi with [viem](https://viem.sh), TanStack Query and CodeMirror
   ([playground/package.json](playground/package.json)).

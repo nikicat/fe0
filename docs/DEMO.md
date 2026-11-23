@@ -2,7 +2,7 @@
 
 Fe0 runs on chain as five contracts. Four of them each run one phase of the compiler, and
 Compiler calls them in turn (DESIGN.md §8). `tools/deploy.py` deployed them, and
-`deployments/42161.json` records the addresses.
+`deployments/42161.json` records the addresses (42161 is Arbitrum One's chain id).
 
 | Contract | Address |
 |---|---|
@@ -51,8 +51,8 @@ uv run --project tools tools/compile_on_chain.py corpus/reject/assign_let.fe
 # corpus/reject/assign_let.fe:5:5: N014 cannot assign to this name
 ```
 
-With `cast`, the revert data holds the two numbers. Code 3014 is `N014`, and offset 101 is
-line 5, column 5.
+With `cast`, the revert data holds the two numbers. Code 3014 is `N014` (`fe0-chain/README.md`,
+"Errors"), and byte offset 101 is line 5, column 5.
 
 ## 3. Deploy a program through Compiler
 
@@ -84,3 +84,10 @@ second transaction deploys the counter of step 3 through the new Compiler. Each 
 opens an approval page in the browser, and the user signs it in their own wallet through
 `browser-web3-signer`, so the script never sees a private key. The first transaction takes
 about 14M gas and the second 2.1M, about 0.0003 ETH in all at a gas price of 0.02 gwei.
+
+## 5. The registry
+
+Registry deploys a program through a Compiler that CompilerRegistry lists, and records it with
+its source ([ADR 0031](adr/0031-deployment-registry.md)). CompilerRegistry lists the Compiler
+above. `registry/README.md` gives the addresses of both on Arbitrum One, under "Deployed", and
+how they were deployed, under "Deploy".

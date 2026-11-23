@@ -8,8 +8,8 @@ A contract's runtime code may be at most 24,576 bytes. The phase contracts take 
 all (Fe 26.7.0, `-O s`; DESIGN.md §8 gives each size), so the compiler spans several contracts.
 
 Lexer and parser fit in one contract: a lexer + parser probe takes 21,454 bytes (Fe 26.7.0,
-`-O s`). That leaves about 3.1 KB for the syntax that SPEC.md §10 marks ❌. A Parser contract
-of its own has about 7.5 KB of room.
+`-O s`). That leaves about 3.1 KB for the syntax that SPEC.md's "Fe0 and Fe at a glance"
+marks ❌. A Parser contract of its own has about 7.5 KB of room.
 
 ## Decision
 Each phase is its own contract, and a `Compiler` contract calls them in turn

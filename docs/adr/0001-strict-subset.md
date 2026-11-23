@@ -17,10 +17,10 @@ Every program Fe0 accepts must also be accepted by the official compiler and beh
 Within the subset, Fe0 also accepts every program Fe accepts when following Fe is cheap. The
 names, grants, constants and effect declarations below show what cheap is. The uppercase locals
 below show what is too costly, and there Fe0 keeps a stricter rule, which the subset rule allows.
-Where SPEC.md and the compiler disagree, the compiler wins and the spec is fixed. Rules not yet
-confirmed by a probe are marked [V] in SPEC.md.
+Where SPEC.md and the compiler disagree, the compiler wins and the spec is fixed. Rules that a
+probe confirmed are marked [✓] in SPEC.md.
 
-SPEC.md §10 lists every stricter rule. Among them:
+SPEC.md's "Fe0 and Fe at a glance" lists every stricter rule. Among them:
 - **Uppercase locals are rejected (`N017`).** Matching Fe's narrower rule (SPEC.md §5.2) needs
   a table in the Checker of the names that Fe reads as patterns. That table made the Checker
   contract 891 bytes larger (Fe 26.6.0, `-O s`).

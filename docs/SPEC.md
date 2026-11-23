@@ -19,14 +19,95 @@ the document is fixed.
   limit may revert under one build and succeed under the other
   ([ADR 0023](adr/0023-frame-pointer-on-the-stack.md) gives depths).
 
-Marks used below:
-- **[V]** — behaviour not yet confirmed against the official compiler. Each one becomes a
-  differential test before it is relied on.
-- **[✓]** — confirmed by a probe. The probes are in `spike-*/`, and the ADRs in `docs/adr/`
-  summarise what they found. The programs in `corpus/` and `corpus/reject/` are probes too (§8).
+**[✓]** marks a rule confirmed by a probe: a small program that the official compiler compiles
+or rejects. The probes are in `spike-*/`, and the ADRs in `docs/adr/` summarise what they found.
+The programs in `corpus/` and `corpus/reject/` are probes too (§8).
+
+An error code such as `8-0030` is the official compiler's, and one such as `T001` is Fe0's (§7).
 
 Reference toolchain: Fe 26.7.0 ([ADR 0022](adr/0022-move-to-26-7-0.md)). `tools/spikes.sh`
 reruns the probes on it.
+
+## Fe0 and Fe at a glance
+
+A summary of the sections below, for a reader who wants the shape of the subset before its
+rules. Each row points to the section that owns the rule; where the two disagree, that section
+wins. ✅ means Fe0 has the feature as Fe does. ◐ means Fe0 has it with a narrower rule, so it
+rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is valid Fe (§3.3).
+
+**Types**
+
+| Feature | Fe0 | Where |
+|---|---|---|
+| `u256`, `bool`, `Address`, with checked arithmetic | ✅ | §2, §4 |
+| Other integer widths, signed integers, `usize`, `isize` | ❌ | §2 |
+| `String` | ◐ only as an `assert!` message | §1 |
+| Tuples, arrays, structs other than events, enums, references | ❌ | §2, §3.3 |
+| Generics, traits, `impl`, closures, `as` casts | ❌ | §3.3 |
+| A literal's type inferred from later uses | ◐ the type must be fixed where the literal is written | §2 |
+
+**Syntax and expressions**
+
+| Feature | Fe0 | Where |
+|---|---|---|
+| Binary operators and their precedence | ✅ | §3.2 |
+| Unary `+` | ◐ not at the start of a line where a newline can end a statement | §3.2, §3.4 |
+| `!` on `u256`, `& \| ^` on `bool` | ❌ | §2 |
+| A unit value, as in `let x = g()` | ❌ | §2 |
+| `while true` as a path that leaves a function | ❌ | §5.6 |
+| `**` | ❌ | §3.3 |
+| Compound assignment | ✅ | §1 |
+| Decimal, hex, octal and binary literals | ✅ | §1 |
+| `if` as an expression, block values | ✅ | §4 |
+| `while`, `break`, `continue`, `return` | ✅ | §3.1 |
+| `for`, ranges, `loop`, `match` | ❌ | §3.3 |
+| `let`, `var`, shadowing | ✅ | §5.2 |
+| Field access and method calls | ❌ except the `Ctx` methods of §6, `log.emit`, `a.call` | §3.3 |
+| A line that starts with `{` after a statement that ends with a name | ◐ rejected; Fe accepts some | §3.4 |
+| A map in parentheses before `[ ]`, as in `(m)[k] = 1` | ◐ rejected; Fe accepts it | §3.1 |
+| Line breaks inside an expression | ◐ only inside `( )`, after `(`, `,` or an operator, or before `)` | §3.4 |
+| A `<` that may open generic arguments | ◐ rejected whenever it may | §3.2 |
+| Doc comments | ✅ | §1 |
+
+**Items and names**
+
+| Feature | Fe0 | Where |
+|---|---|---|
+| `const` | ◐ literals, other constants and operators only | §5.3 |
+| Functions with positional and labelled parameters | ✅ | §5.4 |
+| Recursion | ◐ near either build's stack limit, Fe0 may differ | the subset rule, §5.4 |
+| `mod`, `use`, `extern`, `unsafe`, `with` blocks | ❌ | §3.3 |
+| A local or a parameter named like a field or an item | ✅ | §5.2 |
+| Uppercase parameters | ✅ | §5.2 |
+| Uppercase locals | ◐ all rejected; Fe accepts some | §5.2 |
+| Type names as names | ◐ rejected everywhere; Fe accepts some | §1 |
+| `init`, `recv`, `assert` and `with` as names | ✅ | §1 |
+| A program with no contract or several | ◐ rejected; Fe accepts it | §6 |
+| A function as a value | ❌ | §5.4 |
+
+**Contracts and effects**
+
+| Feature | Fe0 | Where |
+|---|---|---|
+| `msg` with literal selectors, `recv` with one arm per variant | ✅ | §6 |
+| `sol("…")` selectors | ❌ | §3.3 |
+| Fallback arms, `#[payable]` | ❌ | §3.3 |
+| `mut` storage fields, with Fe's packing | ✅ | §6 |
+| Fields without `mut` | ❌ | §6 |
+| `StorageMap` of `u256`, `bool` and `Address` | ✅ | §6 |
+| Maps elsewhere, maps of maps, `StorageMap` methods | ❌ | §3.3 |
+| `uses` checks on `init` and arms | ✅ | §6 |
+| `mut Ctx` | ✅ | §6 |
+| `Log` and `Call` granted in a body's `uses` without `mut` | ✅ | §6 |
+| `Log` and `Call` declared on the contract without `mut` | ✅ | §6 |
+| `uses` on free functions | ❌ free functions are pure | §5.5 |
+| `Ctx` methods without arguments that return `u256` or `Address`, except `gas()` | ✅ | §6 |
+| `gas()`, the `Ctx` methods that return `Wei` or `Timestamp`, and those with arguments | ❌ | §6 |
+| Events with up to three indexed fields of the three types | ✅ | §6 |
+| `a.call(M::V { … })` | ✅ | §6 |
+| `try_call`, static calls, gas or value on a call | ❌ | §3.3 |
+| The dispatcher, ABI decoding and `init` arguments | ✅ | §6 |
+| Diagnostics | ◐ the first error only, as a stable code | §7 |
 
 ---
 
@@ -50,35 +131,11 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
 | Operators | `+ - * / % ~ ! ^ & \| && \|\| < > = == !=` | |
 | Compound operators | `<= >= << >> += -= *= /= %= &= \|= ^= <<= >>=` | In Fe these are joined from adjacent tokens by the parser. Fe0 requires the characters to be adjacent, with no space inside, and rejects spaced forms. Fe rejects `x + = 1` too **[✓]** |
 
-- **A plain comment before a name.** The name of a variant or of a field may not come right
-  after a plain comment line when a doc comment or an attribute comes before that line. A
-  contract field counts from its `mut`. A doc comment after the plain comment line makes it
-  allowed, and so does a plain comment at the end of the line before. Fe rejects the other
-  cases (`1-0001`) **[✓]**:
-  - after a selector, also with a doc comment in between. The probes are
-    `corpus/reject/comment_after_selector.fe` and `corpus/reject/comment_after_selector_doc.fe`;
-  - after `#[indexed]`, or after a doc comment before a field, also one at the end of the line
-    before. The probes are the `corpus/reject/comment_before_*.fe` programs.
-
-  Fe accepts a plain comment line in the same place before an item, `init`, `recv`, an arm, a
-  selector, `#[indexed]` or an event's `struct`, and before a name with no doc comment or
-  attribute ahead of it **[✓]**. Fe0 allows all of these. The probes are
-  `corpus/doc_comments.fe` and, for a field with no doc comment, `corpus/amm.fe`.
-- **No space before a record field's `:`.** In an event's literal, such as `E { n: x }`, and in
-  the variant of a call, such as `t.call(M::V { n: x })` (§6, "Calls"), a field's `:` must touch
-  its name. Fe rejects a space or a tab there (`1-0001`) **[✓]**. This is a bug in Fe's parser
-  (argotorg/fe#2057), and Fe0 follows it, because of the subset rule (top of this page). Fe0
-  rejects it with `P013`. The probe is `corpus/reject/record_field_space.fe`. Fe also rejects a
-  comment or a line break before the `:` (`1-0001`) **[✓]**, and Fe0 rejects both with `P002`.
-  The probes are `corpus/reject/record_field_comment.fe` and
-  `corpus/reject/record_field_line_break.fe`. Fe and Fe0 accept a space before the `:` of a
-  call's label, such as `g(a : n)`, of a type in a parameter, a `let` or a field's declaration,
-  and of a bind in an arm's pattern, such as `Go { t : t }` **[✓]**.
 - **No block comments.** Fe's compiler lexer has none, even though the tree-sitter grammar does.
 - **Doc comments.** A comment that starts with `///`, including `////`, is a doc comment. It may
   come only before an item, a contract field, `init`, `recv`, an arm, a variant or a field of a
   variant or of an event. Only newlines and other comments may come between it and what it
-  documents, except a plain comment line right before a name (above). A doc comment may also
+  documents, except a plain comment line right before a name (below). A doc comment may also
   stand at the end of the line where a contract field, `init`, `recv`, an arm, a variant, a
   variant's field or an event's field ends. It then documents the next of these. It may not
   stand at the end of the line where an item ends, because only a newline or a plain comment may
@@ -103,6 +160,30 @@ Source text is UTF-8. Only ASCII may appear outside comments and string literals
     else inside `( )`, and at the end of the file (`1-0001`) **[✓]**. The probes are the other
     `corpus/reject/doc_*.fe`.
   - `//!` is an ordinary comment in both **[✓]**. The probe is `corpus/one_line.fe`.
+- **A plain comment before a name.** The name of a variant or of a field may not come right
+  after a plain comment line when a doc comment or an attribute comes before that line. A
+  contract field counts from its `mut`. A doc comment after the plain comment line makes it
+  allowed, and so does a plain comment at the end of the line before. Fe rejects the other
+  cases (`1-0001`) **[✓]**:
+  - after a selector, also with a doc comment in between. The probes are
+    `corpus/reject/comment_after_selector.fe` and `corpus/reject/comment_after_selector_doc.fe`;
+  - after `#[indexed]`, or after a doc comment before a field, also one at the end of the line
+    before. The probes are the `corpus/reject/comment_before_*.fe` programs.
+
+  Fe accepts a plain comment line in the same place before an item, `init`, `recv`, an arm, a
+  selector, `#[indexed]` or an event's `struct`, and before a name with no doc comment or
+  attribute ahead of it **[✓]**. Fe0 allows all of these. The probes are
+  `corpus/doc_comments.fe` and, for a field with no doc comment, `corpus/amm.fe`.
+- **No space before a record field's `:`.** In an event's literal, such as `E { n: x }`, and in
+  the variant of a call, such as `t.call(M::V { n: x })` (§6, "Calls"), a field's `:` must touch
+  its name. Fe rejects a space or a tab there (`1-0001`) **[✓]**. This is a bug in Fe's parser
+  (argotorg/fe#2057), and Fe0 follows it, because of the subset rule (top of this page). Fe0
+  rejects it with `P013`. The probe is `corpus/reject/record_field_space.fe`. Fe also rejects a
+  comment or a line break before the `:` (`1-0001`) **[✓]**, and Fe0 rejects both with `P002`.
+  The probes are `corpus/reject/record_field_comment.fe` and
+  `corpus/reject/record_field_line_break.fe`. Fe and Fe0 accept a space before the `:` of a
+  call's label, such as `g(a : n)`, of a type in a parameter, a `let` or a field's declaration,
+  and of a bind in an arm's pattern, such as `Go { t : t }` **[✓]**.
 
 **Reserved words.** These are every keyword of Fe's lexer, so Fe0 rejects any of them as an
 identifier (`tools/spikes.sh` checks this list against Fe's source):
@@ -150,8 +231,8 @@ name, which the subset rule allows.
   where a value is needed (`T003`), as in `let x = g()`. Fe gives them the type `()` and
   accepts `let x = g()` **[✓]**. The probe is `corpus/reject/unit_as_value.fe`.
 - A contract field may also be a map, `StorageMap<K, V>` (§6, "Maps").
-- There are no other types: no signed integers or other widths, no tuples, arrays, structs,
-  enums or references.
+- There are no other types: no signed integers or other widths, no tuples, arrays, structs
+  other than events, enums or references.
 - Integer literals have type `u256`, but only where their context makes them one. Fe has no
   default integer type. It rejects a literal whose type nothing fixes, with `8-0031` **[✓]**.
 - Fe0 gives `T005` for an integer whose type nothing fixes. Such an integer is built only from
@@ -199,7 +280,7 @@ contract    = "contract" IDENT [ effects ] "{" { cfield } [ init ] { recv } "}" 
 effects     = "uses" "(" [ effect { "," effect } [ "," ] ] ")" ;
 (* §6, "The caller", "Events", "Calls" *)
 effect      = IDENT ":" [ "mut" ] ( "Ctx" | "Log" | "Call" ) ;
-cfield      = "mut" IDENT ":" ( type | map ) [ "," ] ;   (* v1: mut only, see §6 *)
+cfield      = "mut" IDENT ":" ( type | map ) [ "," ] ;   (* every field is mut, §6 *)
 event       = "#" "[" "event" "]" NL [ "pub" ] "struct" IDENT "{" [ efields ] "}" ;
 efields     = efield { "," efield } [ "," ] ;
 efield      = [ "#" "[" "indexed" "]" NL ] IDENT ":" type ;
@@ -242,7 +323,7 @@ primary     = INT | "true" | "false" | IDENT "(" [ args ] ")" | IDENT | "(" expr
             | if | assert | ctx_read | zero | index | emit | msg_call ;
 if          = "if" expr block [ "else" ( if | block ) ] ;
 assert      = "assert" "!" "(" expr [ "," STRING ] ")" ;
-(* A method of Ctx other than emit and call, which have their own rules; §6, "The caller" *)
+(* A method of a Ctx effect; §6, "The caller" *)
 ctx_read    = IDENT "." IDENT "(" ")" ;
 zero        = "Address" "::" "zero" "(" ")" ;
 index       = IDENT "[" expr "]" ;
@@ -261,8 +342,8 @@ is the arm `Order` of `corpus/maps.fe`. Fe also accepts `(m)[k] = 1`, and Fe0 re
 
 ### 3.2 Precedence
 
-Precedence matches Fe's binding powers (`crates/tree-sitter-fe/grammar.js`). From loosest to
-tightest:
+Precedence matches Fe's binding powers (Fe's `crates/tree-sitter-fe/grammar.js`). From loosest
+to tightest:
 
 `||` < `&&` < comparisons < `|` < `^` < `&` < `<<` `>>` < `+` `-` < `*` `/` `%` < unary < call
 and index
@@ -308,13 +389,12 @@ and index
 - maps anywhere but as a contract field's type, maps of maps, tuple keys, key and value types
   other than `u256`, `bool` and `Address`, and the methods of `StorageMap` (`get`, `set`,
   `remove`);
-- `sol("…")` selectors, which are a stretch goal
-  ([ADR 0004](adr/0004-literal-selectors-first.md), `Hasher` effect).
+- `sol("…")` selectors ([ADR 0004](adr/0004-literal-selectors-first.md)).
 
 ### 3.4 Statement termination
 
 A statement ends at a newline, right before the `}` that closes its block, as in
-`{ x = 1 }`, or at the end of the file. Fe0 adopts a deliberately **strict** rule:
+`{ x = 1 }`, or at the end of the file:
 - A newline is ignored where the innermost open bracket is `(`. So it is ignored inside
   `( … )`, but not on the lines of a `{ … }` block inside the parentheses. A `(` inside that
   block makes newlines ignored again, until its `)`.
@@ -366,7 +446,7 @@ Probed **[✓]**:
   of its call. In an `if` condition, Fe ends the condition at a line break before `<`. The
   probes are the other `corpus/reject/line_break_*.fe`. Fe0 rejects them all with `L009`.
 - `tools/newline_check.py` compares how Fe and Fe0 split programs into statements, with Fe's
-  own parser. It checks the corpus, the reject programs that Fe0 parses, and generated
+  parser. It checks the corpus, the reject programs that Fe0 parses, and generated
   programs, each also with random line breaks wherever the rule above allows one. Fe and Fe0
   split all of them the same way.
 
@@ -411,7 +491,7 @@ A `while` has no value.
 **Comparisons** are unsigned on `u256`. On `Address`, only equality is allowed.
 
 **`if`.** `if c { a } else { b }` is an expression when both branches produce values of the same
-type. Without `else`, it has unit type and may only be used as a statement.
+type. Without `else`, it has no value (§2), so it may only be used as a statement.
 
 **Blocks.**
 - A block's value is its final expression, if there is one.
@@ -490,7 +570,7 @@ the ABI-encoded string. A message of any length is encoded whole **[✓]**. The 
      The probe is `corpus/reject/while_true_tail.fe`.
 7. **A tail after a diverging statement.** A block with a final expression has that
    expression's type, even when `return`, `break` or `continue` comes before it and the
-   expression is never reached. A block without a final expression has unit type. When one
+   expression is never reached. A block without a final expression has no value (§2). When one
    of its statements diverges, the block diverges too, and then it fits any type.
    - Fe rejects `return 1` followed by `true` in a function `-> u256` (`8-0000`) **[✓]**. The
      probe is `corpus/reject/never_tail_return.fe`.
@@ -528,14 +608,12 @@ contract Counter {
 ```
 
 **Storage.**
-- **Fe0 v1 requires every contract field to be `mut`.**
-  - Fe keeps non-`mut` fields out of storage entirely **[✓]**. Their values are written into the
-    deployed runtime code during `init` and read with `CODECOPY`, like Solidity immutables
-    (`spike-layout/src/immut.fe`).
-  - Supporting them means appending values to the runtime code at deploy time, which is a
-    stretch goal.
+- **Every contract field must be `mut`.** Fe keeps non-`mut` fields out of storage **[✓]**. It
+  writes their values into the runtime code during `init` and reads them with `CODECOPY`, like
+  Solidity immutables (`spike-layout/src/immut.fe`). Fe0 has no such fields, since it would
+  have to append those values to the runtime code at deploy time.
 - The `mut` fields fill storage in declaration order, from slot 0, **non-`mut` fields not
-  counted** **[✓]**. Fe packs them as Solidity does (#1826):
+  counted** **[✓]**. Fe packs them as Solidity does (argotorg/fe#1826):
   - a `u256` takes 32 bytes, an `Address` 20 and a `bool` 1;
   - a field goes in the bytes of the current slot that follow the previous field, counted from
     the low end, when it fits there. Otherwise it starts the next slot;
@@ -546,10 +624,8 @@ contract Counter {
 - `bool` is stored as 0 or 1 **[✓]**.
 - `Address` is stored with the high bits of its 20 bytes zero **[✓]**: the address `0xcc`
   alone in a slot is stored as the word `0xcc`.
-- For when immutables are added: a field declared without `mut` is read-only after `init`
-  **[✓]**.
-  - `init` may still write it, with `uses (mut v)`.
-  - An arm that declares `mut v` on it is rejected (`8-0085`).
+- In Fe, a field without `mut` is read-only after `init` **[✓]**. `init` may write it, with
+  `uses (mut v)`, and Fe rejects an arm that declares `mut v` on it (`8-0085`).
 
 **Effects (`uses`).** Every `init` and arm body is checked:
 - Reading field `f` requires `f` or `mut f` in its `uses`. Otherwise it is an error, as in Fe
@@ -559,8 +635,6 @@ contract Counter {
 - Fe accepts *unused* `uses` entries **[✓]**, so Fe0 reports them only as warnings.
 - A field listed twice, as in `uses (v, mut v)`, is an error (`N001` at the second entry). Fe
   rejects it too (`3-0093`) **[✓]**. The probe is `corpus/reject/uses_twice.fe`.
-
-This check is the point of Fe0.
 
 **The caller** ([ADR 0017](adr/0017-caller.md)). A contract may declare `Ctx` effects, as in
 `contract Owned uses (ctx: Ctx) {`. `init` and arms grant a `Ctx` effect in their `uses` as they
@@ -598,10 +672,10 @@ grant a storage field.
   `Address` field too, because `Address` has no such method (`2-0010`) **[✓]**. The probe is
   `corpus/reject/ctx_not_an_effect.fe`.
 - Fe0 takes the methods of Fe's `Ctx` that take no arguments and return `u256` or `Address`,
-  except `gas()` ([ADR 0017](adr/0017-caller.md)). `timestamp()`, `value()` and
-  `selfbalance()` return types that Fe0 lacks. Fe0 also leaves out the methods that take
-  arguments, such as `balance(a)` and `blockhash(n)`. Fe accepts
-  `ctx.gas()` and `ctx.blockhash(1)` **[✓]**.
+  except `gas()` ([ADR 0017](adr/0017-caller.md)). `timestamp()` returns a `Timestamp`, and
+  `value()` and `selfbalance()` a `Wei`, types that Fe0 lacks. Fe0 also leaves out the methods
+  that take arguments, such as `balance(a)` and `blockhash(n)`. Fe accepts `ctx.gas()` and
+  `ctx.blockhash(1)` **[✓]**.
 - Fe0 rejects a method without arguments that it leaves out or that `Ctx` lacks (`N002`). The
   probes are `corpus/reject/ctx_other_method.fe` and `corpus/reject/ctx_unknown_method.fe`.
   Fe0's parser rejects a method call with arguments at its first argument (`P002`). The probe
@@ -756,7 +830,7 @@ point on a node against `corpus/callee.fe` **[✓]**:
 - Every variant's arm pattern is written with braces, `Name {}` even when it has no fields. That
   avoids an ambiguity in Fe's grammar **[✓]**.
 
-The runtime dispatcher matches the official one (`mir/src/runtime/synthetic.rs:745`):
+The runtime dispatcher matches the official one, in Fe's `crates/mir/src/runtime/synthetic.rs`:
 
 1. If `calldatasize < 4`, revert with empty data **[✓]**.
 2. Compute `selector = calldataload(0) >> 224` and jump to the matching arm.
@@ -773,15 +847,12 @@ The runtime dispatcher matches the official one (`mir/src/runtime/synthetic.rs:7
 
 **Deployment.**
 - The initcode runs `init` with its static ABI arguments, which are appended to the initcode,
-  then returns the runtime code.
-  - This layout is documented in the 26.5.0 changelog: `init_code_hash` hashes "the embedded
-    creation code of `C` followed by its ABI-encoded constructor arguments".
-  - Probed **[✓]** (`spike-conform/src/init_args.fe`): the initcode handles arguments the same
-    way the dispatcher handles calldata.
-    - Missing arguments, too few argument words, a `bool` word other than 0 or 1, or an
-      `Address` word with upper bits set: the creation reverts, so CREATE returns address 0.
-    - Extra trailing bytes are ignored.
-    - Deploying with `value > 0` fails, because `init` is non-payable.
+  then returns the runtime code. It handles the arguments the same way the dispatcher handles
+  calldata **[✓]** (`spike-conform/src/init_args.fe`):
+  - Missing arguments, too few argument words, a `bool` word other than 0 or 1, or an
+    `Address` word with upper bits set: the creation reverts, so CREATE returns address 0.
+  - Extra trailing bytes are ignored.
+  - Deploying with `value > 0` fails, because `init` is non-payable.
 - A contract without `init` gets a no-op one.
 - A program declares exactly one contract: `G001` without one and `N015` at a second. Fe
   accepts a module with none or with several **[✓]**, so this rule is Fe0's own. The probes
@@ -802,9 +873,9 @@ The subset rule is tested three ways.
   latter running on the EVM, and deploys both builds with the same constructor arguments and
   value. Either both deployments create a contract or neither does. Then both contracts get
   the same calls, and each call must give the same success flag and the same return or
-  revert data, byte for byte. Inside `fe test`, storage effects show through the later calls
-  that read them. On a node, the logs and the storage writes of each call must match too
-  (DESIGN.md §10, "On a node").
+  revert data, byte for byte. Storage writes show through the later calls that read them. On a
+  node, the logs and the storage writes of each call must match too (DESIGN.md §10, "On a
+  node").
 - **Rejected programs.** Fe0 must give the expected error code at the expected position, and
   Fe must reject the program too, unless the rule is one that Fe0 adds on top of Fe (such as
   §5.3's ban on `if` in a constant). Then Fe must accept it.
@@ -815,86 +886,3 @@ The subset rule is tested three ways.
 The aim is a test of one of these kinds for every rule above that has a [✓] mark. The tests are
 in `corpus/`, `corpus/reject/` and `fe0/src/codegen_tests.fe`, and DESIGN.md §10 describes how
 the harness runs them. `tools/mutate.py` makes the changed programs (DESIGN.md §11a).
-
-## 9. Open questions
-
-No question is open. Each answer is in the section that owns its rule.
-
-## 10. Fe0 and Fe at a glance
-
-A summary of the sections above, for a reader who wants the shape of the subset before its
-rules. Each row points to the section that owns the rule; where the two disagree, that section
-wins. ✅ means Fe0 has the feature as Fe does. ◐ means Fe0 has it with a narrower rule, so it
-rejects some programs that Fe accepts. ❌ means Fe0 leaves it out, though it is valid Fe (§3.3).
-
-**Types**
-
-| Feature | Fe0 | Where |
-|---|---|---|
-| `u256`, `bool`, `Address`, with checked arithmetic | ✅ | §2, §4 |
-| Other integer widths, signed integers, `usize`, `isize` | ❌ | §2 |
-| `String` | ◐ only as an `assert!` message | §1 |
-| Tuples, arrays, structs other than events, enums, references | ❌ | §2, §3.3 |
-| Generics, traits, `impl`, closures, `as` casts | ❌ | §3.3 |
-| A literal's type inferred from later uses | ◐ the type must be fixed where the literal is written | §2 |
-
-**Syntax and expressions**
-
-| Feature | Fe0 | Where |
-|---|---|---|
-| Binary operators and their precedence | ✅ | §3.2 |
-| Unary `+` | ◐ not at the start of a line where a newline can end a statement | §3.2, §3.4 |
-| `!` on `u256`, `& \| ^` on `bool` | ❌ | §2 |
-| A unit value, as in `let x = g()` | ❌ | §2 |
-| `while true` as a path that leaves a function | ❌ | §5.6 |
-| `**` | ❌ | §3.3 |
-| Compound assignment | ✅ | §1 |
-| Decimal, hex, octal and binary literals | ✅ | §1 |
-| `if` as an expression, block values | ✅ | §4 |
-| `while`, `break`, `continue`, `return` | ✅ | §3.1 |
-| `for`, ranges, `loop`, `match` | ❌ | §3.3 |
-| `let`, `var`, shadowing | ✅ | §5.2 |
-| Field access and method calls | ❌ except the `Ctx` methods of §6, `log.emit`, `a.call` | §3.3 |
-| Line breaks inside an expression | ◐ only inside `( )`, after `(`, `,` or an operator, or before `)` | §3.4 |
-| A `<` that may open generic arguments | ◐ rejected whenever it may | §3.2 |
-| Doc comments | ✅ | §1 |
-
-**Items and names**
-
-| Feature | Fe0 | Where |
-|---|---|---|
-| `const` | ◐ literals, other constants and operators only | §5.3 |
-| Functions with positional and labelled parameters | ✅ | §5.4 |
-| Recursion | ◐ near either build's stack limit, Fe0 may differ | the subset rule, §5.4 |
-| `mod`, `use`, `extern`, `unsafe`, `with` blocks | ❌ | §3.3 |
-| A local or a parameter named like a field or an item | ✅ | §5.2 |
-| Uppercase parameters | ✅ | §5.2 |
-| Uppercase locals | ◐ rejected | §5.2 |
-| Type names as names | ◐ rejected everywhere | §1 |
-| `init`, `recv`, `assert` and `with` as names | ✅ | §1 |
-| A program without exactly one contract | ◐ rejected | §6 |
-| A function as a value | ❌ | §5.4 |
-
-**Contracts and effects**
-
-| Feature | Fe0 | Where |
-|---|---|---|
-| `msg` with literal selectors, `recv` with one arm per variant | ✅ | §6 |
-| `sol("…")` selectors | ❌ a stretch goal | §3.3 |
-| Fallback arms, `#[payable]` | ❌ | §3.3 |
-| `mut` storage fields, with Fe's packing | ✅ | §6 |
-| Fields without `mut` | ❌ a stretch goal | §6 |
-| `StorageMap` of `u256`, `bool` and `Address` | ✅ | §6 |
-| Maps elsewhere, maps of maps, `StorageMap` methods | ❌ | §3.3 |
-| `uses` checks on `init` and arms | ✅ | §6 |
-| `mut Ctx` | ✅ | §6 |
-| `Log` and `Call` granted without `mut` | ✅ | §6 |
-| `Log` and `Call` declared without `mut` | ✅ | §6 |
-| `uses` on free functions | ❌ free functions are pure | §5.5 |
-| `Ctx` methods without arguments that return `u256` or `Address`, except `gas()` | ✅ | §6 |
-| `gas()`, the `Ctx` methods that return `Wei` or `Timestamp`, and those with arguments | ❌ | §6 |
-| Events with up to three indexed fields of the three types | ✅ | §6 |
-| `a.call(M::V { … })` | ✅ | §6 |
-| `try_call`, static calls, gas or value on a call | ❌ | §3.3 |
-| The dispatcher, ABI decoding and `init` arguments | ✅ | §6 |
-| Diagnostics | ◐ the first error only, as a stable code | §7 |
