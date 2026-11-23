@@ -25,17 +25,16 @@ CompilerRegistry, the list of Compilers that an admin keeps. Done means:
   matches.
 
 ## State
-`registry/src/` holds both contracts, in `compilers.fe` and `registry.fe`.
-`tools/registry_check.py` passes on anvil and runs in CI's "registry" group, and
-`tools/deploy_registry.py --rehearse` passes. `tools/sourcify.py` has not run against Sourcify
-yet. The /unsmell run `.git/unsmell/20261123-142740` has findings that are not triaged; the
-contracts and the tools were rewritten after its surveys. Nothing is committed.
+Both registries are deployed on Arbitrum One and Sourcify matches both
+(`deployments/registry/42161.json`). CompilerRegistry lists the Compiler of fe0-chain 0.1.2,
+and `corpus/counter.fe` is deployed through Registry. `tools/registry_check.py` runs in CI's
+"registry" group.
 
 ## Next
-Re-survey the rewritten files and review the /unsmell changes. Commit, deploy with
-`uv run --project tools tools/deploy_registry.py`, and check that Sourcify matches. Then the
-playground: `tools/playground.py` reads `deployments/registry/<chain id>.json`, the Deploy
-form sends `deploy` to Registry, and a list page shows its contracts.
+Build the playground's registry views (ADR 0032): make `tools/playground.py` read
+`deployments/registry/<chain id>.json`, make the Deploy form send `deploy` to Registry, and add
+a list page of its contracts and a page that opens each one with its source, constructor
+arguments and compiler.
 
 ## Upstream
 Asked Sourcify to accept the ingot's name, the `-O` level and dependencies in its Fe input:

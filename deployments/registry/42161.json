@@ -1,0 +1,12 @@
+{
+  "version": "0.1.0",
+  "admin": "0xcbAeA7AF074b46BE5232D20c686419F76C95D1E4",
+  "contracts": {
+    "CompilerRegistry": "0x60a377ac44Bd4Df3EbEDC104f92B959d0Adc9273",
+    "Registry": "0x7810A73f714FA9dd628c17BA1013232263a25a4D"
+  },
+  "sourcify": {
+    "CompilerRegistry": "match",
+    "Registry": "match"
+  }
+}

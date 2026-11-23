@@ -88,6 +88,16 @@ rules of ADR 0031 and ADR 0034 that its `--help` lists. It needs network access 
 One's RPC endpoint, for CreateX's code. It fails when `Registry.abi.json` or
 `CompilerRegistry.abi.json` differs from the build. Run it with `--write-abi` to write them.
 
+## Deployed
+
+On Arbitrum One, as `deployments/registry/42161.json` records them:
+
+| | Address |
+|---|---|
+| CompilerRegistry | [`0x60a377ac44Bd4Df3EbEDC104f92B959d0Adc9273`](https://repo.sourcify.dev/42161/0x60a377ac44Bd4Df3EbEDC104f92B959d0Adc9273) (Sourcify) |
+| Registry | [`0x7810A73f714FA9dd628c17BA1013232263a25a4D`](https://repo.sourcify.dev/42161/0x7810A73f714FA9dd628c17BA1013232263a25a4D) (Sourcify) |
+| Admin of CompilerRegistry | `0xcbAeA7AF074b46BE5232D20c686419F76C95D1E4` |
+
 ## Deploy
 
 ```sh
@@ -95,8 +105,8 @@ uv run --project tools tools/deploy_registry.py
 ```
 
 This deploys both contracts on Arbitrum One, with your wallet's account as the admin, and
-verifies them on Sourcify. As a demo, it adds to CompilerRegistry the Compiler that
-`tools/deploy.py` deployed, unless the list has it, and deploys `corpus/counter.fe` through
+verifies them on Sourcify. It then adds to CompilerRegistry the Compiler that `tools/deploy.py`
+deployed, unless the list has it, and, as a demo, deploys `corpus/counter.fe` through
 Registry. You approve each transaction in your browser wallet through browser-web3-signer.
 `deployments/registry/<chain id>.json` records the version, the addresses, the admin and
 Sourcify's matches. With `--rehearse`, the script does the same on a local anvil node, without
