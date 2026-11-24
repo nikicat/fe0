@@ -4,7 +4,7 @@
 - Status: accepted; supersedes [0008](0008-front-back-split.md)
 
 ## Context
-A contract's runtime code may be at most 24,576 bytes. The phase contracts take about 60 KB in
+A contract's runtime code may be at most 24,576 bytes. The phase contracts take about 64 KB in
 all (DESIGN.md §8 gives each size), so the compiler spans several contracts.
 
 Lexer and parser fit in one contract: a lexer + parser probe takes 21,454 bytes (Fe 26.7.0,

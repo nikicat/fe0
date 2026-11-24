@@ -39,7 +39,8 @@ To make a release, raise the version in `fe.toml` and in `version()` in `src/lib
 commit. `tools/chain_check.py` fails when the two versions differ. The return type of
 `version()` is `String<N>`, where `N` is the length of the version, so a longer or shorter
 version needs a new `N` there. Then `tools/deploy.py` deploys the release
-([docs/DEMO.md](../docs/DEMO.md), step 4).
+([docs/DEMO.md](../docs/DEMO.md), step 4), and `tools/deploy_registry.py` adds its Compiler to
+CompilerRegistry ([registry/README.md](../registry/README.md), "Deploy").
 
 ## Errors
 
@@ -72,6 +73,5 @@ uv run --project tools tools/chain_check.py
 
 This builds the contracts as Sourcify rebuilds them, into `out/chain/`
 ([ADR 0033](../docs/adr/0033-verify-on-sourcify.md)). Then it checks them on a local anvil node
-against the native CLI. If `Compiler.abi.json` does not match the build, it fails.
-`tools/deploy.py` deploys the same build.
-Run it with `--write-abi` to write the file again.
+against the native CLI. If `Compiler.abi.json` does not match the build, it fails. Run it with
+`--write-abi` to write the file again. `tools/deploy.py` deploys the same build.
