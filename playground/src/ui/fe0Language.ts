@@ -1,6 +1,8 @@
 // Highlighting of Fe0 for CodeMirror, by the words of SPEC.md §1, which fe0Language.test.ts
 // checks against SPEC.md.
-import { HighlightStyle, StreamLanguage, type StreamParser } from "@codemirror/language";
+import {
+  HighlightStyle, StreamLanguage, type StreamParser, syntaxHighlighting,
+} from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 
 // The reserved words of SPEC.md §1.
@@ -38,11 +40,11 @@ export const fe0Tokens: StreamParser<null> = {
   },
 };
 
-export const fe0 = StreamLanguage.define(fe0Tokens);
+const fe0 = StreamLanguage.define(fe0Tokens);
 
 // The colours of Fe0's tokens come from CSS custom properties in style.css, so that both
 // themes fit.
-export const fe0Highlight = HighlightStyle.define([
+const fe0Highlight = HighlightStyle.define([
   { tag: tags.keyword, color: "var(--syn-keyword)" },
   { tag: tags.typeName, color: "var(--syn-type)" },
   { tag: tags.className, color: "var(--syn-name)" },
@@ -51,3 +53,6 @@ export const fe0Highlight = HighlightStyle.define([
   { tag: tags.comment, color: "var(--syn-comment)", fontStyle: "italic" },
   { tag: tags.meta, color: "var(--syn-meta)" },
 ]);
+
+// Fe0's language and its colours.
+export const fe0Highlighting = [fe0, syntaxHighlighting(fe0Highlight)];

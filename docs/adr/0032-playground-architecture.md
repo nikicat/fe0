@@ -29,7 +29,9 @@ The playground becomes a TypeScript app, built by Vite into static files that Pa
 - wagmi with viem for wallets and chains. wagmi finds the browser's wallets (EIP-6963),
   switches chains, keeps the account's state and supports several chains at once.
 - TanStack Query for reads from the chain. It caches compiles, registry pages and `version()`
-  calls, and runs them again when their inputs change.
+  calls, and runs them again when their inputs change. A registry record never changes, so the
+  page also keeps each one in the browser's `localStorage`, and a later visit reads it from
+  there instead of from the chain.
 - CodeMirror 6 for the editor, with Fe0 highlighting and the compile error marked in place.
 
 **Layers.** Each imports only from the layers above it in this table. `src/config.ts`, which
@@ -39,13 +41,13 @@ the rule.
 
 | Layer | What it holds | Tests |
 |---|---|---|
-| `domain/` | Pure functions: the outline of a program's `init` and `msg` variants, ABI building, revert decoding and routes. For the registry, also salts and `CREATE2` addresses | Unit tests (vitest) |
+| `domain/` | Pure functions: a program's bytes and the line and column of an offset (`source.ts`), the outline of a program's `init` and `msg` variants (`outline.ts`), ABI building (`abi.ts`, `values.ts`), revert decoding (`revert.ts`), routes (`route.ts`), the pages of the registry's lists (`registryList.ts`), the salts of the registry's deployments (`salt.ts`), their init code and `CREATE2` addresses through CreateX (`createx.ts`), the search of block headers for a record's block (`search.ts`, `blocks.ts`; ADR 0031, "Reading"), and generic helpers that the standard library lacks (`generic.ts`); and the types of `src/config.ts` (`domain/config.ts`) | Unit tests (vitest) |
 | `chain/` | The chains; typed clients for Compiler and the registry, from their ABIs in the repository; and transactions from the wallet | Playwright tests |
-| `state/` | Query hooks for chain data, the current route, and a small hand-written store for the editor and the forms | Playwright tests |
-| `ui/` | Components: the editor, the compile status, the deploy and call forms, the contract page, the registry list, the chain picker and the wallet button | Playwright tests |
+| `state/` | Query hooks for chain data (`queries.ts`), the registry's records kept in `localStorage` (`records.ts`), the deploy form's preview (`deployPreview.ts`), the current route, and a small hand-written store for the editor and the forms | Playwright tests |
+| `ui/` | Components: the editor, the compile status, the deploy and call forms, the contract page, the registry list and the wallet button | Playwright tests |
 
 The Playwright tests run in CI against an anvil fork of the chain, so they compile and deploy
-through the deployed Compiler.
+through the deployed Compiler and registry.
 
 **Routes**, in the URL's fragment, so that they work on Pages:
 - `#/`: the editor;
@@ -53,32 +55,51 @@ through the deployed Compiler.
 - `#/<chain id>/<address>`: one contract, with its source from the registry, constructor
   arguments, compiler and call forms;
 - `#/<chain id>/<address>/src/<program>`: the same, with a shared program;
-- `#/registry`: the registry's list, which can be filtered by deployer or compiler.
+- `#/registry`: the registry's list, newest first;
+- `#/registry/<account>`: the contracts that the account deployed through the registry.
 
 **Configuration.** `tools/playground.py` writes a typed `config.ts` with what the page needs
-from the repository. It holds each chain that `deployments/` records, with its Compiler and
-registry addresses and a link to the Compiler's page on Sourcify
-([ADR 0033](0033-verify-on-sourcify.md)). A Compiler in `config.ts` is a known one, since this
-repository deployed it. Where the registry names a compiler, the page links a known one to its
-page on Sourcify, and warns about any other.
+from the repository, taken from what `deployments/` and `corpus/` record, so the page lists no
+chain or contract by hand. `Config` in `tools/playground.py` lists its fields, and
+`src/domain/config.ts` types them. A chain whose `block.number` is Ethereum's, as on Arbitrum,
+makes the page search block headers for a record's block ([ADR
+0031](0031-deployment-registry.md), "Reading").
 
 **Call forms.** The call forms come from an outline of the program, which finds `init` and
 the `msg` variants with regular expressions. The page has no Fe0 parser, and the Compiler
 returns only deploy code, so nothing gives the page the program's ABI.
 
-**Deployment.** Each page works on one deployment, a chain with its Compiler from
-`config.ts`, which the route picks. Components take it from a React context, not a prop, since
-leaves such as the explorer links sit under every panel. The hooks of `state/` and the
-functions of `chain/` take it as an argument, so they do not depend on where a component sits.
+**Deployment.** Each page works on one deployment, a chain with its Compiler and registry from
+`config.ts`, which the route picks: a contract's route names its chain, and every other route is
+on the chain with the lowest id. `config.ts` holds one chain, Arbitrum One, with one Compiler,
+so the page has no picker for either until `deployments/` records more. Components and the
+hooks of `state/` take it from a React context, not a prop, since leaves such as the transaction
+links sit under every panel. The functions and classes of `chain/` take it as an argument, so
+they do not depend on React.
 
-**Contract versions.** A contract's page shows the string that the contract's `version()`
-returns, read with the same signature as Compiler's own `version()` (`fe0-chain/README.md`).
-The page reads it from any contract, so the page owns that signature, not Compiler's ABI.
+**Contract versions.** The page reads the string that a contract's `version()` returns, using
+the same signature as Compiler's own `version()` (`fe0-chain/README.md`). It shows that string
+on a contract's page when the contract has a `version()`. It also shows the version of the
+Compiler that a registry record names, which may be from a different release from the one in
+`config.ts`. The page reads `version()` from any contract, so it declares that signature
+itself rather than taking it from Compiler's ABI.
 
-**The first build** has one chain, Arbitrum One, and no registry. Until the registry exists, a
-contract's page takes its source from the editor, and there is no `#/registry`. That source may
-not be the program the contract was built from. The registry's client, the registry's lists and
-the chain picker come with the registry.
+The page does not check whether a record's Compiler is listed, since the registry checks that
+when it deploys ([0034](0034-compiler-registry.md)).
+
+**Contract pages.** The page deploys through the registry
+([0031](0031-deployment-registry.md)), so a contract's page shows the source, constructor
+arguments and compiler that the registry recorded, and puts that source in the editor, where
+the call forms come from. For a contract that the registry has no record of, the forms come
+from whatever program the editor holds, which may not be the contract's.
+
+**Links.** The page links a contract of this repository, such as Compiler or the registry, to
+its page on Sourcify, and links no contract to the chain's block explorer. The explorer
+verifies no Fe, so it shows only a contract's bytecode, while Sourcify shows the source that it
+verified ([0033](0033-verify-on-sourcify.md)). Only transactions link to the explorer.
+
+**Hex values.** The page shortens a long hex value, such as an address or a transaction hash,
+with CSS rather than in its text, so that a copy of it gets the whole value.
 
 ## Alternatives
 - **Keep plain modules and add a small store:** it keeps the page free of a build step, but

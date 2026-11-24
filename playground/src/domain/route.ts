@@ -1,14 +1,18 @@
 // The page's routes, in the URL's fragment (docs/adr/0032, "Routes").
-import { type Address, isAddress } from "viem";
+import { type Address, getAddress, isAddress } from "viem";
 import type { ChainId } from "./config";
 import type { Source } from "./source";
 
-// `source` is the program that the link carries, or null when it carries none.
-export type Route =
+// The page that a route opens. Each address is checksummed (EIP-55), whatever its casing in
+// the URL.
+export type Place =
   // The editor.
-  | { page: "editor"; source: Source | null }
+  | { page: "editor" }
   // One contract's page.
-  | { page: "contract"; chainId: ChainId; address: Address; source: Source | null };
+  | { page: "contract"; chainId: ChainId; address: Address }
+  // The registry's list on the default chain. `account` names the list as it does in
+  // ListCursor (domain/registryList.ts).
+  | { page: "registry"; account: Address | null };
 
 // Returns the UTF-8 bytes of `text` in base64url.
 function toBase64Url(text: string): string {
@@ -30,18 +34,6 @@ function fromBase64Url(encoded: string): string | null {
   }
 }
 
-// Returns the fragment of `route`, in the form that docs/adr/0032 (Routes) gives.
-export function routeHash(route: Route): string {
-  const src = route.source === null ? "" : `src/${toBase64Url(route.source)}`;
-  if (route.page === "editor") return `#/${src}`;
-  return `#/${route.chainId}/${route.address}${src && `/${src}`}`;
-}
-
-// Returns the route of the contract at `address` on chain `chainId`. The route carries no
-// program, so the page takes its forms from the editor's program.
-export const contractRoute = (chainId: ChainId, address: Address): Route =>
-  ({ page: "contract", chainId, address, source: null });
-
 // The program that the path segments after a route's page carry, or `ok: false` when they
 // name no route.
 type Tail = { ok: true; source: Source | null } | { ok: false };
@@ -57,18 +49,65 @@ function parseTail(rest: string[]): Tail {
   return { ok: false };
 }
 
-// Returns the route of the fragment `hash`. A fragment that names no route gives the editor
-// with no program.
-export function parseRoute(hash: string): Route {
-  const parts = hash.replace(/^#\/?/, "").split("/");
-  const [first = "", second = "", ...rest] = parts;
-  if (/^[0-9]+$/.test(first) && isAddress(second)) {
-    const tail = parseTail(rest);
-    if (tail.ok) {
-      const chainId = Number(first) as ChainId;
-      return { page: "contract", chainId, address: second, source: tail.source };
-    }
+// A place on the page and the program that its link carries, or null when it carries none.
+export class Route {
+  readonly place: Place;
+  readonly source: Source | null;
+
+  private constructor(place: Place, source: Source | null) {
+    this.place = place;
+    this.source = source;
   }
-  const tail = parseTail(parts);
-  return { page: "editor", source: tail.ok ? tail.source : null };
+
+  // Returns the route of the editor, which carries `source` when it is not null.
+  static editor(source: Source | null = null): Route {
+    return new Route({ page: "editor" }, source);
+  }
+
+  // Returns the route of the contract at `address` on chain `chainId`. A route without a
+  // program leaves the page to take its forms from the editor's program.
+  static contract(chainId: ChainId, address: Address, source: Source | null = null): Route {
+    return new Route({ page: "contract", chainId, address }, source);
+  }
+
+  static registry(account: Address | null = null): Route {
+    return new Route({ page: "registry", account }, null);
+  }
+
+  // Returns the route of the fragment `hash`. A fragment that names no route gives the
+  // editor with no program.
+  static parse(hash: string): Route {
+    const parts = hash.replace(/^#\/?/, "").split("/");
+    const [first = "", second = "", ...rest] = parts;
+    if (first === "registry" && rest.length === 0) {
+      if (second === "") return Route.registry();
+      if (isAddress(second)) return Route.registry(getAddress(second));
+    }
+    if (/^[0-9]+$/.test(first) && isAddress(second)) {
+      const tail = parseTail(rest);
+      const chainId = Number(first) as ChainId;
+      if (tail.ok) return Route.contract(chainId, getAddress(second), tail.source);
+    }
+    const tail = parseTail(parts);
+    return Route.editor(tail.ok ? tail.source : null);
+  }
+
+  // Returns the fragment of this route, in the form that docs/adr/0032 (Routes) gives.
+  hash(): string {
+    const { place } = this;
+    if (place.page === "registry") {
+      return place.account === null ? "#/registry" : `#/registry/${place.account}`;
+    }
+    const src = this.source === null ? "" : `src/${toBase64Url(this.source)}`;
+    if (place.page === "editor") return `#/${src}`;
+    return `#/${place.chainId}/${place.address}${src && `/${src}`}`;
+  }
+
+  // The chain that this route names, or null when it names none.
+  get chainId(): ChainId | null {
+    return this.place.page === "contract" ? this.place.chainId : null;
+  }
 }
+
+// The fragment of the editor with no program.
+export const EDITOR_HASH = Route.editor().hash();

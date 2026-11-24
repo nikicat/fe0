@@ -2,7 +2,7 @@
 import { useCallback, useRef, useState } from "react";
 import { type Failure, failureOf } from "../chain/failure";
 import type { Mined, Progress } from "../chain/transact";
-import type { Source } from "../domain/source";
+import type { Program } from "../domain/source";
 
 export type Status =
   | { kind: "idle" }
@@ -29,7 +29,7 @@ export function useAction() {
       // transaction it mined, whose status keeps the link to it.
       action: (progress: (p: Progress) => void) => Promise<string | Mined>,
       // The program that the action sends to Compiler, which a compile error points into.
-      source: Source | null = null,
+      program: Program | null = null,
     ) => {
       const id = ++latest.current;
       const show = (next: Status) => {
@@ -42,7 +42,7 @@ export function useAction() {
           ? { kind: "done", text: end }
           : { kind: "mined", mined: end });
       } catch (e) {
-        show({ kind: "failed", failure: failureOf(e, source) });
+        show({ kind: "failed", failure: failureOf(e, program) });
       }
     },
     [],

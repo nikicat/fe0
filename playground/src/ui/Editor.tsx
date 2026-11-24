@@ -1,15 +1,15 @@
 // The program editor, CodeMirror 6 with the compile error marked in place (ADR 0032).
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { bracketMatching, indentUnit, syntaxHighlighting } from "@codemirror/language";
+import { bracketMatching, indentUnit } from "@codemirror/language";
 import { type Diagnostic, setDiagnostics } from "@codemirror/lint";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
 import { useEffect, useRef } from "react";
 import { describeRevert } from "../domain/revert";
-import { type ByteOffset, type Source, charRange } from "../domain/source";
+import type { ByteOffset, Source } from "../domain/source";
 import type { CompileView } from "../state/queries";
-import { setSource, useSelection, useSource } from "../state/store";
-import { fe0, fe0Highlight } from "./fe0Language";
+import { store, useProgram, useSelection } from "../state/store";
+import { fe0Highlighting } from "./fe0Language";
 
 const INDENT = 4;
 
@@ -34,7 +34,7 @@ function editorExtensions(onChange: (source: Source) => void): Extension[] {
     lineNumbers(), history(), bracketMatching(), highlightActiveLine(),
     indentUnit.of(" ".repeat(INDENT)), EditorState.tabSize.of(INDENT),
     keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
-    fe0, syntaxHighlighting(fe0Highlight),
+    fe0Highlighting,
     EditorView.contentAttributes.of({ "aria-label": "Fe0 source" }),
     EditorView.updateListener.of((u) => {
       if (u.docChanged) onChange(sourceOf(u.state));
@@ -45,13 +45,17 @@ function editorExtensions(onChange: (source: Source) => void): Extension[] {
 export function Editor({ mark }: { mark: Mark | null }) {
   const parent = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
-  const source = useSource();
+  const program = useProgram();
+  const { source } = program;
   const selection = useSelection();
 
   useEffect(() => {
     const v = new EditorView({
       parent: parent.current!,
-      state: EditorState.create({ doc: source, extensions: editorExtensions(setSource) }),
+      state: EditorState.create({
+        doc: source,
+        extensions: editorExtensions((s) => store.setSource(s)),
+      }),
     });
     view.current = v;
     return () => {
@@ -72,7 +76,7 @@ export function Editor({ mark }: { mark: Mark | null }) {
   useEffect(() => {
     const v = view.current;
     if (!v || !selection) return;
-    const { from, to } = charRange(sourceOf(v.state), selection.offset);
+    const { from, to } = program.charRange(selection.offset);
     v.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
     v.focus();
   }, [selection]);
@@ -82,11 +86,11 @@ export function Editor({ mark }: { mark: Mark | null }) {
     if (!v) return;
     const diagnostics: Diagnostic[] = [];
     if (mark) {
-      diagnostics.push({ ...charRange(sourceOf(v.state), mark.offset), severity: "error",
+      diagnostics.push({ ...program.charRange(mark.offset), severity: "error",
         message: mark.text });
     }
     v.dispatch(setDiagnostics(v.state, diagnostics));
-  }, [mark, source]);
+  }, [mark, program]);
 
   return <div className="editor" ref={parent} />;
 }

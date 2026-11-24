@@ -1,5 +1,5 @@
 // Transactions from the browser wallet.
-import type { Address, Hex } from "viem";
+import type { Address, Hex, Log } from "viem";
 import {
   connect, getConnection, sendTransaction, switchChain,
   waitForTransactionReceipt,
@@ -62,11 +62,11 @@ export async function callTx(deployed: Deployed, tx: Tx, from?: Address): Promis
 }
 
 // Sends `tx` from the wallet on the chain of `deployed` and reports each Progress. Returns the
-// simulated return data and the mined transaction. Errors as `walletOn` does, with a viem
-// error that carries the revert data when the simulation reverts, or with Error when the
-// transaction fails or is not mined in RECEIPT_TIMEOUT.
+// simulated return data, the mined transaction and the logs it emitted. Errors as `walletOn`
+// does, with a viem error that carries the revert data when the simulation reverts, or with
+// Error when the transaction fails or is not mined in RECEIPT_TIMEOUT.
 export async function transact(deployed: Deployed, tx: Tx, progress: (p: Progress) => void):
-  Promise<{ result: Hex; mined: Mined }> {
+  Promise<{ result: Hex; mined: Mined; logs: Log[] }> {
   const from = await walletOn(deployed.chain.id);
   const result = await callTx(deployed, tx, from);
   // wagmi picks the chain whose id has the type of `chainId`, and its chains' ids are numbers.
@@ -77,5 +77,5 @@ export async function transact(deployed: Deployed, tx: Tx, progress: (p: Progres
   const receipt = await waitForTransactionReceipt(wagmiConfig,
     { chainId, hash, timeout: RECEIPT_TIMEOUT });
   if (receipt.status !== "success") throw new Error(`The transaction ${hash} failed.`);
-  return { result, mined: { hash, gasUsed: receipt.gasUsed } };
+  return { result, mined: { hash, gasUsed: receipt.gasUsed }, logs: receipt.logs };
 }

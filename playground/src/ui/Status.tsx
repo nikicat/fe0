@@ -1,12 +1,10 @@
 // A status line: progress, a result or a failure.
 import type { ReactNode } from "react";
-import type { Hex } from "viem";
-import type { CompileFailure, Failure } from "../chain/failure";
+import { type CompileFailure, type Failure, failureOf } from "../chain/failure";
 import { describeRevert } from "../domain/revert";
-import { lineCol } from "../domain/source";
-import { selectInEditor, useSource } from "../state/store";
+import { store, useProgram } from "../state/store";
 import type { Status } from "../state/transaction";
-import { Explorer, shortHex } from "./Explorer";
+import { TxLink } from "./TxLink";
 
 // The colours of a status line: progress, a result, or a failure.
 type Tone = "info" | "ok" | "err";
@@ -17,28 +15,24 @@ export function StatusText({ tone, children }: { tone: Tone; children: ReactNode
   return <p className={className} role="status">{children}</p>;
 }
 
-// A compile error, with its place in the source it points into. The place is a link that
-// selects it in the editor while the editor still holds that source.
+// A compile error, with its place in the program it points into. The place is a link that
+// selects it in the editor while the editor still holds that program.
 function CompileErrorText({ failure }: { failure: CompileFailure }) {
-  const { revert, source } = failure;
-  const current = useSource() === source;
-  const at = lineCol(source, revert.offset);
+  const { revert, program } = failure;
+  const current = useProgram().source === program.source;
+  const at = program.lineCol(revert.offset);
   const place = `${at.line}:${at.col}`;
   return (
     <>
       {current
         ? <a href="#" className="at" onClick={(e) => {
             e.preventDefault();
-            selectInEditor(revert.offset);
+            store.select(revert.offset);
           }}>{place}</a>
         : place}{" "}
       {describeRevert(revert)}
     </>
   );
-}
-
-function TxLink({ hash }: { hash: Hex }) {
-  return <Explorer target={{ tx: hash }} text={shortHex(hash)} />;
 }
 
 export function FailureText({ failure }: { failure: Failure }) {
@@ -50,6 +44,11 @@ export function FailureText({ failure }: { failure: Failure }) {
     case "compile":
       return <CompileErrorText failure={failure} />;
   }
+}
+
+// A thrown error, from a query or the wallet, as a status line.
+export function ErrorLine({ error }: { error: unknown }) {
+  return <StatusText tone="err"><FailureText failure={failureOf(error, null)} /></StatusText>;
 }
 
 export function StatusLine({ status }: { status: Status }) {

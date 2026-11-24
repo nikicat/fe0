@@ -23,16 +23,23 @@ export interface Chain {
   rpc: Url;
   explorer: Url;
   currency: Currency;
+  l1Blocks: boolean;
+  logRange: number;
 }
 
-// A Compiler that a release of this repository deployed on a chain. The page treats such
-// Compilers as known (docs/adr/0032).
+// A contract that this repository deployed, with its page on Sourcify, which shows whether
+// Sourcify verified its source (docs/adr/0033-verify-on-sourcify.md).
+export interface Verified {
+  address: Address;
+  sourcify: Url;
+}
+
+// One deployment that a page works on, which the route picks (docs/adr/0032, "Deployment").
+// Its Compiler is the one of this repository's latest release.
 export interface Deployed {
   chain: Chain;
-  compiler: Address;
-  // Sourcify's page of the Compiler, which shows whether Sourcify verified its source
-  // (docs/adr/0033-verify-on-sourcify.md).
-  sourcify: Url;
+  compiler: Verified;
+  registry: Verified;
 }
 
 // An error code as the native CLI prints it, such as `N014`, with its message.
@@ -44,7 +51,9 @@ export interface Message {
 export interface Config {
   repo: Url;
   deployments: Deployed[];
-  // Read with `cliMessage`.
+  // CreateX, through which Registry creates each contract, at the same address on every chain
+  // that has it (docs/adr/0031-deployment-registry.md, "Deploying").
+  createx: Address;
   messages: Record<string, Message>;
   // The `.fe` files directly in corpus/, by name.
   examples: Record<string, Source>;
@@ -64,8 +73,3 @@ export const branded = (json: Unbranded<Config>): Config => json as Config;
 
 // The code of a `CompileError`, which keys `Config.messages`.
 export type ErrorCode = bigint & { readonly __brand: "ErrorCode" };
-
-// Returns the CLI's message for the error code `code`, or null when the CLI has none.
-// `messages` is keyed by the code in decimal, as tools/playground.py writes it.
-export const cliMessage = (messages: Config["messages"], code: ErrorCode): Message | null =>
-  messages[code.toString()] ?? null;

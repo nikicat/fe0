@@ -1,9 +1,10 @@
 // The result of the latest compile on chain.
-import { useId } from "react";
 import { size } from "viem";
-import type { DeployCode } from "../chain/compiler";
+import type { DeployCode } from "../domain/createx";
+import { useDeployment } from "../state/deployment";
 import type { CompileView } from "../state/queries";
 import { CopyButton } from "./CopyButton";
+import { SourcifyLink } from "./SourcifyLink";
 import { FailureText, StatusText } from "./Status";
 
 function CompiledLine({ code, gas }: { code: DeployCode; gas: bigint | null }) {
@@ -11,14 +12,15 @@ function CompiledLine({ code, gas }: { code: DeployCode; gas: bigint | null }) {
     <>
       <StatusText tone="ok">
         Compiled: {size(code).toLocaleString()} bytes of deploy code.
-        {gas !== null
-          && ` As a transaction the compile would cost ${gas.toLocaleString()} gas;`
-          + " as an eth_call it is free."}
+        {gas !== null && <span className="muted"> {gas.toLocaleString()} gas as a
+          transaction, free as an eth_call.</span>}
       </StatusText>
-      <details>
+      <details className="deploy-code">
         <summary>Deploy code</summary>
-        <CopyButton label="Copy" text={() => code} />
-        <pre>{code}</pre>
+        <div className="deploy-code-body">
+          <CopyButton label="Copy" text={() => code} />
+          <pre>{code}</pre>
+        </div>
       </details>
     </>
   );
@@ -38,11 +40,13 @@ function CompileLine({ view }: { view: CompileView }) {
 }
 
 export function CompilePanel({ view }: { view: CompileView }) {
-  const labelId = useId();
+  const { compiler } = useDeployment();
   return (
-    <section className="panel" aria-labelledby={labelId}>
-      <h2 id={labelId}>Compile</h2>
-      <CompileLine view={view} />
+    <section className={`compile-bar ${view.kind}`} aria-label="Compile">
+      <span className="indicator" aria-hidden="true" />
+      <div className="compile-text"><CompileLine view={view} /></div>
+      <span className="compile-by hide-tablet">by Compiler{" "}
+        <SourcifyLink verified={compiler} /></span>
     </section>
   );
 }

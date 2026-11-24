@@ -1,22 +1,20 @@
 import { useState } from "react";
 import { isAddress } from "viem";
-import { contractRoute } from "../domain/route";
-import { useDeployment } from "../state/deployment";
-import { navigate } from "../state/route";
+import { useContractLink } from "../state/route";
 
 export function OpenContract() {
-  const chainId = useDeployment().chain.id;
+  const contract = useContractLink();
   const [text, setText] = useState("");
   const address = text.trim();
   return (
-    <form className="panel" onSubmit={(e) => {
+    <form className="card" aria-label="Open a contract" onSubmit={(e) => {
       e.preventDefault();
-      if (isAddress(address)) navigate(contractRoute(chainId, address));
+      if (isAddress(address)) contract.open(address);
     }}>
-      <h2>Call a deployed contract</h2>
-      <div className="row">
+      <h2>Open a contract</h2>
+      <div className="inline">
         <input value={text} onChange={(e) => setText(e.target.value)} spellCheck={false}
-          placeholder="0x… address of a deployed contract" aria-label="Contract address" />
+          placeholder="0x… address" aria-label="Contract address" />
         <button type="submit" disabled={!isAddress(address)}>Open</button>
       </div>
     </form>

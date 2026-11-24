@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import NamedTuple, NewType, Self
 
 import web3.contract
+from eth_abi.abi import encode as abi_encode
 from eth_abi.exceptions import DecodingError
 from eth_typing import ABI, ABIError, ChecksumAddress, HexStr, TypeStr
 from hexbytes import HexBytes
@@ -58,18 +59,13 @@ LIB: sourcify.SourcePath = sourcify.SourcePath("src/lib.fe")
 FE0_MODULE: re.Pattern[str] = re.compile(r"\bfe0::(\w+)")
 # A path in fe0's source to another of its own modules, such as `ingot::lexer`.
 INGOT_MODULE: re.Pattern[str] = re.compile(r"\bingot::(\w+)")
-# The interface of Compiler for callers, committed.
-INTERFACE: Path = CHAIN / "Compiler.abi.json"
-# The option that writes INTERFACE instead of checking it.
+# The option that writes the committed ABI files instead of checking them.
 WRITE_ABI: str = "--write-abi"
 # The ingot file of fe0-chain, which holds its version.
 MANIFEST: Path = CHAIN / "fe.toml"
 # EIP-170 and EIP-3860.
 MAX_RUNTIME: int = 24_576
 MAX_INITCODE: int = 2 * MAX_RUNTIME
-# The program that check_counter deploys, and the start value it deploys it with.
-COUNTER: Path = embed.CORPUS / "counter.fe"
-START: int = 2
 # The program that check_failed_init passes to `deploy`.
 INIT_ARGS: Path = embed.CORPUS / "init_args.fe"
 # The ABI types of the parameters of INIT_ARGS's init.
@@ -83,6 +79,40 @@ def version() -> Version:
     """Returns the version of fe0-chain that MANIFEST holds (fe0-chain/README.md,
     "Releases")."""
     return ingot_version(MANIFEST)
+
+
+class CommittedAbi(NamedTuple):
+    """A committed file that holds a contract's ABI for callers, which `command` writes from
+    the build."""
+
+    path: Path
+    command: str
+
+    @staticmethod
+    def _text(abi: ABI) -> str:
+        return json.dumps(abi, indent=2) + "\n"
+
+    def read(self) -> ABI:
+        """Returns the ABI that the file holds. Errors with OSError when there is no such
+        file."""
+        abi: ABI = json.loads(self.path.read_text())
+        return abi
+
+    def write(self, abi: ABI) -> None:
+        """Writes `abi` to the file."""
+        self.path.write_text(self._text(abi))
+
+    def check(self, abi: ABI) -> list[FailureMessage]:
+        """Returns a message when the file does not hold `abi`."""
+        if not self.path.exists() or self.path.read_text() != self._text(abi):
+            return [FailureMessage(f"{self.path.relative_to(ROOT)} differs from the build;"
+                                   f" run {self.command}")]
+        return []
+
+
+# Compiler's ABI for callers, with the errors of the phase contracts (`Builds.interface`).
+INTERFACE: CommittedAbi = CommittedAbi(CHAIN / "Compiler.abi.json",
+                                       f"tools/chain_check.py {WRITE_ABI}")
 
 
 class Contract(StrEnum):
@@ -214,38 +244,6 @@ class Builds(NamedTuple):
         return [*self.compiler.abi, *(errors[n] for n in sorted(errors))]
 
 
-def committed_interface() -> ABI:
-    """Returns the interface that INTERFACE holds. Errors with OSError when there is no such
-    file."""
-    abi: ABI = json.loads(INTERFACE.read_text())
-    return abi
-
-
-def abi_text(abi: ABI) -> str:
-    """Returns the text of a committed file that holds `abi`."""
-    return json.dumps(abi, indent=2) + "\n"
-
-
-def committed_file_check(path: Path, text: str, command: str) -> list[FailureMessage]:
-    """Returns a message when the committed file `path` does not hold `text`. `command` is the
-    command that writes the file."""
-    if not path.exists() or path.read_text() != text:
-        return [FailureMessage(f"{path.relative_to(ROOT)} differs from the build;"
-                               f" run {command}")]
-    return []
-
-
-def write_interface(builds: Builds) -> None:
-    """Writes INTERFACE."""
-    INTERFACE.write_text(abi_text(builds.interface()))
-
-
-def check_interface(builds: Builds) -> list[FailureMessage]:
-    """Returns a message when INTERFACE differs from `builds.interface`."""
-    return committed_file_check(INTERFACE, abi_text(builds.interface()),
-                                f"tools/chain_check.py {WRITE_ABI}")
-
-
 def revert_data(e: ContractLogicError) -> bytes:
     """Returns the revert data of the call that raised `e`."""
     return bytes(HexBytes(HexStr(str(e.data))))
@@ -302,33 +300,44 @@ class Deployed(NamedTuple):
         return cls(address, Gas(receipt["gasUsed"]))
 
 
-def counter_source() -> FeSource:
-    """Returns the source of COUNTER."""
-    return FeSource(COUNTER.read_text())
+class Counter(NamedTuple):
+    """A program that the deploy checks deploy through Compiler, with the start value that its
+    constructor takes, and whose `Get` returns that value."""
+
+    path: Path
+    start: int
+
+    def source(self) -> FeSource:
+        """Returns the program's source."""
+        return FeSource(self.path.read_text())
+
+    def args(self) -> bytes:
+        """Returns the constructor arguments that the program is deployed with: `start`."""
+        return abi_encode(["uint256"], [self.start])
+
+    def get(self, w3: Web3, address: ChecksumAddress) -> CounterGet:
+        """Returns what `Get` returns on the program deployed at `address`, called by
+        `eth_call`."""
+        get = embed.selectors(self.source()).of(FeName("Get")).to_bytes(4)
+        got = w3.eth.call({"to": address, "data": HexBytes(get)})
+        return CounterGet(self, w3.codec.decode(["uint256"], got)[0])
 
 
-def counter_args(w3: Web3) -> bytes:
-    """Returns the constructor arguments that COUNTER is deployed with: START."""
-    return w3.codec.encode(["uint256"], [START])
+# corpus/counter.fe, which starts at 2.
+COUNTER: Counter = Counter(embed.CORPUS / "counter.fe", 2)
 
 
 class CounterGet(NamedTuple):
-    """What `Get` returns on a COUNTER deployed with `counter_args`."""
+    """What `Get` returns on a `counter` deployed with its `args`."""
 
+    counter: Counter
     value: int
 
-    @classmethod
-    def call(cls, w3: Web3, counter: ChecksumAddress) -> Self:
-        """Returns what `Get` returns on the COUNTER at `counter`, called by `eth_call`."""
-        get = embed.selectors(counter_source()).of(FeName("Get")).to_bytes(4)
-        got = w3.eth.call({"to": counter, "data": HexBytes(get)})
-        return cls(w3.codec.decode(["uint256"], got)[0])
-
     def failures(self) -> list[FailureMessage]:
-        """Returns a message when the value is not START."""
-        if self.value != START:
-            return [FailureMessage(f"{COUNTER.name} deployed by Compiler: Get returns"
-                                   f" {self.value}, not {START}")]
+        """Returns a message when the value is not the counter's start value."""
+        if self.value != self.counter.start:
+            return [FailureMessage(f"{self.counter.path.name} deployed by Compiler: Get"
+                                   f" returns {self.value}, not {self.counter.start}")]
         return []
 
 
@@ -424,11 +433,10 @@ class Chain:
                 return []
 
     def check_counter(self) -> list[FailureMessage]:
-        """Deploys COUNTER with START through Compiler, and checks that `Get` returns START."""
-        w3 = self.node.w3
-        deployed = self.deploy_program(counter_source(), counter_args(w3))
-        print(f"deploy({COUNTER.name}): {deployed.gas:,} gas, at {deployed.address}")
-        return CounterGet.call(w3, deployed.address).failures()
+        """Deploys COUNTER through Compiler, and checks that `Get` returns its start value."""
+        deployed = self.deploy_program(COUNTER.source(), COUNTER.args())
+        print(f"deploy({COUNTER.path.name}): {deployed.gas:,} gas, at {deployed.address}")
+        return COUNTER.get(self.node.w3, deployed.address).failures()
 
     def check_failed_init(self) -> list[FailureMessage]:
         """Returns a message unless `deploy` of INIT_ARGS with OVERFLOWING_ARGS, called by
@@ -459,15 +467,15 @@ def check_version(got: str) -> list[FailureMessage]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument(WRITE_ABI, action="store_true", help=f"write {INTERFACE.name}")
+    ap.add_argument(WRITE_ABI, action="store_true", help=f"write {INTERFACE.path.name}")
     write_abi: bool = ap.parse_args().write_abi
     builds = Builds.build()
     print(builds.size_report())
     failures = builds.oversize()
     if write_abi:
-        write_interface(builds)
+        INTERFACE.write(builds.interface())
     else:
-        failures += check_interface(builds)
+        failures += INTERFACE.check(builds.interface())
     cli_check.build()
     paths = sorted(p.relative_to(ROOT) for p in corpus())
     rejects = embed.load_rejects()

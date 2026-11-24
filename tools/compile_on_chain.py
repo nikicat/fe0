@@ -14,7 +14,7 @@ from pathlib import Path
 from web3 import HTTPProvider, Web3
 from web3.exceptions import ContractLogicError
 
-from chain_check import Reverted, committed_interface, revert_data
+from chain_check import INTERFACE, Reverted, revert_data
 from cli_check import ExitCode
 from deploy import DeploymentRecord, chain_parser
 from fegen import FE0, ROOT, DiagCode, FeSource, LineCol
@@ -44,7 +44,7 @@ def main() -> None:
         compiler = DeploymentRecord.on(args.chain).compiler
     except RuntimeError as e:
         sys.exit(str(e))
-    contract = w3.eth.contract(compiler, abi=committed_interface())
+    contract = w3.eth.contract(compiler, abi=INTERFACE.read())
     try:
         code: bytes = contract.functions.compile(source.encode()).call()
     except ContractLogicError as e:

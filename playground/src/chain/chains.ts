@@ -1,7 +1,7 @@
 // wagmi holds every chain in config.ts at once, so the page can switch between them
 // (docs/adr/0032, "Libraries").
 import {
-  type Address, type Chain as ViemChain, type Hex, type PublicClient, defineChain,
+  type Chain as ViemChain, type Hex, type PublicClient, defineChain,
 } from "viem";
 import { type Connector, http, createConfig } from "wagmi";
 import { getPublicClient } from "wagmi/actions";
@@ -41,11 +41,6 @@ export function publicClient({ chain }: Deployed): PublicClient {
   return client;
 }
 
-// What an explorer link points to: a transaction or an account.
-export type ExplorerTarget = { tx: Hex } | { address: Address };
-
-// Returns the URL of `target` on the block explorer of the chain of `deployed`.
-export function explorerUrl({ chain }: Deployed, target: ExplorerTarget): string {
-  const path = "tx" in target ? `tx/${target.tx}` : `address/${target.address}`;
-  return `${chain.explorer}/${path}`;
-}
+// Returns the URL of the transaction `hash` on the block explorer of the chain of `deployed`.
+// Only transactions link there (docs/adr/0032-playground-architecture.md, "Links").
+export const txUrl = ({ chain }: Deployed, hash: Hex): string => `${chain.explorer}/tx/${hash}`;

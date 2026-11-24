@@ -1,15 +1,15 @@
 import { BaseError } from "viem";
-import { config } from "../config";
-import { type Revert, decodeRevert } from "../domain/revert";
-import type { Source } from "../domain/source";
+import type { Revert } from "../domain/revert";
+import type { Program } from "../domain/source";
+import { repository } from "./repository";
 import { revertData } from "./revertData";
 
-// Compiler's `CompileError`, with the source it points into, which the editor may since have
-// changed.
+// Compiler's `CompileError`, with the program it points into, which the editor may since
+// have changed.
 export interface CompileFailure {
   kind: "compile";
   revert: Extract<Revert, { kind: "compile" }>;
-  source: Source;
+  program: Program;
 }
 
 export type Failure =
@@ -17,15 +17,15 @@ export type Failure =
   | { kind: "revert"; revert: Revert }
   | { kind: "error"; text: string };
 
-// Returns the failure that the page shows for any thrown value. `source` is the program that
+// Returns the failure that the page shows for any thrown value. `program` is the program that
 // the failed call sent to Compiler, or null when it sent none. A `CompileError` is a compile
-// failure only when `source` is not null.
-export function failureOf(error: unknown, source: Source | null): Failure {
+// failure only when `program` is not null.
+export function failureOf(error: unknown, program: Program | null): Failure {
   const data = revertData(error);
   if (data !== null) {
-    const revert = decodeRevert(data, config.messages);
-    return revert.kind === "compile" && source !== null
-      ? { kind: "compile", revert, source }
+    const revert = repository.decodeRevert(data);
+    return revert.kind === "compile" && program !== null
+      ? { kind: "compile", revert, program }
       : { kind: "revert", revert };
   }
   const text =

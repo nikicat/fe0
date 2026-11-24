@@ -28,7 +28,7 @@ import argparse
 import sys
 from enum import StrEnum
 from pathlib import Path
-from typing import NamedTuple, NewType, Self
+from typing import NamedTuple, Self
 
 from eth_abi.abi import encode as abi_encode
 from eth_typing import ChecksumAddress, Hash32
@@ -41,17 +41,15 @@ from web3.types import TxReceipt
 
 import fegen
 import sourcify
-from chain_check import (INIT_ARGS, INIT_ARGS_TYPES, OVERFLOWING_ARGS, Builds, Chain, Code,
-                         CounterGet, Deployed, Initcode, abi_text, committed_file_check,
-                         counter_args, counter_source, revert_data)
-from deploy import ARBITRUM, CREATEX, CREATEX_ABI, Plan, create2_address, require_deployers
+from chain_check import (COUNTER, INIT_ARGS, INIT_ARGS_TYPES, OVERFLOWING_ARGS, WRITE_ABI,
+                         Builds, Chain, Code, CommittedAbi, Deployed, Initcode, revert_data)
+from deploy import ARBITRUM, CREATEX, Plan, require_deployers
 from embed import FailureMessage
 from fegen import ROOT, AccountIndex, FeSource, Version, ingot_version
 from node import Node
 
 REGISTRY: Path = ROOT / "registry"
 OUT: Path = ROOT / "out/registry"
-WRITE_ABI: str = "--write-abi"
 MANIFEST: Path = REGISTRY / "fe.toml"
 # The most items that a check reads in one call of a paged view.
 LIMIT: int = 10
@@ -64,14 +62,13 @@ STRANGER: AccountIndex = AccountIndex(2)
 # A program with an error.
 BAD_SOURCE: FeSource = FeSource("contract C { x: u256 }\n$")
 
-# The salt that a caller passes to Registry's `deploy`.
-Salt = NewType("Salt", bytes)
+class Salt(bytes):
+    """The salt that a caller passes to Registry's `deploy`."""
 
-
-def createx_salt(salt: Salt) -> Hash32:
-    """Returns the salt that Registry passes CreateX for `salt`
-    (docs/adr/0031-deployment-registry.md, "Deploying")."""
-    return Hash32(keccak(salt))
+    def for_createx(self) -> Hash32:
+        """Returns the salt that Registry passes CreateX for this salt
+        (docs/adr/0031-deployment-registry.md, "Deploying")."""
+        return Hash32(keccak(self))
 
 
 # The salts of the counter's deployments through the registry, of the one outside it, of the
@@ -88,9 +85,10 @@ class Name(StrEnum):
     COMPILERS = "CompilerRegistry"
     REGISTRY = "Registry"
 
-    def interface(self) -> Path:
+    def interface(self) -> CommittedAbi:
         """Returns the committed file that holds the contract's ABI for callers."""
-        return REGISTRY / f"{self}.abi.json"
+        return CommittedAbi(REGISTRY / f"{self}.abi.json",
+                            f"tools/registry_check.py {WRITE_ABI}")
 
     def id(self) -> sourcify.ContractId:
         """Returns the contract's identifier in registry/'s source files."""
@@ -128,8 +126,8 @@ class RegistryBuilds(NamedTuple):
     def failures(self) -> list[FailureMessage]:
         """Returns a message for each EIP-170 or EIP-3860 limit that a contract's code exceeds,
         and one for each committed interface that differs from its contract's ABI."""
-        return [m for b in self.all() for m in b.oversize() + committed_file_check(
-            b.contract.interface(), abi_text(b.abi), f"tools/registry_check.py {WRITE_ABI}")]
+        return [m for b in self.all()
+                for m in b.oversize() + b.contract.interface().check(b.abi)]
 
     def compilers_initcode(self, admin: ChecksumAddress) -> Initcode:
         """Returns the init code of CompilerRegistry with `admin` as its admin
@@ -145,7 +143,7 @@ class RegistryBuilds(NamedTuple):
         """Returns the plan of both registries with `admin` as CompilerRegistry's admin."""
         compilers = self.compilers_initcode(admin)
         return Plan({Name.COMPILERS: compilers,
-                     Name.REGISTRY: self.registry_initcode(create2_address(compilers))})
+                     Name.REGISTRY: self.registry_initcode(CREATEX.address_of(compilers))})
 
 
 class Page(NamedTuple):
@@ -229,15 +227,14 @@ class Checker:
         return None
 
     def counter_initcode(self) -> Initcode:
-        code: bytes = self.compiler.functions.compile(counter_source().encode()).call()
-        return Initcode(code + counter_args(self.node.w3))
+        code: bytes = self.compiler.functions.compile(COUNTER.source().encode()).call()
+        return Initcode(code + COUNTER.args())
 
     def deploy_call(self, salt: Salt, src: FeSource | None = None,
                     args: bytes | None = None) -> ContractFunction:
-        w3 = self.node.w3
         return self.registry.functions.deploy(
-            self.compiler.address, salt, (src or counter_source()).encode(),
-            counter_args(w3) if args is None else args)
+            self.compiler.address, salt, (src or COUNTER.source()).encode(),
+            COUNTER.args() if args is None else args)
 
     def deploy(self, salt: Salt, index: AccountIndex, name: str) -> Deploy:
         fn = self.deploy_call(salt)
@@ -272,15 +269,15 @@ class Checker:
         d = self.deploy(COUNTER_SALT, ADMIN, "deploy (creates)")
         addr = d.deployment.addr
         self.expect("deploy: created", d.deployment.created, True)
-        want = create2_address(self.counter_initcode(), createx_salt(COUNTER_SALT))
+        want = CREATEX.address_of(self.counter_initcode(), COUNTER_SALT.for_createx())
         self.expect("deploy: address", addr, want)
-        self.failures += CounterGet.call(self.node.w3, addr).failures()
+        self.failures += COUNTER.get(self.node.w3, addr).failures()
         events = self.registry.events
         [r] = events.Registered().process_receipt(d.receipt, errors=DISCARD)
-        src = counter_source().encode()
+        src = COUNTER.source().encode()
         self.expect("Registered", dict(r["args"]), {
             "addr": addr, "compiler": self.compiler.address, "src_hash": keccak(src),
-            "salt": COUNTER_SALT, "src": src, "args": counter_args(self.node.w3)})
+            "salt": COUNTER_SALT, "src": src, "args": COUNTER.args()})
         f = self.registry.functions
         self.expect("info", self.info(addr),
                     Record(d.receipt["blockNumber"], self.compiler.address, keccak(src)))
@@ -308,9 +305,8 @@ class Checker:
 
     def check_outside(self) -> None:
         """Checks `deploy` of a contract that CreateX created outside the registry."""
-        createx = self.node.w3.eth.contract(CREATEX, abi=CREATEX_ABI)
-        create = createx.functions.deployCreate2(createx_salt(OUTSIDE_SALT),
-                                                 self.counter_initcode())
+        create = CREATEX.deploy_call(self.node.w3, self.counter_initcode(),
+                                     OUTSIDE_SALT.for_createx())
         self.send(create, ADMIN, "CreateX deployCreate2")
         d = self.deploy(OUTSIDE_SALT, OTHER, "deploy (outside)")
         addr = d.deployment.addr
@@ -333,7 +329,7 @@ class Checker:
         args = self.node.w3.codec.encode(INIT_ARGS_TYPES, OVERFLOWING_ARGS)
         init = self.deploy_call(REVERTING_SALT, FeSource(INIT_ARGS.read_text()), args)
         self.expect("deploy of a program whose init reverts", self.reverts(init, ADMIN),
-                    AddressError.FAILED_CREATION.data(CREATEX))
+                    AddressError.FAILED_CREATION.data(CREATEX.address))
 
     def check_admin(self) -> None:
         """Checks the two-step transfer of the admin role, and `remove`."""
@@ -372,11 +368,11 @@ def main() -> None:
     for b in builds.all():
         print(b.size_line())
         if write_abi:
-            b.contract.interface().write_text(abi_text(b.abi))
+            b.contract.interface().write(b.abi)
     failures = builds.failures()
-    createx_code = require_deployers(Web3(HTTPProvider(ARBITRUM["rpc"])))[CREATEX]
+    createx_code = require_deployers(Web3(HTTPProvider(ARBITRUM["rpc"])))[CREATEX.address]
     with Node() as node:
-        node.set_code(CREATEX, createx_code)
+        node.set_code(CREATEX.address, createx_code)
         checker = Checker(node, Chain.deploy(node, Builds.build()), builds)
         checker.check_compilers()
         addr = checker.check_create()

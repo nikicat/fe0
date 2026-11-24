@@ -9,13 +9,13 @@ if (!first) throw new Error("config.ts names no chain; deployments/ has no file"
 
 export const deployments = [first, ...rest] as const;
 
-// The deployment that the page uses when the route names no chain: the one with the lowest
-// chain id.
+// The deployment of every route that names no chain (docs/adr/0032, "Deployment").
 export const defaultDeployment: Deployed = first;
 
 // Returns the deployment on the chain that `route` names, or undefined when config.ts lacks
 // that chain. A route that names no chain is on defaultDeployment.
 export function routeDeployment(route: Route): Deployed | undefined {
-  if (route.page === "editor") return defaultDeployment;
-  return deployments.find((d) => d.chain.id === route.chainId);
+  const { chainId } = route;
+  if (chainId === null) return defaultDeployment;
+  return deployments.find((d) => d.chain.id === chainId);
 }

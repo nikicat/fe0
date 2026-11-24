@@ -3,58 +3,104 @@
 import { useSyncExternalStore } from "react";
 import { config } from "../config";
 import type { ParamText } from "../domain/abi";
-import type { Param, Variant } from "../domain/outline";
+import { Listeners } from "../domain/generic";
+import type { Outline, Param, Variant } from "../domain/outline";
 import type { Route } from "../domain/route";
-import type { ByteOffset, Source } from "../domain/source";
+import { type ByteOffset, Program, type Source } from "../domain/source";
 
 interface State {
-  source: Source;
-  // The text of each field, by `fieldKey`, kept while the program is edited.
+  program: Program;
+  // The text of each field, by Form.key, kept while the program is edited.
   fields: Readonly<Record<string, string>>;
   // The last request to select a place in the editor. Each request is a new object, so that
   // the same place can be selected again.
   selection: { offset: ByteOffset } | null;
+  // The text that names the deploy form's salt (domain/salt.ts).
+  saltText: string;
 }
 
-let state: State = { source: "" as Source, fields: {}, selection: null };
-const listeners = new Set<() => void>();
+// The state that the page owns.
+class PageStore {
+  #state: State = {
+    program: new Program("" as Source), fields: {}, selection: null, saltText: "",
+  };
+  readonly #listeners = new Listeners();
 
-function set(next: Partial<State>): void {
-  state = { ...state, ...next };
-  for (const l of listeners) l();
+  // Returns the part of the state that `select` picks, and renders again when it changes.
+  // `select` must return a stored value: a new object on each call makes React render
+  // forever.
+  useSelected<T>(select: (s: State) => T): T {
+    return useSyncExternalStore(this.#listeners.subscribe, () => select(this.#state));
+  }
+
+  // Puts `source` in the editor. The same source keeps its Program.
+  setSource(source: Source): void {
+    if (source !== this.#state.program.source) this.#set({ program: new Program(source) });
+  }
+
+  setSaltText(saltText: string): void {
+    this.#set({ saltText });
+  }
+
+  // Selects the byte at `offset` in the editor, scrolls to it and focuses the editor.
+  select(offset: ByteOffset): void {
+    this.#set({ selection: { offset } });
+  }
+
+  // Sets the text of the field whose Form.key is `key`.
+  setField(key: string, text: string): void {
+    this.#set({ fields: { ...this.#state.fields, [key]: text } });
+  }
+
+  #set(next: Partial<State>): void {
+    this.#state = { ...this.#state, ...next };
+    this.#listeners.notify();
+  }
 }
 
-const subscribe = (l: () => void) => {
-  listeners.add(l);
-  return () => listeners.delete(l);
-};
-
-// Returns the part of the state that `select` picks, and renders again when it changes.
-// `select` must return a stored value: a new object on each call makes React render forever.
-const useSelected = <T,>(select: (s: State) => T): T =>
-  useSyncExternalStore(subscribe, () => select(state));
+export const store = new PageStore();
 
 // Returns the program in the editor.
-export const useSource = (): Source => useSelected((s) => s.source);
+export const useProgram = (): Program => store.useSelected((s) => s.program);
 
-export const useSelection = (): State["selection"] => useSelected((s) => s.selection);
+// Returns the outline of the program in the editor.
+export const useOutline = (): Outline => useProgram().outline();
+
+export const useSelection = (): State["selection"] => store.useSelected((s) => s.selection);
+
+export const useSaltText = (): string => store.useSelected((s) => s.saltText);
 
 // A form whose fields the store keeps: the deploy form, or the form of one `msg` variant.
-export type FormId = string & { readonly __brand: "FormId" };
+export class Form {
+  // The deploy form, whose fields are the parameters of `init`.
+  static readonly init = new Form("init");
 
-// The deploy form, whose fields are the parameters of `init`.
-export const INIT_FORM = "init" as FormId;
+  // Returns the form of `variant`. Its id holds a dot, so it is never init's.
+  static of(variant: Variant): Form {
+    return new Form(`${variant.msg}.${variant.name}`);
+  }
 
-// Returns the form of `variant`. It holds a dot, so it is never `INIT_FORM`.
-export const formOf = (variant: Variant): FormId => `${variant.msg}.${variant.name}` as FormId;
+  readonly id: string;
 
-// The key of the field `name` in `form`.
-const fieldKey = (form: FormId, name: string): string => `${form}.${name}`;
+  private constructor(id: string) {
+    this.id = id;
+  }
+
+  // The key of the field `name` in this form.
+  key(name: string): string {
+    return `${this.id}.${name}`;
+  }
+
+  // Sets the text of the field `name` in this form.
+  set(name: string, text: string): void {
+    store.setField(this.key(name), text);
+  }
+}
 
 // Returns each of `params` with the text of its field in `form`.
-export function useFieldTexts(form: FormId, params: readonly Param[]): ParamText[] {
-  const fields = useSelected((s) => s.fields);
-  return params.map((param) => ({ param, text: fields[fieldKey(form, param.name)] ?? "" }));
+export function useFieldTexts(form: Form, params: readonly Param[]): ParamText[] {
+  const fields = store.useSelected((s) => s.fields);
+  return params.map((param) => ({ param, text: fields[form.key(param.name)] ?? "" }));
 }
 
 const START = config.examples[config.start];
@@ -63,13 +109,3 @@ if (START === undefined) throw new Error(`config.ts has no example ${config.star
 // Returns the program the page opens with on `route`: the route's own, or the example
 // `config.start` when it carries none.
 export const initialSource = (route: Route): Source => route.source ?? START;
-
-// Puts `source` in the editor.
-export const setSource = (source: Source): void => set({ source });
-
-// Selects the byte at `offset` in the editor, scrolls to it and focuses the editor.
-export const selectInEditor = (offset: ByteOffset): void => set({ selection: { offset } });
-
-// Sets the text of the field `name` in `form`.
-export const setField = (form: FormId, name: string, text: string): void =>
-  set({ fields: { ...state.fields, [fieldKey(form, name)]: text } });

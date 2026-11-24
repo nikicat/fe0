@@ -38,7 +38,8 @@ compiler registry lists the Compiler ([0034](0034-compiler-registry.md)). Then:
 The address depends only on the init code and the salt. It does not depend on the caller or on
 the registry, so it is the same for every deployer, under every version of the registry, and on
 every chain that has CreateX. A deployer who wants a new instance, or an address of a chosen
-form, picks another salt.
+form, picks another salt. The playground's deploy form takes the salt as text: an empty salt
+field is the zero salt, and any other text is the keccak256 of its UTF-8 bytes.
 
 The registry passes CreateX `keccak256(salt)`, not `salt`, so that CreateX mixes neither the
 caller nor the chain id into it. CreateX hashes a salt again, and mixes in nothing else, when
@@ -77,7 +78,7 @@ constructor.
 |---|---|
 | The contract's address, the compiler | Topics of the `Registered` event |
 | `keccak256(src)`, the salt, `src`, `args` | Data of the `Registered` event |
-| The block of the `Registered` event, the compiler and `keccak256(src)`, for each recorded contract | State: `info[contract]` |
+| The block number that `block.number` gives when the contract is recorded, the compiler and `keccak256(src)`, for each recorded contract | State: `info[contract]` |
 | The recorded contracts, in the order of recording | State: a list |
 | The contracts that each account called `deploy` for, each once | State: `by_account`, a set for each account |
 
@@ -92,8 +93,16 @@ Some facts are not stored:
 **Reading.** Each list in state has a view that returns its length and a page of its items,
 so a client lists contracts one `eth_call` per page. For one contract, it reads
 `info[contract]`, then the `Registered` event with `eth_getLogs` over the block that it
-names. Public RPC endpoints limit the block
-range of `eth_getLogs`, so a client cannot scan the chain's whole history for the events.
+names. Public RPC endpoints limit the block range of `eth_getLogs`, so a client cannot scan
+the chain's whole history for the events. A client that deploys a contract takes its
+record from the transaction's receipt instead, since the node it reads next may not have
+that block yet.
+
+On Arbitrum, `block.number` gives the number of a block of Ethereum, the chain that Arbitrum
+settles on, not of Arbitrum. Each Arbitrum block header holds that number as
+`l1BlockNumber`, and it never decreases from one block to the next. So a client on Arbitrum
+searches the headers for the first block with the recorded number, and reads the event from
+there.
 
 ## Alternatives
 - **The registry runs `CREATE2` itself:** only the registry could then create a contract at its
@@ -118,6 +127,10 @@ range of `eth_getLogs`, so a client cannot scan the chain's whole history for th
   both.
 - **Run the init code again with `CREATE` when CreateX fails, to pass on its revert data:**
   the registry would grow for a reason that a client gets from one `eth_call`.
+- **Record Arbitrum's own block number, from its ArbSys precompile:** a client would find the
+  event in one `eth_getLogs`, but the registry would hold code for one chain, and each other
+  chain whose `block.number` differs would need its own. A client that searches the headers
+  keeps the registry the same on every chain.
 - **Read the source from the transaction's calldata:** the calldata is `deploy(…)` only when
   an account calls the registry directly. A call through a smart wallet, an ERC-4337 bundle,
   Multicall3 or another contract hides it, and public RPC endpoints have no trace API to find

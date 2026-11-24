@@ -13,6 +13,12 @@ export type ContractState =
   | { kind: "empty" }
   | { kind: "contract"; size: number; version: string | null };
 
+// A contract that the chain holds.
+export type FoundContract = Extract<ContractState, { kind: "contract" }>;
+
+export const foundContract = (state: ContractState | undefined): FoundContract | null =>
+  state?.kind === "contract" ? state : null;
+
 // Returns the size in bytes of the code at `address`, which is 0 when it holds no contract.
 export async function codeSize(client: PublicClient, address: Address): Promise<number> {
   const code = await client.getCode({ address });

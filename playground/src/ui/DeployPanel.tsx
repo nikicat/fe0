@@ -1,45 +1,61 @@
-import { Compiler } from "../chain/compiler";
-import { encodeArgs } from "../domain/abi";
-import type { Outline } from "../domain/outline";
-import { contractRoute } from "../domain/route";
-import type { Source } from "../domain/source";
+import { Registry } from "../chain/registry";
+import type { Creation, DeployCode } from "../domain/createx";
+import { Route } from "../domain/route";
+import type { Program } from "../domain/source";
+import { useDeployPreview } from "../state/deployPreview";
 import { useDeployment } from "../state/deployment";
-import { navigate } from "../state/route";
-import { INIT_FORM, useFieldTexts } from "../state/store";
+import { useRememberRecord } from "../state/queries";
+import { useContractLink } from "../state/route";
+import { Form, store } from "../state/store";
 import { isRunning, useAction } from "../state/transaction";
 import { Fields } from "./Fields";
-import { StatusLine } from "./Status";
-import { WalletButton } from "./WalletButton";
+import { HexText } from "./HexText";
+import { StatusLine, StatusText } from "./Status";
 
-export function DeployPanel({ source, outline }: { source: Source; outline: Outline }) {
-  const deployment = useDeployment();
-  const texts = useFieldTexts(INIT_FORM, outline.init);
+// The deploy form shows the address before deploying, and opens the contract when it already
+// exists (docs/adr/0031-deployment-registry.md, "Deploying").
+export function DeployPanel({ program, code }:
+  { program: Program; code: DeployCode | null }) {
+  const registry = Registry.of(useDeployment());
   const { status, run } = useAction();
+  const remember = useRememberRecord();
+  const contract = useContractLink();
+  const { texts, saltText, encoded, creation, address, existing, call } =
+    useDeployPreview(program, code);
 
-  const deploy = () => run("Simulating the deployment…", async (progress) => {
-    const args = encodeArgs(texts);
-    const address = await new Compiler(deployment).deploy(source, args, progress);
-    navigate(contractRoute(deployment.chain.id, address));
-    return `Deployed at ${address}.`;
-  }, source);
+  const deploy = (creation: Creation) =>
+    run("Simulating the deployment…", async (progress) => {
+      const reached = await registry.deploy(creation, progress);
+      if (reached.record !== null) remember(reached.address, reached.record);
+      contract.open(reached.address);
+      return `Deployed at ${reached.address}.`;
+    }, program);
 
   return (
-    <div className="panel">
-      <h2>Deploy</h2>
-      <p className="hint">Deploying sends <code>deploy(src, args)</code> to the compiler on
-        chain, which compiles the program and creates the contract. <code>args</code> holds the
-        values of the parameters of <code>init</code>, the contract's constructor, from the
-        fields below. It costs gas, and the page asks your wallet to switch to the chain. The
-        page then opens the address that the simulation gave. If someone else deploys through
-        the compiler between the simulation and the transaction, that address holds their
-        contract.</p>
-      <Fields form={INIT_FORM} texts={texts} />
-      <div className="row">
-        <WalletButton />
-        <button type="button" className="primary" onClick={deploy}
-          disabled={isRunning(status)}>Deploy</button>
-      </div>
+    <section className="card" aria-label="Deploy">
+      <h2>Deploy{call !== null && <span className="muted"> {call}</span>}</h2>
+      <p className="hint">The <a href={Route.registry().hash()}>registry</a> compiles the
+        program, creates the contract and records it with its source. The same program,
+        arguments and salt always give the same address, for everyone.</p>
+      {texts.length > 0 && <h3 className="label">Constructor arguments</h3>}
+      <Fields form={Form.init} texts={texts} />
+      {"error" in encoded && <StatusText tone="err">{encoded.error}</StatusText>}
+      <label className="field">
+        <span>salt (optional)</span>
+        <input value={saltText} onChange={(e) => store.setSaltText(e.target.value)}
+          spellCheck={false} placeholder="any text, for a separate instance" />
+      </label>
+      {address !== null && <p className="hint">
+        {existing !== null ? "Already deployed at" : "Deploys to"} <HexText value={address} />
+      </p>}
+      {existing !== null
+        ? <button type="button" className="primary wide"
+            onClick={() => contract.open(existing)}>
+            Open</button>
+        : <button type="button" className="primary wide"
+            onClick={creation !== null ? () => deploy(creation) : undefined}
+            disabled={"error" in encoded || isRunning(status)}>Deploy</button>}
       <StatusLine status={status} />
-    </div>
+    </section>
   );
 }

@@ -21,6 +21,7 @@ With --rehearse, it does all of this on a local anvil node, which signs for the 
 rehearsal skips Sourcify. It copies the code of Multicall3 and CreateX, which the deployment
 transaction calls, to the node from the chain at --rpc.
 """
+import abc
 import argparse
 import subprocess
 import sys
@@ -30,7 +31,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, NamedTuple, Protocol, Self, TypedDict
+from typing import Annotated, Any, ClassVar, NamedTuple, Self, TypedDict
 
 from eth_typing import ABI, ChecksumAddress, Hash32, HexStr
 from eth_utils.crypto import keccak
@@ -38,11 +39,10 @@ from hexbytes import HexBytes
 from pydantic import (AfterValidator, BaseModel, ConfigDict, Field, ValidationError,
                       model_validator)
 from web3 import HTTPProvider, Web3
-from web3.contract.contract import ContractFunction
+from web3.contract.contract import Contract as Web3Contract, ContractFunction
 from web3.types import TxParams, TxReceipt
 
-from chain_check import (COUNTER, Builds, Contract, CounterGet, Initcode, check_version,
-                         counter_args, counter_source, version)
+from chain_check import COUNTER, Builds, Contract, Initcode, check_version, version
 from fegen import ROOT, ChainId, Url, Version
 from node import Node
 from sourcify import Identified, Match, Sources
@@ -63,7 +63,9 @@ class Currency(TypedDict):
 
 
 class Chain(TypedDict):
-    """A chain that Compiler runs on."""
+    """A chain that Compiler runs on. playground.py writes a Chain into the playground's
+    config.ts as it is, so l1Blocks and logRange are in camelCase, as the TypeScript type
+    `Chain` spells them."""
 
     id: ChainId
     name: str
@@ -71,20 +73,24 @@ class Chain(TypedDict):
     # The block explorer, for the playground's links.
     explorer: Url
     currency: Currency
+    # Whether `block.number` gives Ethereum's block number, not this chain's
+    # (docs/adr/0031-deployment-registry.md, "Reading").
+    l1Blocks: bool
+    # The most blocks that one `eth_getLogs` of several addresses may span at `rpc`.
+    logRange: int
 
 
 ARBITRUM: Chain = Chain(id=ChainId(42161), name="Arbitrum One",
                         rpc=Url("https://arb1.arbitrum.io/rpc"),
                         explorer=Url("https://arbiscan.io"),
-                        currency=Currency(name="Ether", symbol="ETH", decimals=18))
+                        currency=Currency(name="Ether", symbol="ETH", decimals=18),
+                        l1Blocks=True, logRange=100_000)
 
 # Multicall3 and CreateX, each at the same address on every chain that has it. Their sources and
 # their lists of chains: https://github.com/mds1/multicall3#deployments-and-abi and
 # https://github.com/pcaversaccio/createx#createx-deployments
 MULTICALL3: ChecksumAddress = Web3.to_checksum_address(
     "0xcA11bde05977b3631167028862bE2a173976CA11")
-CREATEX: ChecksumAddress = Web3.to_checksum_address(
-    "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed")
 MULTICALL3_ABI: ABI = [{
     "type": "function", "name": "aggregate3", "stateMutability": "payable",
     "inputs": [{"name": "calls", "type": "tuple[]", "components": [
@@ -92,34 +98,52 @@ MULTICALL3_ABI: ABI = [{
         {"name": "callData", "type": "bytes"}]}],
     "outputs": [{"name": "returnData", "type": "tuple[]", "components": [
         {"name": "success", "type": "bool"}, {"name": "returnData", "type": "bytes"}]}]}]
-CREATEX_ABI: ABI = [{
-    "type": "function", "name": "deployCreate2", "stateMutability": "payable",
-    "inputs": [{"name": "salt", "type": "bytes32"}, {"name": "initCode", "type": "bytes"}],
-    "outputs": [{"name": "newContract", "type": "address"}]}]
 # CreateX's `_guard` mixes neither the sender nor the chain id into this salt, because its
 # first 20 bytes are zero and its 21st byte is 0x00. So each contract's address depends only
 # on its initcode (docs/adr/0028-one-transaction-deploy.md).
 SALT: Hash32 = Hash32(bytes(32))
 
 
+class CreateX(NamedTuple):
+    """CreateX at `address`, which creates contracts with `CREATE2`."""
+
+    address: ChecksumAddress
+
+    def at(self, w3: Web3) -> Web3Contract:
+        """Returns CreateX on the chain of `w3`, with only `deployCreate2` in its ABI."""
+        return w3.eth.contract(self.address, abi=[{
+            "type": "function", "name": "deployCreate2", "stateMutability": "payable",
+            "inputs": [{"name": "salt", "type": "bytes32"},
+                       {"name": "initCode", "type": "bytes"}],
+            "outputs": [{"name": "newContract", "type": "address"}]}])
+
+    def deploy_call(self, w3: Web3, initcode: Initcode,
+                    salt: Hash32 = SALT) -> ContractFunction:
+        """Returns the call of `deployCreate2` that creates `initcode` with `salt`."""
+        return self.at(w3).functions.deployCreate2(salt, initcode)
+
+    def address_of(self, initcode: Initcode, salt: Hash32 = SALT) -> ChecksumAddress:
+        """Returns the address at which `deployCreate2` creates `initcode` with `salt`. It holds
+        only for a salt that CreateX hashes once and mixes nothing into, such as SALT
+        (docs/adr/0028-one-transaction-deploy.md) or a hashed registry salt
+        (docs/adr/0031-deployment-registry.md, "Deploying")."""
+        guarded_salt = keccak(salt)
+        digest = keccak(b"\xff" + HexBytes(self.address) + guarded_salt + keccak(initcode))
+        return Web3.to_checksum_address(digest[12:])
+
+
+CREATEX: CreateX = CreateX(Web3.to_checksum_address(
+    "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed"))
+
+
 def require_deployers(w3: Web3) -> dict[ChecksumAddress, HexBytes]:
     """Returns the code of MULTICALL3 and CREATEX on the chain of `w3`. Errors with RuntimeError
     when that chain has no code at one of them."""
-    names = {MULTICALL3: "MULTICALL3", CREATEX: "CREATEX"}
+    names = {MULTICALL3: "MULTICALL3", CREATEX.address: "CREATEX"}
     code = {address: w3.eth.get_code(address) for address in names}
     if missing := [f"{names[a]} ({a})" for a, c in code.items() if not c]:
         raise RuntimeError(f"chain {w3.eth.chain_id} has no code at {', '.join(missing)}")
     return code
-
-
-def create2_address(initcode: Initcode, salt: Hash32 = SALT) -> ChecksumAddress:
-    """Returns the address at which CreateX's `deployCreate2` creates `initcode` with `salt`.
-    It holds only for a salt that CreateX hashes once and mixes nothing into, such as SALT
-    (docs/adr/0028-one-transaction-deploy.md) or a hashed registry salt
-    (docs/adr/0031-deployment-registry.md, "Deploying")."""
-    guarded_salt = keccak(salt)
-    digest = keccak(b"\xff" + HexBytes(CREATEX) + guarded_salt + keccak(initcode))
-    return Web3.to_checksum_address(digest[12:])
 
 
 class Call3(NamedTuple):
@@ -134,49 +158,83 @@ def deployment_data(initcodes: Iterable[Initcode]) -> HexBytes:
     """Returns the data of the call of MULTICALL3 that creates a contract from each of
     `initcodes` (docs/adr/0028-one-transaction-deploy.md)."""
     w3 = Web3()
-    createx = w3.eth.contract(CREATEX, abi=CREATEX_ABI)
-    calls = [Call3(target=CREATEX, allow_failure=False,
-                   call_data=createx.encode_abi("deployCreate2", [SALT, code]))
+    calls = [Call3(target=CREATEX.address, allow_failure=False,
+                   call_data=CREATEX.deploy_call(w3, code)._encode_transaction_data())
              for code in initcodes]
     multicall3 = w3.eth.contract(MULTICALL3, abi=MULTICALL3_ABI)
     return HexBytes(multicall3.encode_abi("aggregate3", [calls]))
 
 
-class Sender(Protocol):
+class Sender(abc.ABC):
     """Sends transactions on one chain, and verifies and records what they deploy."""
 
     w3: Web3
 
+    @abc.abstractmethod
     def account(self) -> ChecksumAddress:
         """Returns the account that sends the transactions."""
-        ...
 
+    @abc.abstractmethod
     def send(self, tx: TxParams) -> TxReceipt:
         """Sends `tx` and returns its receipt. Errors with RuntimeError when the transaction
         fails."""
-        ...
 
+    @abc.abstractmethod
     def verify[K: Identified](self, sources: Sources,
                               addresses: dict[K, ChecksumAddress]) -> dict[K, Match] | None:
         """Submits each contract at `addresses`, built from `sources`, to Sourcify and returns
         the matches, or returns None when Sourcify cannot see the chain. Errors as
         `Sources.verify` does."""
-        ...
 
-    def record_file(self, record: type[DeployedRecord[Any]]) -> Path:
-        """Picks the file that holds a `record` of a deployment by the sender and returns it:
-        the file of its chain, or the rehearsal's file, which a rehearsal removes first so that
-        each rehearsal deploys anew."""
-        ...
+    @abc.abstractmethod
+    def clear_rehearsal_record(self, record: type[DeployedRecord[Any]]) -> Path:
+        """Removes the rehearsal's file of `record` when the sender is a rehearsal, so that each
+        rehearsal deploys anew. Returns the file that records the sender's deployment: the
+        file of its chain, or the rehearsal's file."""
 
+    def send_call(self, fn: ContractFunction, what: str) -> TxReceipt:
+        """Sends the call `fn`, once the user approves it, and returns the receipt. Errors as
+        `send` does."""
+        print(f"{what}: approve the transaction", flush=True)
+        receipt = self.send({"to": fn.address, "data": HexBytes(fn._encode_transaction_data())})
+        print(f"{what}: {receipt['gasUsed']:,} gas", flush=True)
+        return receipt
 
-def send(sender: Sender, fn: ContractFunction, what: str) -> TxReceipt:
-    """Sends the call `fn` through `sender`, once the user approves it, and returns the
-    receipt. Errors as `Sender.send` does."""
-    print(f"{what}: approve the transaction", flush=True)
-    receipt = sender.send({"to": fn.address, "data": HexBytes(fn._encode_transaction_data())})
-    print(f"{what}: {receipt['gasUsed']:,} gas", flush=True)
-    return receipt
+    def deploy_chain(self, builds: Builds) -> DeploymentRecord:
+        """Deploys fe0-chain's `builds`, leaving out each contract already on the chain, and
+        returns its record. Errors with RuntimeError when a contract's code exceeds EIP-170 or
+        EIP-3860, or as `Deployment.open` and `Deployment.deploy_all` do."""
+        if failures := builds.oversize():
+            raise RuntimeError("\n".join(failures))
+        path = self.clear_rehearsal_record(DeploymentRecord)
+        deployment = Deployment.open(path, version(), Plan.of(builds), DeploymentRecord)
+        return deployment.deploy_all(
+            self, builds.sources,
+            lambda contracts, matches: DeploymentRecord(version=deployment.version,
+                                                        contracts=contracts, sourcify=matches))
+
+    def demo_compiler(self, compiler: ChecksumAddress, interface: ABI) -> None:
+        """Deploys COUNTER through the Compiler at `compiler`, and calls `Get`. Errors with
+        RuntimeError when `version()` does not return the version in fe0-chain/fe.toml or `Get`
+        does not return COUNTER's start value, or as `send` does."""
+        contract = self.w3.eth.contract(compiler, abi=interface)
+        got_version: str = contract.functions.version().call()
+        print(f"version() by eth_call: {got_version!r}")
+        if failures := check_version(got_version):
+            raise RuntimeError("\n".join(failures))
+        name = COUNTER.path.name
+        source = COUNTER.source()
+        code: bytes = contract.functions.compile(source.encode()).call()
+        print(f"compile({name}) by eth_call: {len(code):,} bytes of deploy code")
+        deploy = contract.functions.deploy(source.encode(), COUNTER.args())
+        # The call runs on the same state as the transaction, as long as nobody else deploys
+        # through Compiler in between, so it returns the address that the transaction creates.
+        address: ChecksumAddress = deploy.call()
+        self.send_call(deploy, f"deploy({name})")
+        got = COUNTER.get(self.w3, address)
+        print(f"{name}: deployed at {address}; Get returns {got.value}")
+        if failures := got.failures():
+            raise RuntimeError("\n".join(failures))
 
 
 class Plan[K: Identified](NamedTuple):
@@ -190,13 +248,13 @@ class Plan[K: Identified](NamedTuple):
         """Returns the plan of fe0-chain's `builds`. Compiler's constructor gets the phases'
         planned addresses."""
         initcode = builds.phase_initcode()
-        phases = {c: create2_address(code) for c, code in initcode.items()}
+        phases = {c: CREATEX.address_of(code) for c, code in initcode.items()}
         initcode[Contract.COMPILER] = builds.compiler_initcode(phases)
         return Plan(initcode)
 
     @property
     def addresses(self) -> dict[K, ChecksumAddress]:
-        return {k: create2_address(code) for k, code in self.initcode.items()}
+        return {k: CREATEX.address_of(code) for k, code in self.initcode.items()}
 
     def check_record(self, path: Path, recorded: Mapping[K, ChecksumAddress]) -> None:
         """Errors with RuntimeError when `recorded`, which the file at `path` holds, are other
@@ -238,7 +296,7 @@ class _Sent(BaseModel):
     explorer: str | None = None
 
 
-class Wallet:
+class Wallet(Sender):
     """Sends each transaction from the user's browser wallet, through browser-web3-signer.
     Errors with RuntimeError when `rpc` serves a chain other than `chain_id`."""
 
@@ -297,11 +355,11 @@ class Wallet:
             print(f"Sourcify, {k}: {matches[k]}", flush=True)
         return matches
 
-    def record_file(self, record: type[DeployedRecord[Any]]) -> Path:
+    def clear_rehearsal_record(self, record: type[DeployedRecord[Any]]) -> Path:
         return record.file(self.chain_id)
 
 
-class Rehearsal:
+class Rehearsal(Sender):
     """Sends each transaction from the first account of a local anvil node."""
 
     def __init__(self, node: Node, origin: Web3) -> None:
@@ -330,9 +388,8 @@ class Rehearsal:
         """Returns None, since Sourcify cannot see the node."""
         return None
 
-    def record_file(self, record: type[DeployedRecord[Any]]) -> Path:
-        """Removes the rehearsal's file of `record` and returns it, so that each rehearsal
-        deploys anew."""
+    def clear_rehearsal_record(self, record: type[DeployedRecord[Any]]) -> Path:
+        """Removes the rehearsal's file of `record` and returns it."""
         record.REHEARSAL.unlink(missing_ok=True)
         return record.REHEARSAL
 
@@ -374,6 +431,12 @@ class DeployedRecord[K: StrEnum](JsonRecord):
         """Returns the file that records the deployment on the chain `chain_id`."""
         return cls.DIR / f"{chain_id}.json"
 
+    @classmethod
+    def on(cls, chain_id: ChainId) -> Self:
+        """Returns the record that the file of the chain `chain_id` holds. Errors as `read`
+        does."""
+        return cls.read(cls.file(chain_id))
+
     @model_validator(mode="after")
     def _match_for_each_contract(self) -> Self:
         if self.sourcify is not None and self.sourcify.keys() != self.contracts.keys():
@@ -408,12 +471,6 @@ class DeploymentRecord(DeployedRecord[Contract]):
                 raise RuntimeError(f"{path} is named for no chain id")
             ids.append(ChainId(int(path.stem)))
         return sorted(ids)
-
-    @classmethod
-    def on(cls, chain_id: ChainId) -> Self:
-        """Returns the record that the file of the chain `chain_id` holds. Errors as `read`
-        does."""
-        return cls.read(cls.file(chain_id))
 
 
 @dataclass
@@ -453,53 +510,6 @@ class Deployment[K: Identified, R: DeployedRecord[Any]]:
         return saved
 
 
-def open_sender(stack: ExitStack, rehearse: bool, rpc: Url, chain_id: ChainId) -> Sender:
-    """Starts a local anvil node that `stack` stops when `rehearse` is true, and otherwise
-    connects the user's wallet on the chain `chain_id`. Returns it as the sender. Errors as
-    `Rehearsal.start` and `Wallet` do."""
-    if rehearse:
-        return Rehearsal.start(stack, rpc)
-    return Wallet(rpc, chain_id)
-
-
-def deploy_chain(sender: Sender, builds: Builds) -> DeploymentRecord:
-    """Deploys fe0-chain's `builds` by `sender`, leaving out each contract already on the
-    chain, and returns its record. Errors with RuntimeError when a contract's code exceeds
-    EIP-170 or EIP-3860, or as `Deployment.open` and `Deployment.deploy_all` do."""
-    if failures := builds.oversize():
-        raise RuntimeError("\n".join(failures))
-    path = sender.record_file(DeploymentRecord)
-    deployment = Deployment.open(path, version(), Plan.of(builds), DeploymentRecord)
-    return deployment.deploy_all(
-        sender, builds.sources,
-        lambda contracts, matches: DeploymentRecord(version=deployment.version,
-                                                    contracts=contracts, sourcify=matches))
-
-
-def demo(sender: Sender, compiler: ChecksumAddress, interface: ABI) -> None:
-    """Deploys COUNTER with START through Compiler, and calls `Get`. Errors with RuntimeError
-    when `version()` does not return the version in fe0-chain/fe.toml or `Get` does not return
-    START, or as `Sender.send` does."""
-    w3 = sender.w3
-    contract = w3.eth.contract(compiler, abi=interface)
-    got_version: str = contract.functions.version().call()
-    print(f"version() by eth_call: {got_version!r}")
-    if failures := check_version(got_version):
-        raise RuntimeError("\n".join(failures))
-    source = counter_source()
-    code: bytes = contract.functions.compile(source.encode()).call()
-    print(f"compile({COUNTER.name}) by eth_call: {len(code):,} bytes of deploy code")
-    deploy = contract.functions.deploy(source.encode(), counter_args(w3))
-    # The call runs on the same state as the transaction, as long as nobody else deploys through
-    # Compiler in between, so it returns the address that the transaction creates.
-    address: ChecksumAddress = deploy.call()
-    send(sender, deploy, f"deploy({COUNTER.name})")
-    got = CounterGet.call(w3, address)
-    print(f"{COUNTER.name}: deployed at {address}; Get returns {got.value}")
-    if failures := got.failures():
-        raise RuntimeError("\n".join(failures))
-
-
 def chain_id_arg(text: str) -> ChainId:
     """Returns the chain id that the command-line argument `text` gives. Errors with
     ValueError when `text` is not a number."""
@@ -527,8 +537,9 @@ def main() -> None:
     builds = Builds.build()
     try:
         with ExitStack() as stack:
-            sender = open_sender(stack, args.rehearse, args.rpc, args.chain)
-            demo(sender, deploy_chain(sender, builds).compiler, builds.interface())
+            sender: Sender = (Rehearsal.start(stack, args.rpc) if args.rehearse
+                              else Wallet(args.rpc, args.chain))
+            sender.demo_compiler(sender.deploy_chain(builds).compiler, builds.interface())
     except RuntimeError as e:
         sys.exit(str(e))
 
